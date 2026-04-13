@@ -9,6 +9,7 @@
 #include "esphome/core/component.h"
 #include "MHI-AC-Ctrl-core.h"
 #include "mhi_status_listener.h"
+#include "mhi_transport_spi_idf.h"
 #include "mhi_transport_legacy.h"
 
 namespace esphome {
@@ -62,6 +63,7 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   int miso_pin_ = -1;
 
   MhiTransportLegacy transport_;
+  MhiTransportSpiIdf transport_spi_;
   MHI_AC_Ctrl_Core mhi_ac_ctrl_core_;
 
   esphome::sensor::Sensor *external_temperature_sensor_{nullptr};

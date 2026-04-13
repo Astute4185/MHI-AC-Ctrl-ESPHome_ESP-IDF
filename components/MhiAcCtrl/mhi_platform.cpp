@@ -27,7 +27,7 @@ void MhiPlatform::setup() {
   config.miso_pin = MISO_PIN;
   config.frame_size = static_cast<uint8_t>(this->frame_size_);
 
-  this->mhi_ac_ctrl_core_.set_transport(&this->transport_);
+  this->mhi_ac_ctrl_core_.set_transport(&this->transport_spi_);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
 
   this->mhi_ac_ctrl_core_.MHIAcCtrlStatus(this);
