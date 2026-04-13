@@ -6,12 +6,16 @@
 #include <string>
 #include <vector>
 
+#include "esphome/core/component.h"
 #include "MHI-AC-Ctrl-core.h"
-#include "esphome/components/sensor/sensor.h"
-#include "esphome/core/time.h"
 #include "mhi_status_listener.h"
+#include "mhi_transport_legacy.h"
 
 namespace esphome {
+namespace sensor {
+class Sensor;
+}
+
 namespace mhi {
 
 class MhiPlatform : public Component, public CallbackInterface_Status {
@@ -36,7 +40,7 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   void set_vanes(int value);
   void set_vanesLR(int value);
   void set_3Dauto(bool value);
-  void set_external_room_temperature_sensor(sensor::Sensor *sensor);
+  void set_external_room_temperature_sensor(esphome::sensor::Sensor *sensor);
   void set_sck_pin(int pin) { this->sck_pin_ = pin; }
   void set_mosi_pin(int pin) { this->mosi_pin_ = pin; }
   void set_miso_pin(int pin) { this->miso_pin_ = pin; }
@@ -57,9 +61,10 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   int mosi_pin_ = -1;
   int miso_pin_ = -1;
 
+  MhiTransportLegacy transport_;
   MHI_AC_Ctrl_Core mhi_ac_ctrl_core_;
 
-  sensor::Sensor *external_temperature_sensor_{nullptr};
+  esphome::sensor::Sensor *external_temperature_sensor_{nullptr};
 
   std::vector<MhiStatusListener *> listeners_;
 };

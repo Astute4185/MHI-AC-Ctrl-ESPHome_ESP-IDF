@@ -1,6 +1,7 @@
 // MHI-AC-Ctrol-core
 // implements the core functions (read & write SPI)
 
+#include "esphome/core/hal.h"
 #include "MHI-AC-Ctrl-core.h"
 
 uint16_t calc_checksum(uint8_t *frame) {
@@ -310,8 +311,8 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
         status_troom_old = MOSI_frame[DB3];
         m_cbiStatus->cbiStatusFunction(status_troom, status_troom_old);
         lastTroomInternalMillis = 0;
-      } else if ((millis() - lastTroomInternalMillis) > MinTimeInternalTroomMs) {
-        lastTroomInternalMillis = millis();
+      } else if ((esphome::millis() - lastTroomInternalMillis) > MinTimeInternalTroomMs) {
+        lastTroomInternalMillis = esphome::millis();
         status_troom_old = MOSI_frame[DB3];
         m_cbiStatus->cbiStatusFunction(status_troom, status_troom_old);
       }

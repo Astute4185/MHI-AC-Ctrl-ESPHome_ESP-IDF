@@ -19,11 +19,12 @@ class MhiTransport {
 
   virtual void setup(const MhiTransportConfig &config) = 0;
 
-  virtual bool exchange_frame(
+  virtual int exchange_frame(
       const uint8_t *tx_frame,
       uint8_t *rx_frame,
       std::size_t frame_size,
-      uint32_t max_time_ms) = 0;
+      uint32_t max_time_ms,
+      bool &new_data_packet_received) = 0;
 };
 
 }  // namespace mhi

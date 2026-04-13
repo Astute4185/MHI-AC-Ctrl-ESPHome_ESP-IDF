@@ -17,6 +17,9 @@ CONF_VANES_POSITION = 'position'
 CONF_TEMPERATURE = 'temperature'
 CONF_EXTERNAL_TEMPERATURE_SENSOR = 'external_temperature_sensor'
 
+DEPENDENCIES = ["climate"]
+AUTO_LOAD = ["sensor"]
+
 mhi_ns = cg.esphome_ns.namespace('mhi')
 MhiAcCtrl = mhi_ns.class_('MhiPlatform', cg.Component)
 

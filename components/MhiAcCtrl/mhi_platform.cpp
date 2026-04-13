@@ -1,4 +1,5 @@
 #include "mhi_platform.h"
+#include "esphome/components/sensor/sensor.h"
 
 int SCK_PIN = 14;
 int MOSI_PIN = 13;
@@ -10,7 +11,6 @@ namespace mhi {
 static const char *TAG = "mhi.platform";
 
 void MhiPlatform::setup() {
-
   if (this->sck_pin_ >= 0) {
     SCK_PIN = this->sck_pin_;
   }
@@ -21,9 +21,18 @@ void MhiPlatform::setup() {
     MISO_PIN = this->miso_pin_;
   }
 
+  esphome::mhi::MhiTransportConfig config;
+  config.sck_pin = SCK_PIN;
+  config.mosi_pin = MOSI_PIN;
+  config.miso_pin = MISO_PIN;
+  config.frame_size = static_cast<uint8_t>(this->frame_size_);
+
+  this->mhi_ac_ctrl_core_.set_transport(&this->transport_);
+  this->mhi_ac_ctrl_core_.set_transport_config(config);
+
   this->mhi_ac_ctrl_core_.MHIAcCtrlStatus(this);
   this->mhi_ac_ctrl_core_.init();
-  this->mhi_ac_ctrl_core_.set_frame_size(this->frame_size_);
+  this->mhi_ac_ctrl_core_.set_frame_size(static_cast<uint8_t>(this->frame_size_));
 
   if (this->external_temperature_sensor_ != nullptr) {
     this->external_temperature_sensor_->add_on_state_callback(
@@ -32,7 +41,7 @@ void MhiPlatform::setup() {
     this->transfer_room_temperature(this->external_temperature_sensor_->state);
   }
 
-  this->room_temp_api_timeout_start_ = millis();  // FIX: moved from header
+  this->room_temp_api_timeout_start_ = millis();
 }
 
 void MhiPlatform::set_frame_size(int framesize) {
@@ -43,7 +52,7 @@ void MhiPlatform::set_room_temp_api_timeout(int time_in_seconds) {
   this->room_temp_api_timeout_ = static_cast<uint32_t>(time_in_seconds);
 }
 
-void MhiPlatform::set_external_room_temperature_sensor(sensor::Sensor *sensor) {
+void MhiPlatform::set_external_room_temperature_sensor(esphome::sensor::Sensor *sensor) {
   this->external_temperature_sensor_ = sensor;
 }
 
@@ -56,10 +65,8 @@ void MhiPlatform::loop() {
   if (this->room_temp_api_active_ &&
       millis() - this->room_temp_api_timeout_start_ >=
           this->room_temp_api_timeout_ * 1000) {
-
     mhi_ac_ctrl_core_.set_troom(0xff);
-    ESP_LOGD(TAG,
-             "did not receive a room_temp_api value, using IU temperature sensor");
+    ESP_LOGD(TAG, "did not receive a room_temp_api value, using IU temperature sensor");
     this->room_temp_api_active_ = false;
   }
 
@@ -77,8 +84,7 @@ void MhiPlatform::dump_config() {
   }
 
   ESP_LOGCONFIG(TAG, "  frame_size: %d", this->frame_size_);
-  ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u",
-                this->room_temp_api_timeout_);
+  ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
   ESP_LOGCONFIG(TAG, "  listeners count: %d",
                 static_cast<int>(this->listeners_.size()));
 }
@@ -108,8 +114,7 @@ float MhiPlatform::get_room_temp_offset() {
 void MhiPlatform::transfer_room_temperature(float value) {
   if (std::isnan(value)) {
     if (!std::isnan(this->last_room_temperature_)) {
-      ESP_LOGD(TAG,
-               "set room_temp_api: value is NaN, using internal sensor");
+      ESP_LOGD(TAG, "set room_temp_api: value is NaN, using internal sensor");
       mhi_ac_ctrl_core_.set_troom(0xff);
       this->last_room_temperature_ = NAN;
     }
@@ -124,13 +129,10 @@ void MhiPlatform::transfer_room_temperature(float value) {
     return;
   }
 
-  // FIX: logical operator (was bitwise &)
   if ((value > -10.0f) && (value < 48.0f)) {
     uint8_t tmp = static_cast<uint8_t>(value * 4 + 61);
     this->mhi_ac_ctrl_core_.set_troom(tmp);
-
     this->last_room_temperature_ = value;
-
     ESP_LOGD(TAG, "set room_temp_api: %f %i", value, tmp);
   }
 }
@@ -148,19 +150,14 @@ void MhiPlatform::set_mode(ACMode value) {
 }
 
 void MhiPlatform::set_tsetpoint(float value) {
-  this->mhi_ac_ctrl_core_.set_tsetpoint(
-      static_cast<uint32_t>(value * 2));
+  this->mhi_ac_ctrl_core_.set_tsetpoint(static_cast<uint32_t>(value * 2));
 
   ESP_LOGD(TAG, "set setpoint: %f", value);
 
-  if (this->room_temp_api_active_ &&
-      !std::isnan(this->last_room_temperature_)) {
-
+  if (this->room_temp_api_active_ && !std::isnan(this->last_room_temperature_)) {
     float last = this->last_room_temperature_;
     this->last_room_temperature_ = NAN;
-
     this->transfer_room_temperature(last);
-
     ESP_LOGD(TAG, "resending external troom: %f", last);
   }
 }
@@ -192,7 +189,6 @@ void MhiPlatform::set_3Dauto(bool value) {
   if (this->frame_size_ == 33) {
     this->mhi_ac_ctrl_core_.set_3Dauto(
         value ? AC3Dauto::Dauto_on : AC3Dauto::Dauto_off);
-
     ESP_LOGD(TAG, "set 3D auto: %i", value);
   } else {
     ESP_LOGD(TAG, "Not setting 3D auto: %i (frame_size != 33)", value);

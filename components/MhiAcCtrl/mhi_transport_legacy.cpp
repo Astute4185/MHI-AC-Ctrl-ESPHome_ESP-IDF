@@ -1,16 +1,29 @@
 #include "mhi_transport_legacy.h"
 
+#include <driver/gpio.h>
+#include <esp_timer.h>
+
 #include "MHI-AC-Ctrl-core.h"
 
 namespace esphome {
 namespace mhi {
 
+static uint32_t now_ms() {
+  return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+}
+
 void MhiTransportLegacy::setup(const MhiTransportConfig &config) {
   this->config_ = config;
 
-  pinMode(this->config_.sck_pin, INPUT);
-  pinMode(this->config_.mosi_pin, INPUT);
-  pinMode(this->config_.miso_pin, OUTPUT);
+  gpio_reset_pin(static_cast<gpio_num_t>(this->config_.sck_pin));
+  gpio_reset_pin(static_cast<gpio_num_t>(this->config_.mosi_pin));
+  gpio_reset_pin(static_cast<gpio_num_t>(this->config_.miso_pin));
+
+  gpio_set_direction(static_cast<gpio_num_t>(this->config_.sck_pin), GPIO_MODE_INPUT);
+  gpio_set_direction(static_cast<gpio_num_t>(this->config_.mosi_pin), GPIO_MODE_INPUT);
+  gpio_set_direction(static_cast<gpio_num_t>(this->config_.miso_pin), GPIO_MODE_OUTPUT);
+
+  gpio_set_level(static_cast<gpio_num_t>(this->config_.miso_pin), 0);
 }
 
 int MhiTransportLegacy::exchange_frame(
@@ -22,15 +35,19 @@ int MhiTransportLegacy::exchange_frame(
 
   new_data_packet_received = false;
 
-  uint32_t start_millis = millis();
-  uint32_t sck_millis = millis();
+  const gpio_num_t sck = static_cast<gpio_num_t>(this->config_.sck_pin);
+  const gpio_num_t mosi = static_cast<gpio_num_t>(this->config_.mosi_pin);
+  const gpio_num_t miso = static_cast<gpio_num_t>(this->config_.miso_pin);
+
+  uint32_t start_millis = now_ms();
+  uint32_t sck_millis = now_ms();
 
   // wait for 5ms stable high signal to detect a frame start
-  while (millis() - sck_millis < 5) {
-    if (!digitalRead(this->config_.sck_pin)) {
-      sck_millis = millis();
+  while ((now_ms() - sck_millis) < 5U) {
+    if (gpio_get_level(sck) == 0) {
+      sck_millis = now_ms();
     }
-    if (millis() - start_millis > max_time_ms) {
+    if ((now_ms() - start_millis) > max_time_ms) {
       return err_msg_timeout_SCK_low;
     }
   }
@@ -40,23 +57,19 @@ int MhiTransportLegacy::exchange_frame(
     uint8_t bit_mask = 1;
 
     for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
-      while (digitalRead(this->config_.sck_pin)) {
-        if (millis() - start_millis > max_time_ms) {
+      while (gpio_get_level(sck) != 0) {
+        if ((now_ms() - start_millis) > max_time_ms) {
           return err_msg_timeout_SCK_high;
         }
       }
 
-      if ((tx_frame[byte_cnt] & bit_mask) > 0) {
-        digitalWrite(this->config_.miso_pin, 1);
-      } else {
-        digitalWrite(this->config_.miso_pin, 0);
+      gpio_set_level(miso, (tx_frame[byte_cnt] & bit_mask) ? 1 : 0);
+
+      while (gpio_get_level(sck) == 0) {
       }
 
-      while (!digitalRead(this->config_.sck_pin)) {
-      }
-
-      if (digitalRead(this->config_.mosi_pin)) {
-        mosi_byte += bit_mask;
+      if (gpio_get_level(mosi) != 0) {
+        mosi_byte = static_cast<uint8_t>(mosi_byte + bit_mask);
       }
 
       bit_mask = static_cast<uint8_t>(bit_mask << 1);
@@ -68,7 +81,7 @@ int MhiTransportLegacy::exchange_frame(
     }
   }
 
-  digitalWrite(this->config_.miso_pin, 0);
+  gpio_set_level(miso, 0);
 
   return 0;
 }
