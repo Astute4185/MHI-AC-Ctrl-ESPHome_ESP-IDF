@@ -1,6 +1,7 @@
 #pragma once
-
 #include <cstdint>
+
+#include "mhi_transport.h"
 
 // comment out the data you are not interested in, but leave at least one row
 static constexpr uint8_t opdata[][2] = {
@@ -232,11 +233,17 @@ private:
     uint8_t frameSize = 20;
 
     CallbackInterface_Status *m_cbiStatus = nullptr;
+    
+    esphome::mhi::MhiTransport *transport_ = nullptr;
+    esphome::mhi::MhiTransportConfig transport_config_;
 
 public:
     void MHIAcCtrlStatus(CallbackInterface_Status *cb) {
         m_cbiStatus = cb;
     }
+
+    void set_transport(esphome::mhi::MhiTransport *transport);
+    void set_transport_config(const esphome::mhi::MhiTransportConfig &config);
 
     void init();                         // initialization called once after boot
     void reset_old_values();             // resets the old variables so all status information is resent
