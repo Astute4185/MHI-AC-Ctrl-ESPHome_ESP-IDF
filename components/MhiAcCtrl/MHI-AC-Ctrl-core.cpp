@@ -55,11 +55,21 @@ void MHI_AC_Ctrl_Core::reset_old_values() {  // used e.g. when MQTT connection t
 }
 
 void MHI_AC_Ctrl_Core::init() {
-  // MeasureFrequency(m_cbiStatus);
-  pinMode(SCK_PIN, INPUT);
-  pinMode(MOSI_PIN, INPUT);
-  pinMode(MISO_PIN, OUTPUT);
-  MHI_AC_Ctrl_Core::reset_old_values();
+  void MHI_AC_Ctrl_Core::set_transport(esphome::mhi::MhiTransport *transport) {
+    this->transport_ = transport;
+  }
+  
+  void MHI_AC_Ctrl_Core::set_transport_config(
+      const esphome::mhi::MhiTransportConfig &config) {
+    this->transport_config_ = config;
+  }
+  
+  void MHI_AC_Ctrl_Core::init() {
+    if (this->transport_ != nullptr) {
+      this->transport_->setup(this->transport_config_);
+    }
+    MHI_AC_Ctrl_Core::reset_old_values();
+  }
 }
 
 void MHI_AC_Ctrl_Core::set_power(bool power) {
