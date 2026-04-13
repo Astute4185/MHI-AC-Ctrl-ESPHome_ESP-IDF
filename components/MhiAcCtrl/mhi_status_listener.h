@@ -6,9 +6,10 @@ namespace esphome {
 namespace mhi {
 
 class MhiStatusListener {
-public:
-    virtual void update_status(ACStatus status, int value) = 0;
+ public:
+  virtual ~MhiStatusListener() = default;
+  virtual void update_status(ACStatus status, int value) = 0;
 };
 
-} //namespace mhi
-} //namespace esphome
+}  // namespace mhi
+}  // namespace esphome
