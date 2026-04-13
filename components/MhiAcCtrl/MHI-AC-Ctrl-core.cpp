@@ -54,22 +54,20 @@ void MHI_AC_Ctrl_Core::reset_old_values() {  // used e.g. when MQTT connection t
   op_ou_eev1_old = 0xffff;
 }
 
+void MHI_AC_Ctrl_Core::set_transport(esphome::mhi::MhiTransport *transport) {
+  this->transport_ = transport;
+}
+
+void MHI_AC_Ctrl_Core::set_transport_config(
+    const esphome::mhi::MhiTransportConfig &config) {
+  this->transport_config_ = config;
+}
+
 void MHI_AC_Ctrl_Core::init() {
-  void MHI_AC_Ctrl_Core::set_transport(esphome::mhi::MhiTransport *transport) {
-    this->transport_ = transport;
+  if (this->transport_ != nullptr) {
+    this->transport_->setup(this->transport_config_);
   }
-  
-  void MHI_AC_Ctrl_Core::set_transport_config(
-      const esphome::mhi::MhiTransportConfig &config) {
-    this->transport_config_ = config;
-  }
-  
-  void MHI_AC_Ctrl_Core::init() {
-    if (this->transport_ != nullptr) {
-      this->transport_->setup(this->transport_config_);
-    }
-    MHI_AC_Ctrl_Core::reset_old_values();
-  }
+  MHI_AC_Ctrl_Core::reset_old_values();
 }
 
 void MHI_AC_Ctrl_Core::set_power(bool power) {
@@ -115,7 +113,6 @@ void MHI_AC_Ctrl_Core::request_ErrOpData() {
 }
 
 void MHI_AC_Ctrl_Core::set_troom(uint8_t troom) {
-  // Serial.printf("MHI_AC_Ctrl_Core::set_troom %i\n", troom);
   new_Troom = troom;
 }
 
@@ -136,47 +133,37 @@ void MHI_AC_Ctrl_Core::set_frame_size(uint8_t framesize) {
 int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   const uint8_t opdataCnt = static_cast<uint8_t>(sizeof(opdata) / sizeof(opdata[0]));
   static uint8_t opdataNo = 0;
-  uint32_t startMillis = millis();        // start time of this loop run
-  uint8_t MOSI_byte;                      // received MOSI byte
-  bool new_datapacket_received = false;   // indicated that a new frame was received
-  static uint8_t erropdataCnt = 0;        // number of expected error operating data
+  bool new_datapacket_received = false;
+  static uint8_t erropdataCnt = 0;
   static bool doubleframe = false;
   static int frame = 1;
   static uint8_t MOSI_frame[33];
   //                            sb0   sb1   sb2   db0   db1   db2   db3   db4   db5   db6   db7   db8   db9  db10  db11  db12  db13  db14  chkH  chkL  db15  db16  db17  db18  db19  db20  db21  db22  db23  db24  db25  db26  chk2L
   static uint8_t MISO_frame[] = {0xA9, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x22};
 
-  static uint32_t call_counter = 0;               // counts how often this loop was called
-  static uint32_t lastTroomInternalMillis = 0;    // remember when Troom internal has changed
+  static uint32_t call_counter = 0;
+  static uint32_t lastTroomInternalMillis = 0;
+
   if (frameSize == 33) {
     MISO_frame[0] = 0xAA;
   }
 
   call_counter++;
-  uint32_t SCKMillis = millis();            // time of last SCK low level
-  while (millis() - SCKMillis < 5) {        // wait for 5ms stable high signal to detect a frame start
-    if (!digitalRead(SCK_PIN)) {
-      SCKMillis = millis();
-    }
-    if (millis() - startMillis > max_time_ms) {
-      return err_msg_timeout_SCK_low;       // SCK stuck@ low error detection
-    }
-  }
 
   // build the next MISO frame
-  doubleframe = !doubleframe;               // toggle every frame
-  MISO_frame[DB14] = static_cast<uint8_t>(doubleframe << 2);  // MISO_frame[DB14] bit2 toggles with every frame
+  doubleframe = !doubleframe;
+  MISO_frame[DB14] = static_cast<uint8_t>(doubleframe << 2);
 
   // Requesting all different opdata's is an opdata cycle. A cycle will take 20s.
   // With the current 20 different opdata's, every opdata request will take 1sec (interval).
   // If there are only 5 different opdata's defined, these 5 will be spread about the 20s cycle. The interval will increase.
   // requesting a new opdata will always start at a doubleframe start
-  if ((frame > (static_cast<int>(NoFramesPerOpDataCycle / opdataCnt))) && doubleframe) {
-    frame = 1;  // start requesting new OpData
+  if ((frame > static_cast<int>(NoFramesPerOpDataCycle / opdataCnt)) && doubleframe) {
+    frame = 1;
   }
 
-  if (frame++ <= 2) {                       // use opdata request only for 2 subsequent frames
-    if (doubleframe) {                      // start when MISO_frame[DB14] bit2 is set
+  if (frame++ <= 2) {
+    if (doubleframe) {
       if (erropdataCnt == 0) {
         MISO_frame[DB6] = opdata[opdataNo][0];
         MISO_frame[DB9] = opdata[opdataNo][1];
@@ -224,13 +211,13 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
     }
   }
 
-  MISO_frame[DB3] = new_Troom;  // from MQTT or DS18x20
+  MISO_frame[DB3] = new_Troom;
 
   uint16_t checksum = calc_checksum(MISO_frame);
   MISO_frame[CBH] = static_cast<uint8_t>((checksum >> 8) & 0xFF);
   MISO_frame[CBL] = static_cast<uint8_t>(checksum & 0xFF);
 
-  if (frameSize == 33) {  // Only for framesize 33 (WF-RAC)
+  if (frameSize == 33) {
     MISO_frame[DB16] = 0;
     MISO_frame[DB16] |= new_VanesLR1;
     MISO_frame[DB17] = 0;
@@ -244,32 +231,19 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
     MISO_frame[CBL2] = static_cast<uint8_t>(checksum & 0xFF);
   }
 
-  // read/write MOSI/MISO frame
-  for (uint8_t byte_cnt = 0; byte_cnt < frameSize; byte_cnt++) {
-    MOSI_byte = 0;
-    uint8_t bit_mask = 1;
-    for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
-      SCKMillis = millis();
-      while (digitalRead(SCK_PIN)) {
-        if (millis() - startMillis > max_time_ms) {
-          return err_msg_timeout_SCK_high;
-        }
-      }
-      if ((MISO_frame[byte_cnt] & bit_mask) > 0) {
-        digitalWrite(MISO_PIN, 1);
-      } else {
-        digitalWrite(MISO_PIN, 0);
-      }
-      while (!digitalRead(SCK_PIN)) {}
-      if (digitalRead(MOSI_PIN)) {
-        MOSI_byte += bit_mask;
-      }
-      bit_mask = static_cast<uint8_t>(bit_mask << 1);
-    }
-    if (MOSI_frame[byte_cnt] != MOSI_byte) {
-      new_datapacket_received = true;
-      MOSI_frame[byte_cnt] = MOSI_byte;
-    }
+  if (this->transport_ == nullptr) {
+    return err_msg_timeout_SCK_low;
+  }
+
+  int transport_result = this->transport_->exchange_frame(
+      MISO_frame,
+      MOSI_frame,
+      frameSize,
+      max_time_ms,
+      new_datapacket_received);
+
+  if (transport_result < 0) {
+    return transport_result;
   }
 
   checksum = calc_checksum(MOSI_frame);
