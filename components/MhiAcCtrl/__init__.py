@@ -5,45 +5,67 @@ from esphome.components import sensor
 from esphome.const import CONF_ID
 
 CONF_MHI_AC_CTRL_ID = "mhi_ac_ctrl_id"
-CONF_FRAME_SIZE = 'frame_size'
-CONF_ROOM_TEMP_TIMEOUT = 'room_temp_timeout'
-CONF_VANES_UD = 'initial_vertical_vanes_position'
-CONF_VANES_LR = 'initial_horizontal_vanes_position'
+CONF_FRAME_SIZE = "frame_size"
+CONF_ROOM_TEMP_TIMEOUT = "room_temp_timeout"
+CONF_VANES_UD = "initial_vertical_vanes_position"
+CONF_VANES_LR = "initial_horizontal_vanes_position"
 CONF_SCK_PIN = "sck_pin"
 CONF_MOSI_PIN = "mosi_pin"
 CONF_MISO_PIN = "miso_pin"
+CONF_TRANSPORT_BACKEND = "transport_backend"
 
-CONF_VANES_POSITION = 'position'
-CONF_TEMPERATURE = 'temperature'
-CONF_EXTERNAL_TEMPERATURE_SENSOR = 'external_temperature_sensor'
+TRANSPORT_BACKEND_VALUES = {
+    "esp32_fast": 0,
+    "legacy": 0,
+    "spi_idf": 1,
+}
+
+CONF_VANES_POSITION = "position"
+CONF_TEMPERATURE = "temperature"
+CONF_EXTERNAL_TEMPERATURE_SENSOR = "external_temperature_sensor"
 
 DEPENDENCIES = ["climate"]
 AUTO_LOAD = ["sensor"]
 
-mhi_ns = cg.esphome_ns.namespace('mhi')
-MhiAcCtrl = mhi_ns.class_('MhiPlatform', cg.Component)
+mhi_ns = cg.esphome_ns.namespace("mhi")
+MhiAcCtrl = mhi_ns.class_("MhiPlatform", cg.Component)
 
 SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Action)
 SetHorizontalVanesAction = mhi_ns.class_("SetHorizontalVanesAction", automation.Action)
-SetExternalRoomTemperatureAction = mhi_ns.class_("SetExternalRoomTemperatureAction", automation.Action)
+SetExternalRoomTemperatureAction = mhi_ns.class_(
+    "SetExternalRoomTemperatureAction", automation.Action
+)
 
-CONFIG_SCHEMA = cv.Schema({
-    cv.GenerateID(): cv.declare_id(MhiAcCtrl),
-    cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
-    cv.Optional(CONF_FRAME_SIZE, default=20): cv.int_range(min=20, max=33),
-    cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
-    cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
-    cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
-    cv.Optional(CONF_SCK_PIN): cv.int_,
-    cv.Optional(CONF_MOSI_PIN): cv.int_,
-    cv.Optional(CONF_MISO_PIN): cv.int_,
-}).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MhiAcCtrl),
+        cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
+        cv.Optional(CONF_FRAME_SIZE, default=20): cv.int_range(min=20, max=33),
+        cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
+        cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
+        cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
+        cv.Optional(CONF_SCK_PIN): cv.int_,
+        cv.Optional(CONF_MOSI_PIN): cv.int_,
+        cv.Optional(CONF_MISO_PIN): cv.int_,
+        cv.Optional(CONF_TRANSPORT_BACKEND, default="esp32_fast"): cv.one_of(
+            *TRANSPORT_BACKEND_VALUES.keys(), lower=True
+        ),
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+
     cg.add(var.set_frame_size(config[CONF_FRAME_SIZE]))
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
+    cg.add(
+        var.set_transport_backend(
+            TRANSPORT_BACKEND_VALUES[config[CONF_TRANSPORT_BACKEND]]
+        )
+    )
+
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))
@@ -57,6 +79,7 @@ async def to_code(config):
         cg.add(var.set_mosi_pin(config[CONF_MOSI_PIN]))
     if CONF_MISO_PIN in config:
         cg.add(var.set_miso_pin(config[CONF_MISO_PIN]))
+
 
 @automation.register_action(
     "climate.mhi.set_vertical_vanes",
@@ -75,6 +98,7 @@ async def set_vertical_vanes_to_code(config, action_id, template_arg, args):
     template_ = await cg.templatable(config[CONF_VANES_POSITION], args, int)
     cg.add(var.set_position(template_))
     return var
+
 
 @automation.register_action(
     "climate.mhi.set_horizontal_vanes",
