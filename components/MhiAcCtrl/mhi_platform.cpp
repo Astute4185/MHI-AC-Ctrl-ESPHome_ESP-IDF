@@ -5,9 +5,15 @@
 #include "esphome/components/sensor/sensor.h"
 #include "mhi_time.h"
 
-int SCK_PIN = 14;
-int MOSI_PIN = 13;
-int MISO_PIN = 12;
+namespace {
+constexpr int kDefaultSckPin = 14;
+constexpr int kDefaultMosiPin = 13;
+constexpr int kDefaultMisoPin = 12;
+
+int resolve_pin(int configured_pin, int default_pin) {
+  return configured_pin >= 0 ? configured_pin : default_pin;
+}
+}  // namespace
 
 namespace esphome {
 namespace mhi {
@@ -25,20 +31,10 @@ const char *MhiPlatform::get_transport_backend_name_() const {
 }
 
 void MhiPlatform::setup() {
-  if (this->sck_pin_ >= 0) {
-    SCK_PIN = this->sck_pin_;
-  }
-  if (this->mosi_pin_ >= 0) {
-    MOSI_PIN = this->mosi_pin_;
-  }
-  if (this->miso_pin_ >= 0) {
-    MISO_PIN = this->miso_pin_;
-  }
-
-  MhiTransportConfig config;
-  config.sck_pin = SCK_PIN;
-  config.mosi_pin = MOSI_PIN;
-  config.miso_pin = MISO_PIN;
+  MhiTransportConfig config{};
+  config.sck_pin = resolve_pin(this->sck_pin_, kDefaultSckPin);
+  config.mosi_pin = resolve_pin(this->mosi_pin_, kDefaultMosiPin);
+  config.miso_pin = resolve_pin(this->miso_pin_, kDefaultMisoPin);
   config.frame_size = static_cast<uint8_t>(this->frame_size_);
 
   MhiTransport *selected_transport = &this->transport_legacy_;
@@ -48,6 +44,9 @@ void MhiPlatform::setup() {
   } else {
     ESP_LOGCONFIG(TAG, "Using transport backend: esp32_fast");
   }
+
+  ESP_LOGCONFIG(TAG, "Resolved pins: sck=%d mosi=%d miso=%d",
+                config.sck_pin, config.mosi_pin, config.miso_pin);
 
   this->mhi_ac_ctrl_core_.set_transport(selected_transport);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
@@ -87,13 +86,13 @@ void MhiPlatform::loop() {
 
   if (this->room_temp_api_active_ &&
       mhi_now_ms() - this->room_temp_api_timeout_start_ >=
-          this->room_temp_api_timeout_ * 1000) {
+          this->room_temp_api_timeout_ * 1000U) {
     this->mhi_ac_ctrl_core_.set_troom(0xff);
     ESP_LOGD(TAG, "did not receive a room_temp_api value, using IU temperature sensor");
     this->room_temp_api_active_ = false;
   }
 
-  int ret = this->mhi_ac_ctrl_core_.loop(100);
+  const int ret = this->mhi_ac_ctrl_core_.loop(100);
   if (ret < 0) {
     ESP_LOGE(TAG, "mhi_ac_ctrl_core loop error: %i", ret);
   }
@@ -109,6 +108,9 @@ void MhiPlatform::dump_config() {
   ESP_LOGCONFIG(TAG, "  frame_size: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
   ESP_LOGCONFIG(TAG, "  transport_backend: %s", this->get_transport_backend_name_());
+  ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
+  ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
+  ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
   ESP_LOGCONFIG(TAG, "  listeners count: %d",
                 static_cast<int>(this->listeners_.size()));
 }
@@ -154,7 +156,7 @@ void MhiPlatform::transfer_room_temperature(float value) {
   }
 
   if ((value > -10.0f) && (value < 48.0f)) {
-    uint8_t tmp = static_cast<uint8_t>(value * 4 + 61);
+    const uint8_t tmp = static_cast<uint8_t>(value * 4 + 61);
     this->mhi_ac_ctrl_core_.set_troom(tmp);
     this->last_room_temperature_ = value;
     ESP_LOGD(TAG, "set room_temp_api: %f %i", value, tmp);
@@ -179,7 +181,7 @@ void MhiPlatform::set_tsetpoint(float value) {
   ESP_LOGD(TAG, "set setpoint: %f", value);
 
   if (this->room_temp_api_active_ && !std::isnan(this->last_room_temperature_)) {
-    float last = this->last_room_temperature_;
+    const float last = this->last_room_temperature_;
     this->last_room_temperature_ = NAN;
     this->transfer_room_temperature(last);
     ESP_LOGD(TAG, "resending external troom: %f", last);

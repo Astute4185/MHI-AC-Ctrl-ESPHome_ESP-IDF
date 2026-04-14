@@ -1,16 +1,12 @@
 #include "mhi_transport_legacy.h"
 
 #include <driver/gpio.h>
-#include <esp_timer.h>
 
 #include "MHI-AC-Ctrl-core.h"
+#include "mhi_time.h"
 
 namespace esphome {
 namespace mhi {
-
-static uint32_t now_ms() {
-  return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
-}
 
 void MhiTransportLegacy::setup(const MhiTransportConfig &config) {
   this->config_ = config;
@@ -39,15 +35,15 @@ int MhiTransportLegacy::exchange_frame(
   const gpio_num_t mosi = static_cast<gpio_num_t>(this->config_.mosi_pin);
   const gpio_num_t miso = static_cast<gpio_num_t>(this->config_.miso_pin);
 
-  uint32_t start_millis = now_ms();
-  uint32_t sck_millis = now_ms();
+  uint32_t start_millis = mhi_now_ms();
+  uint32_t sck_millis = mhi_now_ms();
 
   // wait for 5ms stable high signal to detect a frame start
-  while ((now_ms() - sck_millis) < 5U) {
+  while ((mhi_now_ms() - sck_millis) < 5U) {
     if (gpio_get_level(sck) == 0) {
-      sck_millis = now_ms();
+      sck_millis = mhi_now_ms();
     }
-    if ((now_ms() - start_millis) > max_time_ms) {
+    if ((mhi_now_ms() - start_millis) > max_time_ms) {
       return err_msg_timeout_SCK_low;
     }
   }
@@ -58,7 +54,7 @@ int MhiTransportLegacy::exchange_frame(
 
     for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
       while (gpio_get_level(sck) != 0) {
-        if ((now_ms() - start_millis) > max_time_ms) {
+        if ((mhi_now_ms() - start_millis) > max_time_ms) {
           return err_msg_timeout_SCK_high;
         }
       }
