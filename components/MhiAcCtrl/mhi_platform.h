@@ -9,8 +9,8 @@
 #include "esphome/core/component.h"
 #include "MHI-AC-Ctrl-core.h"
 #include "mhi_status_listener.h"
-#include "mhi_transport_spi_idf.h"
 #include "mhi_transport_legacy.h"
+#include "mhi_transport_spi_idf.h"
 
 namespace esphome {
 namespace sensor {
@@ -45,10 +45,19 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   void set_sck_pin(int pin) { this->sck_pin_ = pin; }
   void set_mosi_pin(int pin) { this->mosi_pin_ = pin; }
   void set_miso_pin(int pin) { this->miso_pin_ = pin; }
+  void set_transport_backend(uint8_t backend) {
+    this->transport_backend_ = static_cast<TransportBackend>(backend);
+  }
   void add_listener(MhiStatusListener *listener);
 
  private:
+  enum TransportBackend : uint8_t {
+    TRANSPORT_BACKEND_ESP32_FAST = 0,
+    TRANSPORT_BACKEND_SPI_IDF = 1,
+  };
+
   void transfer_room_temperature(float value);
+  const char *get_transport_backend_name_() const;
 
   float last_room_temperature_ = NAN;
   float temperature_offset_ = 0.0f;
@@ -61,8 +70,9 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   int sck_pin_ = -1;
   int mosi_pin_ = -1;
   int miso_pin_ = -1;
+  TransportBackend transport_backend_ = TRANSPORT_BACKEND_ESP32_FAST;
 
-  MhiTransportLegacy transport_;
+  MhiTransportLegacy transport_legacy_;
   MhiTransportSpiIdf transport_spi_;
   MHI_AC_Ctrl_Core mhi_ac_ctrl_core_;
 
