@@ -1,3 +1,4 @@
+#include <cmath>
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
 #include "mhi_climate.h"
@@ -24,7 +25,7 @@ void MhiClimate::setup() {
         this->swing_mode = climate::CLIMATE_SWING_OFF;
     }
     // Never send nan to HA
-    if (isnan(this->target_temperature))
+    if (std::isnan(this->target_temperature))
         this->target_temperature = 20;
 
     this->vanesLR_pos_old_state_ = 4;

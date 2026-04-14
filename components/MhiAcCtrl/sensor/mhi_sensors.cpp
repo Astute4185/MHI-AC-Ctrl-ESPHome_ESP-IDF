@@ -206,7 +206,9 @@ void MhiSensors::update_status(ACStatus status, int value) {
         //    highByte(value) * 25.6f + 0.1f * lowByte(value), 0, 2, strtmp); // to be confirmed
         // output_P(status, PSTR(TOPIC_COMP), strtmp);
         if (this->compressor_frequency_ != NULL) { 
-            this->compressor_frequency_ -> publish_state(highByte(value) * 25.6f + 0.1f * lowByte(value)); 
+            const uint8_t value_high = static_cast<uint8_t>((value >> 8) & 0xFF);
+            const uint8_t value_low = static_cast<uint8_t>(value & 0xFF);
+            this->compressor_frequency_->publish_state(value_high * 25.6f + 0.1f * value_low);
         }
         break;
     case erropdata_td:

@@ -1,10 +1,18 @@
+#include <cmath>
 #include "mhi_platform.h"
 
 #include "esphome/components/sensor/sensor.h"
+#include "esp_timer.h"
 
 int SCK_PIN = 14;
 int MOSI_PIN = 13;
 int MISO_PIN = 12;
+
+namespace {
+uint32_t now_ms() {
+  return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+}
+}  // namespace
 
 namespace esphome {
 namespace mhi {
@@ -60,7 +68,7 @@ void MhiPlatform::setup() {
     this->transfer_room_temperature(this->external_temperature_sensor_->state);
   }
 
-  this->room_temp_api_timeout_start_ = millis();
+  this->room_temp_api_timeout_start_ = now_ms();
 }
 
 void MhiPlatform::set_frame_size(int framesize) {
@@ -83,7 +91,7 @@ void MhiPlatform::loop() {
   }
 
   if (this->room_temp_api_active_ &&
-      millis() - this->room_temp_api_timeout_start_ >=
+      now_ms() - this->room_temp_api_timeout_start_ >=
           this->room_temp_api_timeout_ * 1000) {
     mhi_ac_ctrl_core_.set_troom(0xff);
     ESP_LOGD(TAG, "did not receive a room_temp_api value, using IU temperature sensor");
@@ -119,7 +127,7 @@ void MhiPlatform::cbiStatusFunction(ACStatus status, int value) {
 }
 
 void MhiPlatform::set_room_temperature(float value) {
-  this->room_temp_api_timeout_start_ = millis();
+  this->room_temp_api_timeout_start_ = now_ms();
   this->room_temp_api_active_ = true;
   this->transfer_room_temperature(value);
 }
