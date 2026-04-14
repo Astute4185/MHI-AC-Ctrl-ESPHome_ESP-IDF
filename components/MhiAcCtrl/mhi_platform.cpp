@@ -1,18 +1,13 @@
-#include <cmath>
 #include "mhi_platform.h"
 
+#include <cmath>
+
 #include "esphome/components/sensor/sensor.h"
-#include "esp_timer.h"
+#include "mhi_time.h"
 
 int SCK_PIN = 14;
 int MOSI_PIN = 13;
 int MISO_PIN = 12;
-
-namespace {
-uint32_t now_ms() {
-  return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
-}
-}  // namespace
 
 namespace esphome {
 namespace mhi {
@@ -40,13 +35,13 @@ void MhiPlatform::setup() {
     MISO_PIN = this->miso_pin_;
   }
 
-  esphome::mhi::MhiTransportConfig config;
+  MhiTransportConfig config;
   config.sck_pin = SCK_PIN;
   config.mosi_pin = MOSI_PIN;
   config.miso_pin = MISO_PIN;
   config.frame_size = static_cast<uint8_t>(this->frame_size_);
 
-  esphome::mhi::MhiTransport *selected_transport = &this->transport_legacy_;
+  MhiTransport *selected_transport = &this->transport_legacy_;
   if (this->transport_backend_ == TRANSPORT_BACKEND_SPI_IDF) {
     selected_transport = &this->transport_spi_;
     ESP_LOGW(TAG, "Using experimental transport backend: spi_idf");
@@ -68,7 +63,7 @@ void MhiPlatform::setup() {
     this->transfer_room_temperature(this->external_temperature_sensor_->state);
   }
 
-  this->room_temp_api_timeout_start_ = now_ms();
+  this->room_temp_api_timeout_start_ = mhi_now_ms();
 }
 
 void MhiPlatform::set_frame_size(int framesize) {
@@ -91,14 +86,14 @@ void MhiPlatform::loop() {
   }
 
   if (this->room_temp_api_active_ &&
-      now_ms() - this->room_temp_api_timeout_start_ >=
+      mhi_now_ms() - this->room_temp_api_timeout_start_ >=
           this->room_temp_api_timeout_ * 1000) {
-    mhi_ac_ctrl_core_.set_troom(0xff);
+    this->mhi_ac_ctrl_core_.set_troom(0xff);
     ESP_LOGD(TAG, "did not receive a room_temp_api value, using IU temperature sensor");
     this->room_temp_api_active_ = false;
   }
 
-  int ret = mhi_ac_ctrl_core_.loop(100);
+  int ret = this->mhi_ac_ctrl_core_.loop(100);
   if (ret < 0) {
     ESP_LOGE(TAG, "mhi_ac_ctrl_core loop error: %i", ret);
   }
@@ -107,7 +102,7 @@ void MhiPlatform::loop() {
 void MhiPlatform::dump_config() {
   ESP_LOGCONFIG(TAG, "MHI Platform");
 
-  if (external_temperature_sensor_ != nullptr) {
+  if (this->external_temperature_sensor_ != nullptr) {
     ESP_LOGCONFIG(TAG, "  external_temperature_sensor enabled!");
   }
 
@@ -127,7 +122,7 @@ void MhiPlatform::cbiStatusFunction(ACStatus status, int value) {
 }
 
 void MhiPlatform::set_room_temperature(float value) {
-  this->room_temp_api_timeout_start_ = now_ms();
+  this->room_temp_api_timeout_start_ = mhi_now_ms();
   this->room_temp_api_active_ = true;
   this->transfer_room_temperature(value);
 }
@@ -144,7 +139,7 @@ void MhiPlatform::transfer_room_temperature(float value) {
   if (std::isnan(value)) {
     if (!std::isnan(this->last_room_temperature_)) {
       ESP_LOGD(TAG, "set room_temp_api: value is NaN, using internal sensor");
-      mhi_ac_ctrl_core_.set_troom(0xff);
+      this->mhi_ac_ctrl_core_.set_troom(0xff);
       this->last_room_temperature_ = NAN;
     }
     return;
@@ -154,7 +149,7 @@ void MhiPlatform::transfer_room_temperature(float value) {
     value += this->temperature_offset_;
   }
 
-  if (std::fabs(value - last_room_temperature_) < 0.01f) {
+  if (std::fabs(value - this->last_room_temperature_) < 0.01f) {
     return;
   }
 

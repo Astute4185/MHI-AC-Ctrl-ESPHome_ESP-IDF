@@ -33,11 +33,6 @@ static constexpr uint32_t NoFramesPerOpDataCycle = 400;
 // minimal time in ms used for Troom internal sensor changes for publishing to avoid jitter
 static constexpr uint32_t MinTimeInternalTroomMs = 5000;
 
-// Declare extern variables for the pins.
-// This allows the pins to be set in the configuration file.
-extern int SCK_PIN;
-extern int MOSI_PIN;
-extern int MISO_PIN;
 
 // constants for the frame
 #define SB0 0
