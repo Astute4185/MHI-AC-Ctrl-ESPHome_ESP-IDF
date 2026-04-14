@@ -1,4 +1,5 @@
 #include "mhi_platform.h"
+
 #include "esphome/components/sensor/sensor.h"
 
 int SCK_PIN = 14;
@@ -9,6 +10,16 @@ namespace esphome {
 namespace mhi {
 
 static const char *TAG = "mhi.platform";
+
+const char *MhiPlatform::get_transport_backend_name_() const {
+  switch (this->transport_backend_) {
+    case TRANSPORT_BACKEND_SPI_IDF:
+      return "spi_idf";
+    case TRANSPORT_BACKEND_ESP32_FAST:
+    default:
+      return "esp32_fast";
+  }
+}
 
 void MhiPlatform::setup() {
   if (this->sck_pin_ >= 0) {
@@ -27,7 +38,15 @@ void MhiPlatform::setup() {
   config.miso_pin = MISO_PIN;
   config.frame_size = static_cast<uint8_t>(this->frame_size_);
 
-  this->mhi_ac_ctrl_core_.set_transport(&this->transport_spi_);
+  esphome::mhi::MhiTransport *selected_transport = &this->transport_legacy_;
+  if (this->transport_backend_ == TRANSPORT_BACKEND_SPI_IDF) {
+    selected_transport = &this->transport_spi_;
+    ESP_LOGW(TAG, "Using experimental transport backend: spi_idf");
+  } else {
+    ESP_LOGCONFIG(TAG, "Using transport backend: esp32_fast");
+  }
+
+  this->mhi_ac_ctrl_core_.set_transport(selected_transport);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
 
   this->mhi_ac_ctrl_core_.MHIAcCtrlStatus(this);
@@ -52,7 +71,8 @@ void MhiPlatform::set_room_temp_api_timeout(int time_in_seconds) {
   this->room_temp_api_timeout_ = static_cast<uint32_t>(time_in_seconds);
 }
 
-void MhiPlatform::set_external_room_temperature_sensor(esphome::sensor::Sensor *sensor) {
+void MhiPlatform::set_external_room_temperature_sensor(
+    esphome::sensor::Sensor *sensor) {
   this->external_temperature_sensor_ = sensor;
 }
 
@@ -85,6 +105,7 @@ void MhiPlatform::dump_config() {
 
   ESP_LOGCONFIG(TAG, "  frame_size: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
+  ESP_LOGCONFIG(TAG, "  transport_backend: %s", this->get_transport_backend_name_());
   ESP_LOGCONFIG(TAG, "  listeners count: %d",
                 static_cast<int>(this->listeners_.size()));
 }
