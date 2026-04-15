@@ -1,11 +1,17 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include "mhi_transport.h"
 
 namespace esphome {
 namespace mhi {
 
-class MhiTransportSpiIdf : public MhiTransport {
+class MhiTransportGpioFrameIsr : public MhiTransport {
  public:
   void setup(const MhiTransportConfig &config) override;
 
@@ -17,7 +23,13 @@ class MhiTransportSpiIdf : public MhiTransport {
       bool &new_data_packet_received) override;
 
  private:
-  MhiTransportConfig config_;
+  static void gpio_isr_handler_(void *arg);
+  bool wait_for_frame_start_(uint32_t max_time_ms);
+
+  MhiTransportConfig config_{};
+  TaskHandle_t waiter_task_{nullptr};
+  volatile uint32_t edge_count_{0};
+  bool isr_registered_{false};
 };
 
 }  // namespace mhi

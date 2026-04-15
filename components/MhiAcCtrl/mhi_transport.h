@@ -7,10 +7,10 @@ namespace esphome {
 namespace mhi {
 
 struct MhiTransportConfig {
-  int sck_pin = -1;
-  int mosi_pin = -1;
-  int miso_pin = -1;
-  uint8_t frame_size = 20;
+  int sck_pin{-1};
+  int mosi_pin{-1};
+  int miso_pin{-1};
+  uint8_t frame_size{20};
 };
 
 class MhiTransport {

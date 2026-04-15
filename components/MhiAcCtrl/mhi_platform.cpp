@@ -1,6 +1,7 @@
 #include "mhi_platform.h"
 
 #include <cmath>
+#include <cstdint>
 
 #include "esphome/components/sensor/sensor.h"
 #include "mhi_time.h"
@@ -10,8 +11,8 @@ constexpr int kDefaultSckPin = 14;
 constexpr int kDefaultMosiPin = 13;
 constexpr int kDefaultMisoPin = 12;
 
-int resolve_pin(int configured_pin, int default_pin) {
-  return configured_pin >= 0 ? configured_pin : default_pin;
+int resolve_pin(int configured_pin, int fallback_pin) {
+  return configured_pin >= 0 ? configured_pin : fallback_pin;
 }
 }  // namespace
 
@@ -22,8 +23,8 @@ static const char *TAG = "mhi.platform";
 
 const char *MhiPlatform::get_transport_backend_name_() const {
   switch (this->transport_backend_) {
-    case TRANSPORT_BACKEND_SPI_IDF:
-      return "spi_idf";
+    case TRANSPORT_BACKEND_GPIO_FRAME_ISR:
+      return "gpio_frame_isr";
     case TRANSPORT_BACKEND_ESP32_FAST:
     default:
       return "esp32_fast";
@@ -38,15 +39,15 @@ void MhiPlatform::setup() {
   config.frame_size = static_cast<uint8_t>(this->frame_size_);
 
   MhiTransport *selected_transport = &this->transport_legacy_;
-  if (this->transport_backend_ == TRANSPORT_BACKEND_SPI_IDF) {
-    selected_transport = &this->transport_spi_;
-    ESP_LOGW(TAG, "Using experimental transport backend: spi_idf");
+  if (this->transport_backend_ == TRANSPORT_BACKEND_GPIO_FRAME_ISR) {
+    selected_transport = &this->transport_gpio_frame_isr_;
+    ESP_LOGW(TAG, "Using experimental transport backend: gpio_frame_isr");
   } else {
     ESP_LOGCONFIG(TAG, "Using transport backend: esp32_fast");
   }
 
-  ESP_LOGCONFIG(TAG, "Resolved pins: sck=%d mosi=%d miso=%d",
-                config.sck_pin, config.mosi_pin, config.miso_pin);
+  ESP_LOGCONFIG(TAG, "Resolved transport config: sck=%d mosi=%d miso=%d cs=%d frame_size=%u",
+                config.sck_pin, config.mosi_pin, config.miso_pin, config.cs_pin, config.frame_size);
 
   this->mhi_ac_ctrl_core_.set_transport(selected_transport);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
@@ -111,6 +112,7 @@ void MhiPlatform::dump_config() {
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
+  ESP_LOGCONFIG(TAG, "  spi_cs_pin: %d", this->spi_cs_pin_);
   ESP_LOGCONFIG(TAG, "  listeners count: %d",
                 static_cast<int>(this->listeners_.size()));
 }
