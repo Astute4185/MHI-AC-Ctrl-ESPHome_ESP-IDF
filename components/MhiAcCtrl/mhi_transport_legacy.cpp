@@ -4,18 +4,67 @@
 #include <cstdint>
 
 #include <driver/gpio.h>
+#include <esp_attr.h>
 
 #include "MHI-AC-Ctrl-core.h"
 #include "mhi_time.h"
+
+// Fast GPIO register access for ESP32-family targets.
+// This keeps the transport model the same, but reduces per-bit overhead.
+#if defined(ESP32) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || \
+    defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) || \
+    defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2)
+#include "soc/gpio_struct.h"
+#define MHI_USE_FAST_GPIO 1
+#else
+#define MHI_USE_FAST_GPIO 0
+#endif
 
 namespace esphome {
 namespace mhi {
 
 namespace {
 
-constexpr uint32_t kTimeoutCheckMask = 0x3F;  // check time every 64 spins
+constexpr uint32_t kTimeoutCheckMask = 0x3F;  // check elapsed time every 64 spins
 
-inline bool timed_out(uint32_t start_ms, uint32_t max_time_ms, uint32_t &spin_counter) {
+#if MHI_USE_FAST_GPIO
+inline bool IRAM_ATTR fast_gpio_read(int pin) {
+  if (pin < 32) {
+    return (GPIO.in >> pin) & 0x1;
+  }
+  return (GPIO.in1.val >> (pin - 32)) & 0x1;
+}
+
+inline void IRAM_ATTR fast_gpio_write_high(int pin) {
+  if (pin < 32) {
+    GPIO.out_w1ts = (1UL << pin);
+  } else {
+    GPIO.out1_w1ts.val = (1UL << (pin - 32));
+  }
+}
+
+inline void IRAM_ATTR fast_gpio_write_low(int pin) {
+  if (pin < 32) {
+    GPIO.out_w1tc = (1UL << pin);
+  } else {
+    GPIO.out1_w1tc.val = (1UL << (pin - 32));
+  }
+}
+#else
+inline bool IRAM_ATTR fast_gpio_read(int pin) {
+  return gpio_get_level(static_cast<gpio_num_t>(pin)) != 0;
+}
+
+inline void IRAM_ATTR fast_gpio_write_high(int pin) {
+  gpio_set_level(static_cast<gpio_num_t>(pin), 1);
+}
+
+inline void IRAM_ATTR fast_gpio_write_low(int pin) {
+  gpio_set_level(static_cast<gpio_num_t>(pin), 0);
+}
+#endif
+
+inline bool IRAM_ATTR timed_out(uint32_t start_ms, uint32_t max_time_ms, uint32_t &spin_counter) {
   spin_counter++;
   if ((spin_counter & kTimeoutCheckMask) != 0) {
     return false;
@@ -39,7 +88,7 @@ void MhiTransportLegacy::setup(const MhiTransportConfig &config) {
   gpio_set_level(static_cast<gpio_num_t>(this->config_.miso_pin), 0);
 }
 
-int MhiTransportLegacy::exchange_frame(
+int IRAM_ATTR MhiTransportLegacy::exchange_frame(
     const uint8_t *tx_frame,
     uint8_t *rx_frame,
     std::size_t frame_size,
@@ -47,9 +96,9 @@ int MhiTransportLegacy::exchange_frame(
     bool &new_data_packet_received) {
   new_data_packet_received = false;
 
-  const gpio_num_t sck = static_cast<gpio_num_t>(this->config_.sck_pin);
-  const gpio_num_t mosi = static_cast<gpio_num_t>(this->config_.mosi_pin);
-  const gpio_num_t miso = static_cast<gpio_num_t>(this->config_.miso_pin);
+  const int sck_pin = this->config_.sck_pin;
+  const int mosi_pin = this->config_.mosi_pin;
+  const int miso_pin = this->config_.miso_pin;
 
   const uint32_t start_ms = mhi_now_ms();
 
@@ -57,7 +106,7 @@ int MhiTransportLegacy::exchange_frame(
   uint32_t sck_high_start_ms = mhi_now_ms();
   uint32_t wait_spin_counter = 0;
   while ((mhi_now_ms() - sck_high_start_ms) < 5U) {
-    if (gpio_get_level(sck) == 0) {
+    if (!fast_gpio_read(sck_pin)) {
       sck_high_start_ms = mhi_now_ms();
     }
     if (timed_out(start_ms, max_time_ms, wait_spin_counter)) {
@@ -68,29 +117,32 @@ int MhiTransportLegacy::exchange_frame(
   for (std::size_t byte_cnt = 0; byte_cnt < frame_size; byte_cnt++) {
     uint8_t mosi_byte = 0;
     uint8_t bit_mask = 1;
-
     uint32_t byte_spin_counter = 0;
 
     for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
       // Wait for falling edge: SCK high -> low
-      while (gpio_get_level(sck) != 0) {
+      while (fast_gpio_read(sck_pin)) {
         if (timed_out(start_ms, max_time_ms, byte_spin_counter)) {
           return err_msg_timeout_SCK_high;
         }
       }
 
-      // Drive outgoing bit on falling edge
-      gpio_set_level(miso, (tx_frame[byte_cnt] & bit_mask) ? 1 : 0);
+      // Drive outgoing bit immediately on falling edge
+      if ((tx_frame[byte_cnt] & bit_mask) != 0) {
+        fast_gpio_write_high(miso_pin);
+      } else {
+        fast_gpio_write_low(miso_pin);
+      }
 
       // Wait for rising edge: SCK low -> high
-      while (gpio_get_level(sck) == 0) {
+      while (!fast_gpio_read(sck_pin)) {
         if (timed_out(start_ms, max_time_ms, byte_spin_counter)) {
           return err_msg_timeout_SCK_low;
         }
       }
 
       // Sample MOSI right after rising edge
-      if (gpio_get_level(mosi) != 0) {
+      if (fast_gpio_read(mosi_pin)) {
         mosi_byte = static_cast<uint8_t>(mosi_byte + bit_mask);
       }
 
@@ -102,13 +154,13 @@ int MhiTransportLegacy::exchange_frame(
       rx_frame[byte_cnt] = mosi_byte;
     }
 
-    // Coarse timeout check between bytes as well.
+    // Coarse timeout check between bytes
     if ((mhi_now_ms() - start_ms) > max_time_ms) {
       return err_msg_timeout_SCK_high;
     }
   }
 
-  gpio_set_level(miso, 0);
+  fast_gpio_write_low(miso_pin);
   return 0;
 }
 
