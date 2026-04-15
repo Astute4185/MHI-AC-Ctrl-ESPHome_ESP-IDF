@@ -38,6 +38,7 @@ void MhiTransportGpioFrameIsr::setup(const MhiTransportConfig &config) {
 
   esp_err_t err = gpio_install_isr_service(0);
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    this->isr_registered_ = false;
     return;
   }
 
@@ -52,40 +53,34 @@ void MhiTransportGpioFrameIsr::setup(const MhiTransportConfig &config) {
 bool MhiTransportGpioFrameIsr::wait_for_frame_start_(uint32_t max_time_ms) {
   const gpio_num_t sck = static_cast<gpio_num_t>(this->config_.sck_pin);
   const uint32_t start_ms = mhi_now_ms();
-  uint32_t observed_edge_count = this->edge_count_;
 
+  // Step 1: sleep until there is at least some SCK activity.
+  // This is the only job of the ISR path.
   while ((mhi_now_ms() - start_ms) <= max_time_ms) {
-    const uint32_t remaining_ms = max_time_ms - (mhi_now_ms() - start_ms);
-    const TickType_t wait_ticks =
-        pdMS_TO_TICKS(remaining_ms > 10 ? 10 : remaining_ms + 1);
-
     this->waiter_task_ = xTaskGetCurrentTaskHandle();
-    (void) ulTaskNotifyTake(pdTRUE, wait_ticks);
+    (void) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5));
+    this->waiter_task_ = nullptr;
 
-    if (this->edge_count_ == observed_edge_count) {
-      continue;
-    }
-    observed_edge_count = this->edge_count_;
-
-    if (gpio_get_level(sck) == 0) {
-      continue;
+    // If we got here because of timeout, just loop and keep waiting until max_time_ms.
+    if ((mhi_now_ms() - start_ms) > max_time_ms) {
+      return false;
     }
 
-    const uint32_t high_start_ms = mhi_now_ms();
-    while ((mhi_now_ms() - high_start_ms) < 5U) {
+    // Step 2: once there is activity, use the original legacy-style
+    // frame-start detection: wait for 5ms stable high on SCK.
+    uint32_t sck_high_start_ms = mhi_now_ms();
+    while ((mhi_now_ms() - sck_high_start_ms) < 5U) {
       if (gpio_get_level(sck) == 0) {
-        observed_edge_count = this->edge_count_;
-        goto next_candidate;
+        sck_high_start_ms = mhi_now_ms();
       }
+
       if ((mhi_now_ms() - start_ms) > max_time_ms) {
         return false;
       }
     }
 
+    // 5ms stable high found: this matches the legacy frame-start condition.
     return true;
-
-  next_candidate:
-    continue;
   }
 
   return false;
@@ -110,10 +105,14 @@ int MhiTransportGpioFrameIsr::exchange_frame(
 
   const uint32_t start_ms = mhi_now_ms();
 
+  // Hybrid design:
+  // ISR only wakes us when the bus is active.
+  // Actual frame sync is still done with the proven stable-high polling logic.
   if (!this->wait_for_frame_start_(max_time_ms)) {
     return err_msg_timeout_SCK_low;
   }
 
+  // Keep the transfer loop polling-based for deterministic timing.
   for (std::size_t byte_cnt = 0; byte_cnt < frame_size; byte_cnt++) {
     uint8_t mosi_byte = 0;
     uint8_t bit_mask = 1;
