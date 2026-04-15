@@ -2,6 +2,7 @@
 
 #include "esphome/components/climate/climate.h"
 #include "esphome/core/time.h"
+#include <cstdint>
 #include <vector>
 #include "../mhi_platform.h"
 
@@ -34,7 +35,7 @@ private:
     ACPower power_;
     ACMode mode_;
     float tsetpoint_;
-    uint fan_;
+    uint32_t fan_;
     ACVanes vanes_;
     ACVanesLR vanesLR_;
     int vanesLR_pos_old_state_;

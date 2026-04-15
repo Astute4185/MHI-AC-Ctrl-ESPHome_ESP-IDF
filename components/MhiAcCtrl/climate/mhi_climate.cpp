@@ -1,3 +1,4 @@
+#include <cmath>
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
 #include "mhi_climate.h"
@@ -24,7 +25,7 @@ void MhiClimate::setup() {
         this->swing_mode = climate::CLIMATE_SWING_OFF;
     }
     // Never send nan to HA
-    if (isnan(this->target_temperature))
+    if (std::isnan(this->target_temperature))
         this->target_temperature = 20;
 
     this->vanesLR_pos_old_state_ = 4;
@@ -56,11 +57,8 @@ void MhiClimate::update_status(ACStatus status, int value) {
     case status_power:
         if (value == power_on) {
             this->power_ = power_on;
-            // output_P(status, (TOPIC_POWER), PSTR(PAYLOAD_POWER_ON));
             update_status(status_mode, mode_tmp);
         } else {
-            // output_P(status, (TOPIC_POWER), (PAYLOAD_POWER_OFF));
-            // output_P(status, PSTR(TOPIC_MODE), PSTR(PAYLOAD_MODE_OFF));
             this->power_ = power_off;
             this->mode = climate::CLIMATE_MODE_OFF;
             this->publish_state();
@@ -79,19 +77,15 @@ void MhiClimate::update_status(ACStatus status, int value) {
             }
             break;
         case mode_dry:
-            // output_P(status, PSTR(TOPIC_MODE), PSTR(PAYLOAD_MODE_DRY));
             this->mode = climate::CLIMATE_MODE_DRY;
             break;
         case mode_cool:
-            // output_P(status, PSTR(TOPIC_MODE), PSTR(PAYLOAD_MODE_COOL));
             this->mode = climate::CLIMATE_MODE_COOL;
             break;
         case mode_fan:
-            // output_P(status, PSTR(TOPIC_MODE), PSTR(PAYLOAD_MODE_FAN));
             this->mode = climate::CLIMATE_MODE_FAN_ONLY;
             break;
         case mode_heat:
-            // output_P(status, PSTR(TOPIC_MODE), PSTR(PAYLOAD_MODE_HEAT));
             this->mode = climate::CLIMATE_MODE_HEAT;
             break;
         default:
