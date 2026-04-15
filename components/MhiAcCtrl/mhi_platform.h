@@ -1,15 +1,15 @@
 #pragma once
 
-#include <vector>
 #include <cmath>
+#include <vector>
 
-#include "esphome/core/component.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/core/component.h"
 
 #include "MHI-AC-Ctrl-core.h"
 #include "mhi_status_listener.h"
-#include "mhi_transport_legacy.h"
 #include "mhi_transport_gpio_frame_isr.h"
+#include "mhi_transport_legacy.h"
 
 namespace esphome {
 namespace mhi {
@@ -57,6 +57,7 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
         break;
     }
   }
+
   void set_sck_pin(int pin) { this->sck_pin_ = pin; }
   void set_mosi_pin(int pin) { this->mosi_pin_ = pin; }
   void set_miso_pin(int pin) { this->miso_pin_ = pin; }
@@ -67,7 +68,10 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
 
   MHI_AC_Ctrl_Core mhi_ac_ctrl_core_;
 
+  // Primary production transport.
   MhiTransportLegacy transport_legacy_;
+
+  // Experimental transport, not default.
   MhiTransportGpioFrameIsr transport_gpio_frame_isr_;
 
   std::vector<MhiStatusListener *> listeners_;

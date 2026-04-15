@@ -244,20 +244,24 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
       new_datapacket_received);
 
   if (transport_result < 0) {
+    this->transport_->on_frame_result(false, transport_result);
     return transport_result;
   }
 
   checksum = calc_checksum(MOSI_frame);
   if (((MOSI_frame[SB0] & 0xfe) != 0x6c) | (MOSI_frame[SB1] != 0x80) | (MOSI_frame[SB2] != 0x04)) {
+    this->transport_->on_frame_result(false, err_msg_invalid_signature);
     return err_msg_invalid_signature;
   }
   if (((MOSI_frame[CBH] << 8) | MOSI_frame[CBL]) != checksum) {
+    this->transport_->on_frame_result(false, err_msg_invalid_checksum);
     return err_msg_invalid_checksum;
   }
 
   if (frameSize == 33) {
     checksum = calc_checksumFrame33(MOSI_frame);
     if (MOSI_frame[CBL2] != static_cast<uint8_t>(checksum & 0xFF)) {
+      this->transport_->on_frame_result(false, err_msg_invalid_checksum);
       return err_msg_invalid_checksum;
     }
   }
@@ -590,5 +594,6 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
     }
   }
 
+  this->transport_->on_frame_result(true, err_msg_valid_frame);
   return static_cast<int>(call_counter);
 }

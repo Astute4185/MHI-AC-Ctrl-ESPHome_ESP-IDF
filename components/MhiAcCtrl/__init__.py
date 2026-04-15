@@ -12,7 +12,6 @@ CONF_VANES_LR = "initial_horizontal_vanes_position"
 CONF_SCK_PIN = "sck_pin"
 CONF_MOSI_PIN = "mosi_pin"
 CONF_MISO_PIN = "miso_pin"
-CONF_SPI_CS_PIN = "spi_cs_pin"
 CONF_TRANSPORT_BACKEND = "transport_backend"
 
 TRANSPORT_BACKEND_VALUES = {
@@ -37,38 +36,22 @@ SetExternalRoomTemperatureAction = mhi_ns.class_(
     "SetExternalRoomTemperatureAction", automation.Action
 )
 
-
-def _validate_transport_backend(config):
-    if (
-        config[CONF_TRANSPORT_BACKEND] == "spi_idf"
-        and CONF_SPI_CS_PIN not in config
-    ):
-        raise cv.Invalid(
-            "transport_backend: spi_idf requires spi_cs_pin because the ESP-IDF SPI slave driver needs a CS line"
-        )
-    return config
-
-
-CONFIG_SCHEMA = cv.All(
-    cv.Schema(
-        {
-            cv.GenerateID(): cv.declare_id(MhiAcCtrl),
-            cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
-            cv.Optional(CONF_FRAME_SIZE, default=20): cv.int_range(min=20, max=33),
-            cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
-            cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
-            cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
-            cv.Optional(CONF_SCK_PIN): cv.int_,
-            cv.Optional(CONF_MOSI_PIN): cv.int_,
-            cv.Optional(CONF_MISO_PIN): cv.int_,
-            cv.Optional(CONF_SPI_CS_PIN): cv.int_,
-            cv.Optional(CONF_TRANSPORT_BACKEND, default="esp32_fast"): cv.one_of(
-                *TRANSPORT_BACKEND_VALUES.keys(), lower=True
-            ),
-        }
-    ).extend(cv.COMPONENT_SCHEMA),
-    _validate_transport_backend,
-)
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MhiAcCtrl),
+        cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
+        cv.Optional(CONF_FRAME_SIZE, default=20): cv.int_range(min=20, max=33),
+        cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
+        cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
+        cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
+        cv.Optional(CONF_SCK_PIN): cv.int_,
+        cv.Optional(CONF_MOSI_PIN): cv.int_,
+        cv.Optional(CONF_MISO_PIN): cv.int_,
+        cv.Optional(CONF_TRANSPORT_BACKEND, default="esp32_fast"): cv.one_of(
+            *TRANSPORT_BACKEND_VALUES.keys(), lower=True
+        ),
+    }
+).extend(cv.COMPONENT_SCHEMA)
 
 
 async def to_code(config):
@@ -96,8 +79,6 @@ async def to_code(config):
         cg.add(var.set_mosi_pin(config[CONF_MOSI_PIN]))
     if CONF_MISO_PIN in config:
         cg.add(var.set_miso_pin(config[CONF_MISO_PIN]))
-    if CONF_SPI_CS_PIN in config:
-        cg.add(var.set_spi_cs_pin(config[CONF_SPI_CS_PIN]))
 
 
 @automation.register_action(

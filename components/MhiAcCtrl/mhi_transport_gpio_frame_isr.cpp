@@ -24,6 +24,12 @@ void MhiTransportGpioFrameIsr::gpio_isr_handler_(void *arg) {
 
 void MhiTransportGpioFrameIsr::setup(const MhiTransportConfig &config) {
   this->config_ = config;
+  this->timing_ = {};
+  this->timing_.auto_calibrate = false;
+  this->stats_ = {};
+  this->waiter_task_ = nullptr;
+  this->edge_count_ = 0;
+  this->isr_registered_ = false;
 
   gpio_reset_pin(static_cast<gpio_num_t>(this->config_.sck_pin));
   gpio_reset_pin(static_cast<gpio_num_t>(this->config_.mosi_pin));
@@ -52,34 +58,28 @@ void MhiTransportGpioFrameIsr::setup(const MhiTransportConfig &config) {
 
 bool MhiTransportGpioFrameIsr::wait_for_frame_start_(uint32_t max_time_ms) {
   const gpio_num_t sck = static_cast<gpio_num_t>(this->config_.sck_pin);
-  const uint32_t start_ms = mhi_now_ms();
+  const uint32_t start_us = mhi_now_us();
 
-  // Step 1: sleep until there is at least some SCK activity.
-  // This is the only job of the ISR path.
-  while ((mhi_now_ms() - start_ms) <= max_time_ms) {
+  while ((mhi_now_us() - start_us) <= (max_time_ms * 1000U)) {
     this->waiter_task_ = xTaskGetCurrentTaskHandle();
     (void) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5));
     this->waiter_task_ = nullptr;
 
-    // If we got here because of timeout, just loop and keep waiting until max_time_ms.
-    if ((mhi_now_ms() - start_ms) > max_time_ms) {
+    if ((mhi_now_us() - start_us) > (max_time_ms * 1000U)) {
       return false;
     }
 
-    // Step 2: once there is activity, use the original legacy-style
-    // frame-start detection: wait for 5ms stable high on SCK.
-    uint32_t sck_high_start_ms = mhi_now_ms();
-    while ((mhi_now_ms() - sck_high_start_ms) < 5U) {
+    uint32_t sck_high_start_us = mhi_now_us();
+    while ((mhi_now_us() - sck_high_start_us) < this->timing_.frame_start_high_us) {
       if (gpio_get_level(sck) == 0) {
-        sck_high_start_ms = mhi_now_ms();
+        sck_high_start_us = mhi_now_us();
       }
 
-      if ((mhi_now_ms() - start_ms) > max_time_ms) {
+      if ((mhi_now_us() - start_us) > (max_time_ms * 1000U)) {
         return false;
       }
     }
 
-    // 5ms stable high found: this matches the legacy frame-start condition.
     return true;
   }
 
@@ -92,7 +92,6 @@ int MhiTransportGpioFrameIsr::exchange_frame(
     std::size_t frame_size,
     uint32_t max_time_ms,
     bool &new_data_packet_received) {
-
   new_data_packet_received = false;
 
   if (!this->isr_registered_) {
@@ -103,37 +102,43 @@ int MhiTransportGpioFrameIsr::exchange_frame(
   const gpio_num_t mosi = static_cast<gpio_num_t>(this->config_.mosi_pin);
   const gpio_num_t miso = static_cast<gpio_num_t>(this->config_.miso_pin);
 
-  const uint32_t start_ms = mhi_now_ms();
+  const uint32_t start_us = mhi_now_us();
 
-  // Hybrid design:
-  // ISR only wakes us when the bus is active.
-  // Actual frame sync is still done with the proven stable-high polling logic.
   if (!this->wait_for_frame_start_(max_time_ms)) {
+    this->stats_.timeout_sck_low++;
     return err_msg_timeout_SCK_low;
   }
 
-  // Keep the transfer loop polling-based for deterministic timing.
   for (std::size_t byte_cnt = 0; byte_cnt < frame_size; byte_cnt++) {
+    const uint32_t byte_start_us = mhi_now_us();
     uint8_t mosi_byte = 0;
     uint8_t bit_mask = 1;
 
     for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
+      const uint32_t high_wait_start_us = mhi_now_us();
       while (gpio_get_level(sck) != 0) {
-        if ((mhi_now_ms() - start_ms) > max_time_ms) {
+        if ((mhi_now_us() - high_wait_start_us) > this->timing_.sck_high_timeout_us ||
+            (mhi_now_us() - start_us) > (max_time_ms * 1000U)) {
+          gpio_set_level(miso, 0);
+          this->stats_.timeout_sck_high++;
           return err_msg_timeout_SCK_high;
         }
       }
 
       gpio_set_level(miso, (tx_frame[byte_cnt] & bit_mask) ? 1 : 0);
 
+      const uint32_t low_wait_start_us = mhi_now_us();
       while (gpio_get_level(sck) == 0) {
-        if ((mhi_now_ms() - start_ms) > max_time_ms) {
+        if ((mhi_now_us() - low_wait_start_us) > this->timing_.sck_low_timeout_us ||
+            (mhi_now_us() - start_us) > (max_time_ms * 1000U)) {
+          gpio_set_level(miso, 0);
+          this->stats_.timeout_sck_low++;
           return err_msg_timeout_SCK_low;
         }
       }
 
       if (gpio_get_level(mosi) != 0) {
-        mosi_byte = static_cast<uint8_t>(mosi_byte + bit_mask);
+        mosi_byte = static_cast<uint8_t>(mosi_byte | bit_mask);
       }
 
       bit_mask = static_cast<uint8_t>(bit_mask << 1);
@@ -143,10 +148,37 @@ int MhiTransportGpioFrameIsr::exchange_frame(
       new_data_packet_received = true;
       rx_frame[byte_cnt] = mosi_byte;
     }
+
+    if ((mhi_now_us() - byte_start_us) > this->timing_.byte_timeout_us) {
+      gpio_set_level(miso, 0);
+      this->stats_.timeout_byte++;
+      return err_msg_timeout_SCK_high;
+    }
   }
 
   gpio_set_level(miso, 0);
   return 0;
+}
+
+void MhiTransportGpioFrameIsr::on_frame_result(bool valid_frame, int error_code) {
+  this->stats_.frames_total++;
+  if (valid_frame) {
+    this->stats_.frames_valid++;
+    this->stats_.consecutive_errors = 0;
+    return;
+  }
+
+  this->stats_.consecutive_errors++;
+  switch (error_code) {
+    case err_msg_invalid_signature:
+      this->stats_.frames_invalid_signature++;
+      break;
+    case err_msg_invalid_checksum:
+      this->stats_.frames_invalid_checksum++;
+      break;
+    default:
+      break;
+  }
 }
 
 }  // namespace mhi

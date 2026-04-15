@@ -46,8 +46,13 @@ void MhiPlatform::setup() {
     ESP_LOGCONFIG(TAG, "Using transport backend: esp32_fast");
   }
 
-  ESP_LOGCONFIG(TAG, "Resolved transport config: sck=%d mosi=%d miso=%d cs=%d frame_size=%u",
-                config.sck_pin, config.mosi_pin, config.miso_pin, config.cs_pin, config.frame_size);
+  ESP_LOGCONFIG(
+      TAG,
+      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size=%u",
+      config.sck_pin,
+      config.mosi_pin,
+      config.miso_pin,
+      config.frame_size);
 
   this->mhi_ac_ctrl_core_.set_transport(selected_transport);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
@@ -112,9 +117,7 @@ void MhiPlatform::dump_config() {
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
-  ESP_LOGCONFIG(TAG, "  spi_cs_pin: %d", this->spi_cs_pin_);
-  ESP_LOGCONFIG(TAG, "  listeners count: %d",
-                static_cast<int>(this->listeners_.size()));
+  ESP_LOGCONFIG(TAG, "  listeners count: %d", static_cast<int>(this->listeners_.size()));
 }
 
 void MhiPlatform::cbiStatusFunction(ACStatus status, int value) {
