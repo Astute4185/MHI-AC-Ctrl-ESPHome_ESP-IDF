@@ -12,7 +12,9 @@
 
 // Fast GPIO register access for ESP32-family targets.
 // This keeps the transport model the same, but reduces per-bit overhead.
-#if defined(ESP32) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) ||     defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) ||     defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2)
+#if defined(ESP32) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || \
+    defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) || \
+    defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2)
 #include "soc/gpio_struct.h"
 #define MHI_USE_FAST_GPIO 1
 #else
@@ -146,6 +148,13 @@ void MhiTransportLegacy::setup(const MhiTransportConfig &config) {
   this->last_observed_max_byte_us_ = 0;
   this->last_exchange_completed_ = false;
 
+  // Safe bootstrap defaults.
+  // The whole point is to avoid failing before a single valid frame exists.
+  this->timing_.frame_start_high_us = 5000;
+  this->timing_.sck_high_timeout_us = 4000;
+  this->timing_.sck_low_timeout_us = 4000;
+  this->timing_.byte_timeout_us = 30000;
+
   gpio_reset_pin(static_cast<gpio_num_t>(this->config_.sck_pin));
   gpio_reset_pin(static_cast<gpio_num_t>(this->config_.mosi_pin));
   gpio_reset_pin(static_cast<gpio_num_t>(this->config_.miso_pin));
@@ -176,6 +185,29 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
 
   const uint32_t start_us = mhi_now_us();
 
+  // Bootstrap mode must be permissive until calibration is complete.
+  // Before valid frames exist, fall back to the whole-frame budget instead of
+  // a tight per-phase limit that can self-sabotage startup.
+  const uint32_t bootstrap_phase_timeout_us = clamp_value<uint32_t>(
+      max_time_ms * 1000U,
+      this->timing_.min_phase_timeout_us,
+      this->timing_.max_phase_timeout_us);
+
+  const uint32_t bootstrap_byte_timeout_us = clamp_value<uint32_t>(
+      max_time_ms * 1000U,
+      this->timing_.min_byte_timeout_us,
+      this->timing_.max_byte_timeout_us);
+
+  const uint32_t active_sck_high_timeout_us =
+      this->timing_.calibration_complete ? this->timing_.sck_high_timeout_us : bootstrap_phase_timeout_us;
+
+  const uint32_t active_sck_low_timeout_us =
+      this->timing_.calibration_complete ? this->timing_.sck_low_timeout_us : bootstrap_phase_timeout_us;
+
+  const uint32_t active_byte_timeout_us =
+      this->timing_.calibration_complete ? this->timing_.byte_timeout_us : bootstrap_byte_timeout_us;
+
+  // Wait for 5 ms stable high on SCK to detect frame start.
   uint32_t sck_high_start_us = mhi_now_us();
   while ((mhi_now_us() - sck_high_start_us) < this->timing_.frame_start_high_us) {
     if (!fast_gpio_read(sck_pin)) {
@@ -195,10 +227,11 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
     uint8_t bit_mask = 1;
 
     for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
+      // Wait for falling edge: SCK high -> low
       const uint32_t high_wait_start_us = mhi_now_us();
       while (fast_gpio_read(sck_pin)) {
         const uint32_t elapsed_us = mhi_now_us() - high_wait_start_us;
-        if (elapsed_us > this->timing_.sck_high_timeout_us || this->overall_timed_out_(start_us, max_time_ms)) {
+        if (elapsed_us > active_sck_high_timeout_us || this->overall_timed_out_(start_us, max_time_ms)) {
           fast_gpio_write_low(miso_pin);
           this->stats_.timeout_sck_high++;
           return err_msg_timeout_SCK_high;
@@ -209,16 +242,18 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
         this->last_observed_max_high_wait_us_ = high_wait_us;
       }
 
+      // Drive outgoing bit immediately on falling edge
       if ((tx_frame[byte_cnt] & bit_mask) != 0) {
         fast_gpio_write_high(miso_pin);
       } else {
         fast_gpio_write_low(miso_pin);
       }
 
+      // Wait for rising edge: SCK low -> high
       const uint32_t low_wait_start_us = mhi_now_us();
       while (!fast_gpio_read(sck_pin)) {
         const uint32_t elapsed_us = mhi_now_us() - low_wait_start_us;
-        if (elapsed_us > this->timing_.sck_low_timeout_us || this->overall_timed_out_(start_us, max_time_ms)) {
+        if (elapsed_us > active_sck_low_timeout_us || this->overall_timed_out_(start_us, max_time_ms)) {
           fast_gpio_write_low(miso_pin);
           this->stats_.timeout_sck_low++;
           return err_msg_timeout_SCK_low;
@@ -229,6 +264,7 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
         this->last_observed_max_low_wait_us_ = low_wait_us;
       }
 
+      // Sample MOSI right after rising edge
       if (fast_gpio_read(mosi_pin)) {
         mosi_byte = static_cast<uint8_t>(mosi_byte | bit_mask);
       }
@@ -245,7 +281,7 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
     if (byte_elapsed_us > this->last_observed_max_byte_us_) {
       this->last_observed_max_byte_us_ = byte_elapsed_us;
     }
-    if (byte_elapsed_us > this->timing_.byte_timeout_us) {
+    if (byte_elapsed_us > active_byte_timeout_us) {
       fast_gpio_write_low(miso_pin);
       this->stats_.timeout_byte++;
       return err_msg_timeout_SCK_high;
