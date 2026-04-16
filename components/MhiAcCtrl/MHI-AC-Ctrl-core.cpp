@@ -1,11 +1,13 @@
 // MHI-AC-Ctrol-core
 // implements the core functions (read & write SPI)
 
-#include "esphome/core/log.h"
 #include "mhi_time.h"
 #include "MHI-AC-Ctrl-core.h"
+#include "esphome/core/log.h"
 
 #include <cstdio>
+#include <cstring>
+#include <cstdarg>
 
 uint16_t calc_checksum(uint8_t *frame) {
   uint16_t checksum = 0;
@@ -28,6 +30,8 @@ namespace {
 static const char *DIAG_TAG = "mhi.diag";
 constexpr uint32_t kDiagSummaryIntervalMs = 10000U;
 constexpr uint32_t kDiagSampleIntervalMs = 15000U;
+constexpr std::size_t kDiagFrameBytes = 33U;
+constexpr std::size_t kDiagMaxMismatchPreview = 12U;
 
 struct DiagCounters {
   uint32_t ok_frames = 0;
@@ -45,6 +49,13 @@ struct DiagCounters {
   uint32_t header_other = 0;
   uint32_t extension_probe_attempted = 0;
   uint32_t extension_start_seen = 0;
+  uint32_t byte_mismatch_counts[kDiagFrameBytes] = {0};
+};
+
+struct LastGoodFrame {
+  bool valid = false;
+  std::size_t len = 0;
+  uint8_t frame[kDiagFrameBytes] = {0};
 };
 
 enum DiagReason : uint8_t {
@@ -74,6 +85,111 @@ void format_frame_hex(const uint8_t *frame, std::size_t len, char *out, std::siz
   out[out_len - 1] = '\0';
 }
 
+void format_mismatch_preview(
+    const uint8_t *good_frame,
+    std::size_t good_len,
+    const uint8_t *bad_frame,
+    std::size_t bad_len,
+    char *out,
+    std::size_t out_len) {
+  if (out_len == 0) {
+    return;
+  }
+  out[0] = '\0';
+  const std::size_t cmp_len = (good_len < bad_len) ? good_len : bad_len;
+  std::size_t pos = 0;
+  std::size_t shown = 0;
+  for (std::size_t i = 0; i < cmp_len && shown < kDiagMaxMismatchPreview && pos + 16 < out_len; i++) {
+    if (good_frame[i] == bad_frame[i]) {
+      continue;
+    }
+    const uint8_t delta = static_cast<uint8_t>(good_frame[i] ^ bad_frame[i]);
+    const int written = std::snprintf(
+        out + pos,
+        out_len - pos,
+        "%u:%02X>%02X(^%02X)%s",
+        static_cast<unsigned>(i),
+        good_frame[i],
+        bad_frame[i],
+        delta,
+        (shown + 1U < kDiagMaxMismatchPreview) ? " " : "");
+    if (written <= 0) {
+      break;
+    }
+    pos += static_cast<std::size_t>(written);
+    shown++;
+  }
+  if (shown == 0 && good_len != bad_len && pos + 32 < out_len) {
+    std::snprintf(out + pos, out_len - pos, "len:%u>%u", static_cast<unsigned>(good_len), static_cast<unsigned>(bad_len));
+  }
+  out[out_len - 1] = '\0';
+}
+
+void update_mismatch_histogram(
+    uint32_t *histogram,
+    const uint8_t *good_frame,
+    std::size_t good_len,
+    const uint8_t *bad_frame,
+    std::size_t bad_len) {
+  const std::size_t cmp_len = (good_len < bad_len) ? good_len : bad_len;
+  for (std::size_t i = 0; i < cmp_len && i < kDiagFrameBytes; i++) {
+    if (good_frame[i] != bad_frame[i]) {
+      histogram[i]++;
+    }
+  }
+}
+
+void format_histogram_top(const uint32_t *histogram, char *out, std::size_t out_len) {
+  if (out_len == 0) {
+    return;
+  }
+  out[0] = '\0';
+
+  uint32_t top_counts[6] = {0};
+  std::size_t top_indices[6] = {0};
+  for (std::size_t i = 0; i < kDiagFrameBytes; i++) {
+    const uint32_t value = histogram[i];
+    if (value == 0) {
+      continue;
+    }
+    for (std::size_t slot = 0; slot < 6; slot++) {
+      if (value > top_counts[slot]) {
+        for (std::size_t shift = 5; shift > slot; shift--) {
+          top_counts[shift] = top_counts[shift - 1];
+          top_indices[shift] = top_indices[shift - 1];
+        }
+        top_counts[slot] = value;
+        top_indices[slot] = i;
+        break;
+      }
+    }
+  }
+
+  std::size_t pos = 0;
+  bool first = true;
+  for (std::size_t slot = 0; slot < 6 && pos + 16 < out_len; slot++) {
+    if (top_counts[slot] == 0) {
+      break;
+    }
+    const int written = std::snprintf(
+        out + pos,
+        out_len - pos,
+        "%s%u:%u",
+        first ? "" : " ",
+        static_cast<unsigned>(top_indices[slot]),
+        static_cast<unsigned>(top_counts[slot]));
+    if (written <= 0) {
+      break;
+    }
+    pos += static_cast<std::size_t>(written);
+    first = false;
+  }
+  if (first) {
+    std::snprintf(out, out_len, "none");
+  }
+  out[out_len - 1] = '\0';
+}
+
 bool should_log_reason(DiagReason reason, uint32_t now_ms, uint32_t *last_log_ms, uint32_t count) {
   if (count <= 1U) {
     last_log_ms[reason] = now_ms;
@@ -91,9 +207,11 @@ void maybe_log_summary(const DiagCounters &counters, uint32_t now_ms, uint32_t &
     return;
   }
   last_summary_ms = now_ms;
+  char mismatch_top[96];
+  format_histogram_top(counters.byte_mismatch_counts, mismatch_top, sizeof(mismatch_top));
   ESP_LOGI(
       DIAG_TAG,
-      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u",
+      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u mismatch_top=%s",
       counters.ok_frames,
       counters.ok_20,
       counters.ok_33,
@@ -108,10 +226,56 @@ void maybe_log_summary(const DiagCounters &counters, uint32_t now_ms, uint32_t &
       counters.header_6d,
       counters.header_other,
       counters.extension_probe_attempted,
-      counters.extension_start_seen);
+      counters.extension_start_seen,
+      mismatch_top);
+}
+
+void maybe_log_bad_frame_with_reference(
+    DiagReason reason,
+    const char *reason_name,
+    uint32_t now_ms,
+    uint32_t *last_log_ms,
+    uint32_t count,
+    const uint8_t *bad_frame,
+    std::size_t bad_len,
+    const LastGoodFrame &last_good,
+    const char *prefix_fmt,
+    ...) {
+  if (!should_log_reason(reason, now_ms, last_log_ms, count)) {
+    return;
+  }
+
+  char bad_hex[160];
+  format_frame_hex(bad_frame, bad_len, bad_hex, sizeof(bad_hex));
+
+  char good_hex[160];
+  char mismatch_preview[256];
+  if (last_good.valid) {
+    format_frame_hex(last_good.frame, last_good.len, good_hex, sizeof(good_hex));
+    format_mismatch_preview(last_good.frame, last_good.len, bad_frame, bad_len, mismatch_preview, sizeof(mismatch_preview));
+  } else {
+    std::snprintf(good_hex, sizeof(good_hex), "none");
+    std::snprintf(mismatch_preview, sizeof(mismatch_preview), "no_last_good_frame");
+  }
+
+  char prefix[192];
+  va_list args;
+  va_start(args, prefix_fmt);
+  std::vsnprintf(prefix, sizeof(prefix), prefix_fmt, args);
+  va_end(args);
+
+  ESP_LOGW(
+      DIAG_TAG,
+      "%s count=%u rx=%s last_good=%s mismatch=%s",
+      prefix,
+      count,
+      bad_hex,
+      good_hex,
+      mismatch_preview);
 }
 
 }  // namespace
+
 
 void MHI_AC_Ctrl_Core::reset_old_values() {  // used e.g. when MQTT connection to broker is lost, to re-output data
   // old status
@@ -326,6 +490,7 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   }
 
   static DiagCounters diag_counters{};
+  static LastGoodFrame diag_last_good_frame{};
   static uint32_t diag_last_summary_ms = 0;
   static uint32_t diag_last_sample_ms[DIAG_REASON_COUNT] = {0};
 
@@ -403,19 +568,26 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
 
   if (frameSize == 33 && transport_result.bytes_received < 33U) {
     diag_counters.short_capture++;
-    if (should_log_reason(DIAG_REASON_SHORT_CAPTURE, now_ms, diag_last_sample_ms, diag_counters.short_capture)) {
-      char frame_hex[128];
-      format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
-      ESP_LOGW(
-          DIAG_TAG,
-          "short_capture count=%u expected=33 got=%u hdr=%02X ext_probe=%s ext_seen=%s rx=%s",
-          diag_counters.short_capture,
-          static_cast<unsigned>(transport_result.bytes_received),
-          transport_result.header_byte,
-          transport_result.extension_probe_attempted ? "true" : "false",
-          transport_result.extension_start_seen ? "true" : "false",
-          frame_hex);
-    }
+    update_mismatch_histogram(
+        diag_counters.byte_mismatch_counts,
+        diag_last_good_frame.frame,
+        diag_last_good_frame.len,
+        MOSI_frame,
+        transport_result.bytes_received);
+    maybe_log_bad_frame_with_reference(
+        DIAG_REASON_SHORT_CAPTURE,
+        "short_capture",
+        now_ms,
+        diag_last_sample_ms,
+        diag_counters.short_capture,
+        MOSI_frame,
+        transport_result.bytes_received,
+        diag_last_good_frame,
+        "short_capture expected=33 got=%u hdr=%02X ext_probe=%s ext_seen=%s",
+        static_cast<unsigned>(transport_result.bytes_received),
+        transport_result.header_byte,
+        transport_result.extension_probe_attempted ? "true" : "false",
+        transport_result.extension_start_seen ? "true" : "false");
     maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_checksum;
   }
@@ -423,35 +595,52 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   checksum = calc_checksum(MOSI_frame);
   if (((MOSI_frame[SB0] & 0xfe) != 0x6c) | (MOSI_frame[SB1] != 0x80) | (MOSI_frame[SB2] != 0x04)) {
     diag_counters.invalid_signature++;
-    if (should_log_reason(DIAG_REASON_INVALID_SIGNATURE, now_ms, diag_last_sample_ms, diag_counters.invalid_signature)) {
-      char frame_hex[128];
-      format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
-      ESP_LOGW(
-          DIAG_TAG,
-          "invalid_signature count=%u bytes=%u hdr=%02X rx=%s",
-          diag_counters.invalid_signature,
-          static_cast<unsigned>(transport_result.bytes_received),
-          transport_result.header_byte,
-          frame_hex);
-    }
+    update_mismatch_histogram(
+        diag_counters.byte_mismatch_counts,
+        diag_last_good_frame.frame,
+        diag_last_good_frame.len,
+        MOSI_frame,
+        transport_result.bytes_received);
+    maybe_log_bad_frame_with_reference(
+        DIAG_REASON_INVALID_SIGNATURE,
+        "invalid_signature",
+        now_ms,
+        diag_last_sample_ms,
+        diag_counters.invalid_signature,
+        MOSI_frame,
+        transport_result.bytes_received,
+        diag_last_good_frame,
+        "invalid_signature bytes=%u hdr=%02X sb=%02X %02X %02X",
+        static_cast<unsigned>(transport_result.bytes_received),
+        transport_result.header_byte,
+        MOSI_frame[SB0],
+        MOSI_frame[SB1],
+        MOSI_frame[SB2]);
     maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_signature;
   }
   if (((MOSI_frame[CBH] << 8) | MOSI_frame[CBL]) != checksum) {
     diag_counters.base_checksum_fail++;
-    if (should_log_reason(DIAG_REASON_BASE_CHECKSUM, now_ms, diag_last_sample_ms, diag_counters.base_checksum_fail)) {
-      char frame_hex[128];
-      format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
-      ESP_LOGW(
-          DIAG_TAG,
-          "base_checksum_fail count=%u bytes=%u hdr=%02X expected=%04X actual=%04X rx=%s",
-          diag_counters.base_checksum_fail,
-          static_cast<unsigned>(transport_result.bytes_received),
-          transport_result.header_byte,
-          checksum,
-          static_cast<unsigned>(((MOSI_frame[CBH] << 8) | MOSI_frame[CBL])),
-          frame_hex);
-    }
+    update_mismatch_histogram(
+        diag_counters.byte_mismatch_counts,
+        diag_last_good_frame.frame,
+        diag_last_good_frame.len,
+        MOSI_frame,
+        transport_result.bytes_received);
+    maybe_log_bad_frame_with_reference(
+        DIAG_REASON_BASE_CHECKSUM,
+        "base_checksum_fail",
+        now_ms,
+        diag_last_sample_ms,
+        diag_counters.base_checksum_fail,
+        MOSI_frame,
+        transport_result.bytes_received,
+        diag_last_good_frame,
+        "base_checksum_fail bytes=%u hdr=%02X expected=%04X actual=%04X",
+        static_cast<unsigned>(transport_result.bytes_received),
+        transport_result.header_byte,
+        checksum,
+        static_cast<unsigned>(((MOSI_frame[CBH] << 8) | MOSI_frame[CBL])));
     maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_checksum;
   }
@@ -460,21 +649,28 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
     checksum = calc_checksumFrame33(MOSI_frame);
     if (MOSI_frame[CBL2] != static_cast<uint8_t>(checksum & 0xFF)) {
       diag_counters.extended_checksum_fail++;
-      if (should_log_reason(DIAG_REASON_EXTENDED_CHECKSUM, now_ms, diag_last_sample_ms, diag_counters.extended_checksum_fail)) {
-        char frame_hex[128];
-        format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
-        ESP_LOGW(
-            DIAG_TAG,
-            "extended_checksum_fail count=%u bytes=%u hdr=%02X expected=%02X actual=%02X ext_probe=%s ext_seen=%s rx=%s",
-            diag_counters.extended_checksum_fail,
-            static_cast<unsigned>(transport_result.bytes_received),
-            transport_result.header_byte,
-            static_cast<unsigned>(checksum & 0xFF),
-            static_cast<unsigned>(MOSI_frame[CBL2]),
-            transport_result.extension_probe_attempted ? "true" : "false",
-            transport_result.extension_start_seen ? "true" : "false",
-            frame_hex);
-      }
+      update_mismatch_histogram(
+          diag_counters.byte_mismatch_counts,
+          diag_last_good_frame.frame,
+          diag_last_good_frame.len,
+          MOSI_frame,
+          transport_result.bytes_received);
+      maybe_log_bad_frame_with_reference(
+          DIAG_REASON_EXTENDED_CHECKSUM,
+          "extended_checksum_fail",
+          now_ms,
+          diag_last_sample_ms,
+          diag_counters.extended_checksum_fail,
+          MOSI_frame,
+          transport_result.bytes_received,
+          diag_last_good_frame,
+          "extended_checksum_fail bytes=%u hdr=%02X expected=%02X actual=%02X ext_probe=%s ext_seen=%s",
+          static_cast<unsigned>(transport_result.bytes_received),
+          transport_result.header_byte,
+          static_cast<unsigned>(checksum & 0xFF),
+          static_cast<unsigned>(MOSI_frame[CBL2]),
+          transport_result.extension_probe_attempted ? "true" : "false",
+          transport_result.extension_start_seen ? "true" : "false");
       maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
       return err_msg_invalid_checksum;
     }
@@ -486,6 +682,9 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   } else {
     diag_counters.ok_20++;
   }
+  diag_last_good_frame.valid = true;
+  diag_last_good_frame.len = transport_result.bytes_received;
+  std::memcpy(diag_last_good_frame.frame, MOSI_frame, transport_result.bytes_received);
   maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
 
   if (new_datapacket_received) {
