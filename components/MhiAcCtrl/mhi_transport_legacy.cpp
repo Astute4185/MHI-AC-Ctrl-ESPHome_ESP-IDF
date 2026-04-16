@@ -268,10 +268,22 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransportLegacy::exchange_frame(
   } else {
     result.extension_probe_attempted = true;
 
-    if (wait_for_next_falling_edge_us(sck_pin, this->config_.extension_gap_max_us, start_ms, max_time_ms)) {
-      result.extension_start_seen = true;
+    // Keep the restart-edge wait and the extension-byte capture inside one
+    // critical section. The previous version waited for the first post-gap
+    // falling edge outside the lock and only entered the critical section when
+    // starting byte 20, which still left a tiny preemption window. The
+    // remaining failures were all consistent with losing alignment exactly at
+    // the extension restart.
+    bool extension_edge_seen = false;
+    portENTER_CRITICAL(&g_mhi_capture_mux);
+    extension_edge_seen = wait_for_next_falling_edge_us(
+        sck_pin,
+        this->config_.extension_gap_max_us,
+        start_ms,
+        max_time_ms);
 
-      portENTER_CRITICAL(&g_mhi_capture_mux);
+    if (extension_edge_seen) {
+      result.extension_start_seen = true;
       rc = read_frame_range(
           sck_pin,
           mosi_pin,
@@ -285,8 +297,10 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransportLegacy::exchange_frame(
           true,
           &result.new_data_packet_received,
           nullptr);
-      portEXIT_CRITICAL(&g_mhi_capture_mux);
+    }
+    portEXIT_CRITICAL(&g_mhi_capture_mux);
 
+    if (extension_edge_seen) {
       if (rc < 0) {
         result.status = rc;
         return result;
