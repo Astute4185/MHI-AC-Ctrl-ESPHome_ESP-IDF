@@ -225,13 +225,10 @@ private:
     uint8_t new_VanesLR0 = 0;
     uint8_t new_VanesLR1 = 0;
     uint8_t new_3Dauto = 0;
-    uint8_t frame_size_hint_ = 20;
-    esphome::mhi::MhiProtocolMode protocol_mode_ = esphome::mhi::MhiProtocolMode::AUTO;
-    esphome::mhi::MhiFrameType observed_frame_type_ = esphome::mhi::MhiFrameType::UNKNOWN;
-    bool supports_extended_ = false;
+    uint8_t frameSize = 20;
 
     CallbackInterface_Status *m_cbiStatus = nullptr;
-
+    
     esphome::mhi::MhiTransport *transport_ = nullptr;
     esphome::mhi::MhiTransportConfig transport_config_;
 
@@ -255,10 +252,7 @@ public:
     void request_ErrOpData();            // request that the AC provides the error data
     float get_troom_offset();            // get troom offset
     void set_troom_offset(float offset); // set troom offset
-    void set_frame_size(uint8_t framesize); // backward-compatible frame size hint
-    void set_protocol_mode(uint8_t mode);
-    esphome::mhi::MhiFrameType get_observed_frame_type() const { return observed_frame_type_; }
-    bool supports_extended() const { return supports_extended_; }
+    void set_frame_size(uint8_t framesize); // set frame size to 20 or 33
     void set_3Dauto(AC3Dauto Dauto);     // set the requested 3D auto mode
     void set_vanesLR(uint32_t vanesLR);  // set the vanes vertical position
 };

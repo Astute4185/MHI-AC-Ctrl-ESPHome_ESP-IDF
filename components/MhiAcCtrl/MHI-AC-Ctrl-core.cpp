@@ -4,26 +4,110 @@
 #include "mhi_time.h"
 #include "MHI-AC-Ctrl-core.h"
 
-namespace {
+#include <cstdio>
 
-uint16_t calc_base_checksum(const uint8_t *frame) {
+uint16_t calc_checksum(uint8_t *frame) {
   uint16_t checksum = 0;
   for (int i = 0; i < CBH; i++) {
-    checksum = static_cast<uint16_t>(checksum + frame[i]);
+    checksum += frame[i];
   }
   return checksum;
 }
 
-uint16_t calc_extended_checksum_low(const uint8_t *frame) {
-  uint16_t checksum = calc_base_checksum(frame);
-  for (int i = DB15; i <= DB26; i++) {
-    checksum = static_cast<uint16_t>(checksum + frame[i]);
+uint16_t calc_checksumFrame33(uint8_t *frame) {
+  uint16_t checksum = 0;
+  for (int i = 0; i < CBL2; i++) {
+    checksum += frame[i];
   }
   return checksum;
 }
 
-bool is_valid_mosi_header(const uint8_t *frame) {
-  return ((frame[SB0] == 0x6C || frame[SB0] == 0x6D) && frame[SB1] == 0x80 && frame[SB2] == 0x04);
+
+namespace {
+static const char *DIAG_TAG = "mhi.diag";
+constexpr uint32_t kDiagSummaryIntervalMs = 10000U;
+constexpr uint32_t kDiagSampleIntervalMs = 15000U;
+
+struct DiagCounters {
+  uint32_t ok_frames = 0;
+  uint32_t ok_20 = 0;
+  uint32_t ok_33 = 0;
+  uint32_t short_capture = 0;
+  uint32_t invalid_signature = 0;
+  uint32_t base_checksum_fail = 0;
+  uint32_t extended_checksum_fail = 0;
+  uint32_t timeout_low = 0;
+  uint32_t timeout_high = 0;
+  uint32_t timeout_other = 0;
+  uint32_t header_6c = 0;
+  uint32_t header_6d = 0;
+  uint32_t header_other = 0;
+  uint32_t extension_probe_attempted = 0;
+  uint32_t extension_start_seen = 0;
+};
+
+enum DiagReason : uint8_t {
+  DIAG_REASON_SHORT_CAPTURE = 0,
+  DIAG_REASON_INVALID_SIGNATURE = 1,
+  DIAG_REASON_BASE_CHECKSUM = 2,
+  DIAG_REASON_EXTENDED_CHECKSUM = 3,
+  DIAG_REASON_TIMEOUT_LOW = 4,
+  DIAG_REASON_TIMEOUT_HIGH = 5,
+  DIAG_REASON_TIMEOUT_OTHER = 6,
+  DIAG_REASON_COUNT = 7
+};
+
+void format_frame_hex(const uint8_t *frame, std::size_t len, char *out, std::size_t out_len) {
+  if (out_len == 0) {
+    return;
+  }
+  out[0] = '\0';
+  std::size_t pos = 0;
+  for (std::size_t i = 0; i < len && pos + 4 < out_len; i++) {
+    const int written = std::snprintf(out + pos, out_len - pos, "%02X%s", frame[i], (i + 1 < len) ? " " : "");
+    if (written <= 0) {
+      break;
+    }
+    pos += static_cast<std::size_t>(written);
+  }
+  out[out_len - 1] = '\0';
+}
+
+bool should_log_reason(DiagReason reason, uint32_t now_ms, uint32_t *last_log_ms, uint32_t count) {
+  if (count <= 1U) {
+    last_log_ms[reason] = now_ms;
+    return true;
+  }
+  if ((now_ms - last_log_ms[reason]) >= kDiagSampleIntervalMs) {
+    last_log_ms[reason] = now_ms;
+    return true;
+  }
+  return false;
+}
+
+void maybe_log_summary(const DiagCounters &counters, uint32_t now_ms, uint32_t &last_summary_ms) {
+  if ((now_ms - last_summary_ms) < kDiagSummaryIntervalMs) {
+    return;
+  }
+  last_summary_ms = now_ms;
+  ESP_LOGI(
+      DIAG_TAG,
+      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u",
+      counters.ok_frames,
+      counters.ok_20,
+      counters.ok_33,
+      counters.short_capture,
+      counters.invalid_signature,
+      counters.base_checksum_fail,
+      counters.extended_checksum_fail,
+      counters.timeout_low,
+      counters.timeout_high,
+      counters.timeout_other,
+      counters.header_6c,
+      counters.header_6d,
+      counters.header_other,
+      counters.extension_probe_attempted,
+      counters.extension_start_seen);
 }
 
 }  // namespace
@@ -135,22 +219,7 @@ void MHI_AC_Ctrl_Core::set_troom_offset(float offset) {
 
 void MHI_AC_Ctrl_Core::set_frame_size(uint8_t framesize) {
   if (framesize == 20 || framesize == 33) {
-    frame_size_hint_ = framesize;
-  }
-}
-
-void MHI_AC_Ctrl_Core::set_protocol_mode(uint8_t mode) {
-  switch (static_cast<esphome::mhi::MhiProtocolMode>(mode)) {
-    case esphome::mhi::MhiProtocolMode::STANDARD_ONLY:
-      protocol_mode_ = esphome::mhi::MhiProtocolMode::STANDARD_ONLY;
-      break;
-    case esphome::mhi::MhiProtocolMode::EXTENDED_PREFER:
-      protocol_mode_ = esphome::mhi::MhiProtocolMode::EXTENDED_PREFER;
-      break;
-    case esphome::mhi::MhiProtocolMode::AUTO:
-    default:
-      protocol_mode_ = esphome::mhi::MhiProtocolMode::AUTO;
-      break;
+    frameSize = framesize;
   }
 }
 
@@ -163,16 +232,14 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   static int frame = 1;
   static uint8_t MOSI_frame[33];
   //                            sb0   sb1   sb2   db0   db1   db2   db3   db4   db5   db6   db7   db8   db9  db10  db11  db12  db13  db14  chkH  chkL  db15  db16  db17  db18  db19  db20  db21  db22  db23  db24  db25  db26  chk2L
-  static uint8_t MISO_frame[] = {0xA9, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00};
+  static uint8_t MISO_frame[] = {0xA9, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x22};
 
   static uint32_t call_counter = 0;
   static uint32_t lastTroomInternalMillis = 0;
 
-  const bool prefer_extended_reply =
-      (protocol_mode_ == esphome::mhi::MhiProtocolMode::EXTENDED_PREFER) ||
-      (protocol_mode_ != esphome::mhi::MhiProtocolMode::STANDARD_ONLY && (supports_extended_ || frame_size_hint_ >= 33));
-
-  MISO_frame[SB0] = prefer_extended_reply ? 0xAA : 0xA9;
+  if (frameSize == 33) {
+    MISO_frame[0] = 0xAA;
+  }
 
   call_counter++;
 
@@ -239,70 +306,189 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
 
   MISO_frame[DB3] = new_Troom;
 
-  MISO_frame[DB16] = 0;
-  MISO_frame[DB16] |= new_VanesLR1;
-  MISO_frame[DB17] = 0;
-  MISO_frame[DB17] |= new_VanesLR0;
-  MISO_frame[DB17] |= new_3Dauto;
-  new_3Dauto = 0;
-  new_VanesLR0 = 0;
-  new_VanesLR1 = 0;
-
-  uint16_t checksum = calc_base_checksum(MISO_frame);
+  uint16_t checksum = calc_checksum(MISO_frame);
   MISO_frame[CBH] = static_cast<uint8_t>((checksum >> 8) & 0xFF);
   MISO_frame[CBL] = static_cast<uint8_t>(checksum & 0xFF);
 
-  checksum = calc_extended_checksum_low(MISO_frame);
-  MISO_frame[CBL2] = static_cast<uint8_t>(checksum & 0xFF);
+  if (frameSize == 33) {
+    MISO_frame[DB16] = 0;
+    MISO_frame[DB16] |= new_VanesLR1;
+    MISO_frame[DB17] = 0;
+    MISO_frame[DB17] |= new_VanesLR0;
+    MISO_frame[DB17] |= new_3Dauto;
+    new_3Dauto = 0;
+    new_VanesLR0 = 0;
+    new_VanesLR1 = 0;
+
+    checksum = calc_checksumFrame33(MISO_frame);
+    MISO_frame[CBL2] = static_cast<uint8_t>(checksum & 0xFF);
+  }
+
+  static DiagCounters diag_counters{};
+  static uint32_t diag_last_summary_ms = 0;
+  static uint32_t diag_last_sample_ms[DIAG_REASON_COUNT] = {0};
 
   if (this->transport_ == nullptr) {
     return err_msg_timeout_SCK_low;
   }
 
-  const std::size_t tx_frame_size = (protocol_mode_ == esphome::mhi::MhiProtocolMode::STANDARD_ONLY) ? 20 : 33;
-  const esphome::mhi::MhiFrameExchangeResult exchange = this->transport_->exchange_frame(
+  const esphome::mhi::MhiFrameExchangeResult transport_result = this->transport_->exchange_frame(
       MISO_frame,
-      tx_frame_size,
       MOSI_frame,
       sizeof(MOSI_frame),
       max_time_ms);
 
-  if (exchange.status < 0) {
-    return exchange.status;
+  new_datapacket_received = transport_result.new_data_packet_received;
+
+  if (transport_result.extension_probe_attempted) {
+    diag_counters.extension_probe_attempted++;
+  }
+  if (transport_result.extension_start_seen) {
+    diag_counters.extension_start_seen++;
+  }
+  if (transport_result.header_byte == 0x6C) {
+    diag_counters.header_6c++;
+  } else if (transport_result.header_byte == 0x6D) {
+    diag_counters.header_6d++;
+  } else if (transport_result.bytes_received > 0U) {
+    diag_counters.header_other++;
   }
 
-  new_datapacket_received = exchange.new_data_packet_received;
+  const uint32_t now_ms = esphome::mhi::mhi_now_ms();
 
-  if (!exchange.base_frame_complete || exchange.bytes_received < 20) {
+  if (transport_result.status < 0) {
+    if (transport_result.status == err_msg_timeout_SCK_low) {
+      diag_counters.timeout_low++;
+      if (should_log_reason(DIAG_REASON_TIMEOUT_LOW, now_ms, diag_last_sample_ms, diag_counters.timeout_low)) {
+        ESP_LOGW(
+            DIAG_TAG,
+            "timeout_low count=%u frame_hint=%u bytes=%u hdr=%02X ext_probe=%s ext_seen=%s",
+            diag_counters.timeout_low,
+            frameSize,
+            static_cast<unsigned>(transport_result.bytes_received),
+            transport_result.header_byte,
+            transport_result.extension_probe_attempted ? "true" : "false",
+            transport_result.extension_start_seen ? "true" : "false");
+      }
+    } else if (transport_result.status == err_msg_timeout_SCK_high) {
+      diag_counters.timeout_high++;
+      if (should_log_reason(DIAG_REASON_TIMEOUT_HIGH, now_ms, diag_last_sample_ms, diag_counters.timeout_high)) {
+        ESP_LOGW(
+            DIAG_TAG,
+            "timeout_high count=%u frame_hint=%u bytes=%u hdr=%02X ext_probe=%s ext_seen=%s",
+            diag_counters.timeout_high,
+            frameSize,
+            static_cast<unsigned>(transport_result.bytes_received),
+            transport_result.header_byte,
+            transport_result.extension_probe_attempted ? "true" : "false",
+            transport_result.extension_start_seen ? "true" : "false");
+      }
+    } else {
+      diag_counters.timeout_other++;
+      if (should_log_reason(DIAG_REASON_TIMEOUT_OTHER, now_ms, diag_last_sample_ms, diag_counters.timeout_other)) {
+        ESP_LOGW(
+            DIAG_TAG,
+            "timeout_other code=%d count=%u frame_hint=%u bytes=%u hdr=%02X",
+            transport_result.status,
+            diag_counters.timeout_other,
+            frameSize,
+            static_cast<unsigned>(transport_result.bytes_received),
+            transport_result.header_byte);
+      }
+    }
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+    return transport_result.status;
+  }
+
+  if (frameSize == 33 && transport_result.bytes_received < 33U) {
+    diag_counters.short_capture++;
+    if (should_log_reason(DIAG_REASON_SHORT_CAPTURE, now_ms, diag_last_sample_ms, diag_counters.short_capture)) {
+      char frame_hex[128];
+      format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
+      ESP_LOGW(
+          DIAG_TAG,
+          "short_capture count=%u expected=33 got=%u hdr=%02X ext_probe=%s ext_seen=%s rx=%s",
+          diag_counters.short_capture,
+          static_cast<unsigned>(transport_result.bytes_received),
+          transport_result.header_byte,
+          transport_result.extension_probe_attempted ? "true" : "false",
+          transport_result.extension_start_seen ? "true" : "false",
+          frame_hex);
+    }
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_checksum;
   }
 
-  if (!is_valid_mosi_header(MOSI_frame)) {
+  checksum = calc_checksum(MOSI_frame);
+  if (((MOSI_frame[SB0] & 0xfe) != 0x6c) | (MOSI_frame[SB1] != 0x80) | (MOSI_frame[SB2] != 0x04)) {
+    diag_counters.invalid_signature++;
+    if (should_log_reason(DIAG_REASON_INVALID_SIGNATURE, now_ms, diag_last_sample_ms, diag_counters.invalid_signature)) {
+      char frame_hex[128];
+      format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
+      ESP_LOGW(
+          DIAG_TAG,
+          "invalid_signature count=%u bytes=%u hdr=%02X rx=%s",
+          diag_counters.invalid_signature,
+          static_cast<unsigned>(transport_result.bytes_received),
+          transport_result.header_byte,
+          frame_hex);
+    }
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_signature;
   }
-
-  checksum = calc_base_checksum(MOSI_frame);
   if (((MOSI_frame[CBH] << 8) | MOSI_frame[CBL]) != checksum) {
+    diag_counters.base_checksum_fail++;
+    if (should_log_reason(DIAG_REASON_BASE_CHECKSUM, now_ms, diag_last_sample_ms, diag_counters.base_checksum_fail)) {
+      char frame_hex[128];
+      format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
+      ESP_LOGW(
+          DIAG_TAG,
+          "base_checksum_fail count=%u bytes=%u hdr=%02X expected=%04X actual=%04X rx=%s",
+          diag_counters.base_checksum_fail,
+          static_cast<unsigned>(transport_result.bytes_received),
+          transport_result.header_byte,
+          checksum,
+          static_cast<unsigned>(((MOSI_frame[CBH] << 8) | MOSI_frame[CBL])),
+          frame_hex);
+    }
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_checksum;
   }
 
-  const bool valid_extended_frame = (MOSI_frame[SB0] == 0x6D);
-  if (valid_extended_frame) {
-    if (exchange.bytes_received < 33 || !exchange.extended_tail_present) {
-      return err_msg_invalid_checksum;
-    }
-    checksum = calc_extended_checksum_low(MOSI_frame);
+  if (frameSize == 33) {
+    checksum = calc_checksumFrame33(MOSI_frame);
     if (MOSI_frame[CBL2] != static_cast<uint8_t>(checksum & 0xFF)) {
+      diag_counters.extended_checksum_fail++;
+      if (should_log_reason(DIAG_REASON_EXTENDED_CHECKSUM, now_ms, diag_last_sample_ms, diag_counters.extended_checksum_fail)) {
+        char frame_hex[128];
+        format_frame_hex(MOSI_frame, transport_result.bytes_received, frame_hex, sizeof(frame_hex));
+        ESP_LOGW(
+            DIAG_TAG,
+            "extended_checksum_fail count=%u bytes=%u hdr=%02X expected=%02X actual=%02X ext_probe=%s ext_seen=%s rx=%s",
+            diag_counters.extended_checksum_fail,
+            static_cast<unsigned>(transport_result.bytes_received),
+            transport_result.header_byte,
+            static_cast<unsigned>(checksum & 0xFF),
+            static_cast<unsigned>(MOSI_frame[CBL2]),
+            transport_result.extension_probe_attempted ? "true" : "false",
+            transport_result.extension_start_seen ? "true" : "false",
+            frame_hex);
+      }
+      maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
       return err_msg_invalid_checksum;
     }
-    observed_frame_type_ = esphome::mhi::MhiFrameType::EXTENDED_33;
-    supports_extended_ = true;
-  } else {
-    observed_frame_type_ = esphome::mhi::MhiFrameType::STANDARD_20;
   }
 
+  diag_counters.ok_frames++;
+  if (transport_result.bytes_received >= 33U) {
+    diag_counters.ok_33++;
+  } else {
+    diag_counters.ok_20++;
+  }
+  maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+
   if (new_datapacket_received) {
-    if (valid_extended_frame) {
+    if (frameSize == 33) {
       uint8_t vanesLRtmp = static_cast<uint8_t>((MOSI_frame[DB16] & 0x07) + ((MOSI_frame[DB17] & 0x01) << 4));
       if (vanesLRtmp != status_vanesLR_old) {
         if ((vanesLRtmp & 0x10) != 0) {

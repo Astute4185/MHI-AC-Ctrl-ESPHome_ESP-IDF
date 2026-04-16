@@ -6,7 +6,6 @@ from esphome.const import CONF_ID
 
 CONF_MHI_AC_CTRL_ID = "mhi_ac_ctrl_id"
 CONF_FRAME_SIZE = "frame_size"
-CONF_PROTOCOL_MODE = "protocol_mode"
 CONF_ROOM_TEMP_TIMEOUT = "room_temp_timeout"
 CONF_VANES_UD = "initial_vertical_vanes_position"
 CONF_VANES_LR = "initial_horizontal_vanes_position"
@@ -19,12 +18,6 @@ TRANSPORT_BACKEND_VALUES = {
     "esp32_fast": 0,
     "legacy": 0,
     "gpio_frame_isr": 1,
-}
-
-PROTOCOL_MODE_VALUES = {
-    "auto": 0,
-    "standard_only": 1,
-    "extended_prefer": 2,
 }
 
 CONF_VANES_POSITION = "position"
@@ -48,7 +41,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(MhiAcCtrl),
         cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_FRAME_SIZE, default=20): cv.int_range(min=20, max=33),
-        cv.Optional(CONF_PROTOCOL_MODE, default="auto"): cv.one_of(*PROTOCOL_MODE_VALUES.keys(), lower=True),
         cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
         cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
         cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
@@ -67,9 +59,12 @@ async def to_code(config):
     await cg.register_component(var, config)
 
     cg.add(var.set_frame_size(config[CONF_FRAME_SIZE]))
-    cg.add(var.set_protocol_mode(PROTOCOL_MODE_VALUES[config[CONF_PROTOCOL_MODE]]))
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
-    cg.add(var.set_transport_backend(TRANSPORT_BACKEND_VALUES[config[CONF_TRANSPORT_BACKEND]]))
+    cg.add(
+        var.set_transport_backend(
+            TRANSPORT_BACKEND_VALUES[config[CONF_TRANSPORT_BACKEND]]
+        )
+    )
 
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])

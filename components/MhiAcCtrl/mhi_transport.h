@@ -6,12 +6,6 @@
 namespace esphome {
 namespace mhi {
 
-enum class MhiProtocolMode : uint8_t {
-  AUTO = 0,
-  STANDARD_ONLY = 1,
-  EXTENDED_PREFER = 2,
-};
-
 enum class MhiFrameType : uint8_t {
   UNKNOWN = 0,
   STANDARD_20 = 20,
@@ -23,9 +17,8 @@ struct MhiTransportConfig {
   int mosi_pin{-1};
   int miso_pin{-1};
   uint8_t frame_size_hint{20};
-  MhiProtocolMode protocol_mode{MhiProtocolMode::AUTO};
-  uint32_t frame_idle_min_ms{5};
-  uint32_t extension_gap_timeout_us{3000};
+  uint32_t frame_start_idle_ms{5};
+  uint32_t extension_gap_max_us{3000};
 };
 
 struct MhiFrameExchangeResult {
@@ -33,9 +26,9 @@ struct MhiFrameExchangeResult {
   std::size_t bytes_received{0};
   MhiFrameType detected_type{MhiFrameType::UNKNOWN};
   bool new_data_packet_received{false};
-  bool header_valid{false};
-  bool base_frame_complete{false};
-  bool extended_tail_present{false};
+  uint8_t header_byte{0};
+  bool extension_probe_attempted{false};
+  bool extension_start_seen{false};
 };
 
 class MhiTransport {
@@ -46,9 +39,8 @@ class MhiTransport {
 
   virtual MhiFrameExchangeResult exchange_frame(
       const uint8_t *tx_frame,
-      std::size_t tx_frame_size,
       uint8_t *rx_frame,
-      std::size_t rx_frame_capacity,
+      std::size_t rx_capacity,
       uint32_t max_time_ms) = 0;
 };
 
