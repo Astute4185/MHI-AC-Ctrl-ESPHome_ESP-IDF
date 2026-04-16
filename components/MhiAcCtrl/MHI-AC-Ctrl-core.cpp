@@ -49,6 +49,8 @@ struct DiagCounters {
   uint32_t header_other = 0;
   uint32_t extension_probe_attempted = 0;
   uint32_t extension_start_seen = 0;
+  uint32_t critical_capture_frames = 0;
+  uint32_t next_frame_sig_after_tail = 0;
   uint32_t byte_mismatch_counts[kDiagFrameBytes] = {0};
 };
 
@@ -77,6 +79,31 @@ void format_frame_hex(const uint8_t *frame, std::size_t len, char *out, std::siz
   std::size_t pos = 0;
   for (std::size_t i = 0; i < len && pos + 4 < out_len; i++) {
     const int written = std::snprintf(out + pos, out_len - pos, "%02X%s", frame[i], (i + 1 < len) ? " " : "");
+    if (written <= 0) {
+      break;
+    }
+    pos += static_cast<std::size_t>(written);
+  }
+  out[out_len - 1] = '\0';
+}
+
+void format_overcapture_hex(const esphome::mhi::MhiFrameExchangeResult &result, char *out, std::size_t out_len) {
+  if (out_len == 0) {
+    return;
+  }
+  if (result.overcapture_len == 0U) {
+    std::snprintf(out, out_len, "none");
+    return;
+  }
+  out[0] = '\0';
+  std::size_t pos = 0;
+  for (std::size_t i = 0; i < result.overcapture_len && pos + 4 < out_len; i++) {
+    const int written = std::snprintf(
+        out + pos,
+        out_len - pos,
+        "%02X%s",
+        result.overcapture_bytes[i],
+        (i + 1U < result.overcapture_len) ? " " : "");
     if (written <= 0) {
       break;
     }
@@ -211,7 +238,7 @@ void maybe_log_summary(const DiagCounters &counters, uint32_t now_ms, uint32_t &
   format_histogram_top(counters.byte_mismatch_counts, mismatch_top, sizeof(mismatch_top));
   ESP_LOGI(
       DIAG_TAG,
-      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u mismatch_top=%s",
+      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u crit=%u nextsig=%u mismatch_top=%s",
       counters.ok_frames,
       counters.ok_20,
       counters.ok_33,
@@ -227,6 +254,8 @@ void maybe_log_summary(const DiagCounters &counters, uint32_t now_ms, uint32_t &
       counters.header_other,
       counters.extension_probe_attempted,
       counters.extension_start_seen,
+      counters.critical_capture_frames,
+      counters.next_frame_sig_after_tail,
       mismatch_top);
 }
 
@@ -512,6 +541,12 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   if (transport_result.extension_start_seen) {
     diag_counters.extension_start_seen++;
   }
+  if (transport_result.critical_capture_used) {
+    diag_counters.critical_capture_frames++;
+  }
+  if (transport_result.next_frame_signature_after_tail) {
+    diag_counters.next_frame_sig_after_tail++;
+  }
   if (transport_result.header_byte == 0x6C) {
     diag_counters.header_6c++;
   } else if (transport_result.header_byte == 0x6D) {
@@ -534,7 +569,8 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
             static_cast<unsigned>(transport_result.bytes_received),
             transport_result.header_byte,
             transport_result.extension_probe_attempted ? "true" : "false",
-            transport_result.extension_start_seen ? "true" : "false");
+            transport_result.extension_start_seen ? "true" : "false",
+        transport_result.critical_capture_used ? "true" : "false");
       }
     } else if (transport_result.status == err_msg_timeout_SCK_high) {
       diag_counters.timeout_high++;
@@ -595,27 +631,31 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   checksum = calc_checksum(MOSI_frame);
   if (((MOSI_frame[SB0] & 0xfe) != 0x6c) | (MOSI_frame[SB1] != 0x80) | (MOSI_frame[SB2] != 0x04)) {
     diag_counters.invalid_signature++;
-    update_mismatch_histogram(
-        diag_counters.byte_mismatch_counts,
-        diag_last_good_frame.frame,
-        diag_last_good_frame.len,
-        MOSI_frame,
-        transport_result.bytes_received);
-    maybe_log_bad_frame_with_reference(
-        DIAG_REASON_INVALID_SIGNATURE,
-        "invalid_signature",
-        now_ms,
-        diag_last_sample_ms,
-        diag_counters.invalid_signature,
-        MOSI_frame,
-        transport_result.bytes_received,
-        diag_last_good_frame,
-        "invalid_signature bytes=%u hdr=%02X sb=%02X %02X %02X",
-        static_cast<unsigned>(transport_result.bytes_received),
-        transport_result.header_byte,
-        MOSI_frame[SB0],
-        MOSI_frame[SB1],
-        MOSI_frame[SB2]);
+    if (diag_last_good_frame.valid) {
+      update_mismatch_histogram(diag_counters.byte_mismatch_counts, diag_last_good_frame.frame, diag_last_good_frame.len, MOSI_frame, transport_result.bytes_received);
+    }
+    {
+      char over_hex[16];
+      format_overcapture_hex(transport_result, over_hex, sizeof(over_hex));
+      maybe_log_bad_frame_with_reference(
+          DIAG_REASON_INVALID_SIGNATURE,
+          "invalid_signature",
+          now_ms,
+          diag_last_sample_ms,
+          diag_counters.invalid_signature,
+          MOSI_frame,
+          transport_result.bytes_received,
+          diag_last_good_frame,
+          "invalid_signature bytes=%u hdr=%02X sb=%02X %02X %02X nextsig=%s crit=%s over=%s",
+          static_cast<unsigned>(transport_result.bytes_received),
+          transport_result.header_byte,
+          MOSI_frame[0],
+          MOSI_frame[1],
+          MOSI_frame[2],
+          transport_result.next_frame_signature_after_tail ? "true" : "false",
+          transport_result.critical_capture_used ? "true" : "false",
+          over_hex);
+    }
     maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_signature;
   }
@@ -636,11 +676,12 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
         MOSI_frame,
         transport_result.bytes_received,
         diag_last_good_frame,
-        "base_checksum_fail bytes=%u hdr=%02X expected=%04X actual=%04X",
+        "base_checksum_fail bytes=%u hdr=%02X expected=%04X actual=%04X crit=%s",
         static_cast<unsigned>(transport_result.bytes_received),
         transport_result.header_byte,
         checksum,
-        static_cast<unsigned>(((MOSI_frame[CBH] << 8) | MOSI_frame[CBL])));
+        static_cast<unsigned>(((MOSI_frame[CBH] << 8) | MOSI_frame[CBL])),
+        transport_result.critical_capture_used ? "true" : "false");
     maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
     return err_msg_invalid_checksum;
   }
@@ -664,13 +705,14 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
           MOSI_frame,
           transport_result.bytes_received,
           diag_last_good_frame,
-          "extended_checksum_fail bytes=%u hdr=%02X expected=%02X actual=%02X ext_probe=%s ext_seen=%s",
+          "extended_checksum_fail bytes=%u hdr=%02X expected=%02X actual=%02X ext_probe=%s ext_seen=%s crit=%s",
           static_cast<unsigned>(transport_result.bytes_received),
           transport_result.header_byte,
           static_cast<unsigned>(checksum & 0xFF),
           static_cast<unsigned>(MOSI_frame[CBL2]),
           transport_result.extension_probe_attempted ? "true" : "false",
-          transport_result.extension_start_seen ? "true" : "false");
+          transport_result.extension_start_seen ? "true" : "false",
+          transport_result.critical_capture_used ? "true" : "false");
       maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
       return err_msg_invalid_checksum;
     }

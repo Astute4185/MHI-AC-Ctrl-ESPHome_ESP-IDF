@@ -29,6 +29,12 @@ struct MhiFrameExchangeResult {
   uint8_t header_byte{0};
   bool extension_probe_attempted{false};
   bool extension_start_seen{false};
+
+  // Transport hardening / diagnostics.
+  bool critical_capture_used{false};
+  uint8_t overcapture_bytes[2]{0, 0};
+  uint8_t overcapture_len{0};
+  bool next_frame_signature_after_tail{false};
 };
 
 class MhiTransport {
