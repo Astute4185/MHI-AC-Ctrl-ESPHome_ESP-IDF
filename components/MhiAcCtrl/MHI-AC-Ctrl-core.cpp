@@ -236,15 +236,20 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
     return err_msg_timeout_SCK_low;
   }
 
-  int transport_result = this->transport_->exchange_frame(
+  const esphome::mhi::MhiFrameExchangeResult transport_result = this->transport_->exchange_frame(
       MISO_frame,
       MOSI_frame,
-      frameSize,
-      max_time_ms,
-      new_datapacket_received);
+      sizeof(MOSI_frame),
+      max_time_ms);
 
-  if (transport_result < 0) {
-    return transport_result;
+  new_datapacket_received = transport_result.new_data_packet_received;
+
+  if (transport_result.status < 0) {
+    return transport_result.status;
+  }
+
+  if (transport_result.bytes_received < frameSize) {
+    return err_msg_timeout_SCK_high;
   }
 
   checksum = calc_checksum(MOSI_frame);

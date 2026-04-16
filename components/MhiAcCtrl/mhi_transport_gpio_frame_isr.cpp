@@ -1,5 +1,6 @@
 #include "mhi_transport_gpio_frame_isr.h"
 
+#include <algorithm>
 #include <driver/gpio.h>
 #include <esp_err.h>
 
@@ -54,22 +55,17 @@ bool MhiTransportGpioFrameIsr::wait_for_frame_start_(uint32_t max_time_ms) {
   const gpio_num_t sck = static_cast<gpio_num_t>(this->config_.sck_pin);
   const uint32_t start_ms = mhi_now_ms();
 
-  // Step 1: sleep until there is at least some SCK activity.
-  // This is the only job of the ISR path.
   while ((mhi_now_ms() - start_ms) <= max_time_ms) {
     this->waiter_task_ = xTaskGetCurrentTaskHandle();
     (void) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5));
     this->waiter_task_ = nullptr;
 
-    // If we got here because of timeout, just loop and keep waiting until max_time_ms.
     if ((mhi_now_ms() - start_ms) > max_time_ms) {
       return false;
     }
 
-    // Step 2: once there is activity, use the original legacy-style
-    // frame-start detection: wait for 5ms stable high on SCK.
     uint32_t sck_high_start_ms = mhi_now_ms();
-    while ((mhi_now_ms() - sck_high_start_ms) < 5U) {
+    while ((mhi_now_ms() - sck_high_start_ms) < this->config_.frame_start_idle_ms) {
       if (gpio_get_level(sck) == 0) {
         sck_high_start_ms = mhi_now_ms();
       }
@@ -79,24 +75,46 @@ bool MhiTransportGpioFrameIsr::wait_for_frame_start_(uint32_t max_time_ms) {
       }
     }
 
-    // 5ms stable high found: this matches the legacy frame-start condition.
     return true;
   }
 
   return false;
 }
 
-int MhiTransportGpioFrameIsr::exchange_frame(
+std::size_t MhiTransportGpioFrameIsr::determine_target_frame_bytes_(std::size_t rx_capacity) const {
+  std::size_t target = static_cast<std::size_t>(this->config_.frame_size_hint);
+
+  if (target != 20U && target != 33U) {
+    target = 20U;
+  }
+
+  if (this->config_.protocol_mode == MhiProtocolMode::EXTENDED_PREFER) {
+    target = 33U;
+  } else if (this->config_.protocol_mode == MhiProtocolMode::STANDARD_ONLY) {
+    target = 20U;
+  }
+
+  target = std::min<std::size_t>(target, static_cast<std::size_t>(this->config_.max_frame_size));
+  target = std::min<std::size_t>(target, rx_capacity);
+  return target;
+}
+
+MhiFrameExchangeResult MhiTransportGpioFrameIsr::exchange_frame(
     const uint8_t *tx_frame,
     uint8_t *rx_frame,
-    std::size_t frame_size,
-    uint32_t max_time_ms,
-    bool &new_data_packet_received) {
-
-  new_data_packet_received = false;
+    std::size_t rx_capacity,
+    uint32_t max_time_ms) {
+  MhiFrameExchangeResult result{};
 
   if (!this->isr_registered_) {
-    return err_msg_timeout_SCK_low;
+    result.status = err_msg_timeout_SCK_low;
+    return result;
+  }
+
+  const std::size_t target_frame_size = this->determine_target_frame_bytes_(rx_capacity);
+  if (target_frame_size == 0U) {
+    result.status = err_msg_timeout_SCK_low;
+    return result;
   }
 
   const gpio_num_t sck = static_cast<gpio_num_t>(this->config_.sck_pin);
@@ -105,22 +123,21 @@ int MhiTransportGpioFrameIsr::exchange_frame(
 
   const uint32_t start_ms = mhi_now_ms();
 
-  // Hybrid design:
-  // ISR only wakes us when the bus is active.
-  // Actual frame sync is still done with the proven stable-high polling logic.
   if (!this->wait_for_frame_start_(max_time_ms)) {
-    return err_msg_timeout_SCK_low;
+    result.status = err_msg_timeout_SCK_low;
+    return result;
   }
 
-  // Keep the transfer loop polling-based for deterministic timing.
-  for (std::size_t byte_cnt = 0; byte_cnt < frame_size; byte_cnt++) {
+  for (std::size_t byte_cnt = 0; byte_cnt < target_frame_size; byte_cnt++) {
     uint8_t mosi_byte = 0;
     uint8_t bit_mask = 1;
 
     for (uint8_t bit_cnt = 0; bit_cnt < 8; bit_cnt++) {
       while (gpio_get_level(sck) != 0) {
         if ((mhi_now_ms() - start_ms) > max_time_ms) {
-          return err_msg_timeout_SCK_high;
+          result.status = err_msg_timeout_SCK_high;
+          gpio_set_level(miso, 0);
+          return result;
         }
       }
 
@@ -128,7 +145,9 @@ int MhiTransportGpioFrameIsr::exchange_frame(
 
       while (gpio_get_level(sck) == 0) {
         if ((mhi_now_ms() - start_ms) > max_time_ms) {
-          return err_msg_timeout_SCK_low;
+          result.status = err_msg_timeout_SCK_low;
+          gpio_set_level(miso, 0);
+          return result;
         }
       }
 
@@ -140,13 +159,29 @@ int MhiTransportGpioFrameIsr::exchange_frame(
     }
 
     if (rx_frame[byte_cnt] != mosi_byte) {
-      new_data_packet_received = true;
+      result.new_data_packet_received = true;
       rx_frame[byte_cnt] = mosi_byte;
+    }
+
+    if (byte_cnt == 0) {
+      result.header_byte = mosi_byte;
     }
   }
 
   gpio_set_level(miso, 0);
-  return 0;
+
+  result.status = 0;
+  result.bytes_received = target_frame_size;
+  result.base_frame_complete = (target_frame_size >= 20U);
+
+  if (target_frame_size >= 33U) {
+    result.detected_type = MhiFrameType::EXTENDED_33;
+    result.extended_tail_present = true;
+  } else if (target_frame_size >= 20U) {
+    result.detected_type = MhiFrameType::STANDARD_20;
+  }
+
+  return result;
 }
 
 }  // namespace mhi

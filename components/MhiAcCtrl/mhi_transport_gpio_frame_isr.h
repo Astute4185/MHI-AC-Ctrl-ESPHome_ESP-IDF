@@ -15,16 +15,16 @@ class MhiTransportGpioFrameIsr : public MhiTransport {
  public:
   void setup(const MhiTransportConfig &config) override;
 
-  int exchange_frame(
+  MhiFrameExchangeResult exchange_frame(
       const uint8_t *tx_frame,
       uint8_t *rx_frame,
-      std::size_t frame_size,
-      uint32_t max_time_ms,
-      bool &new_data_packet_received) override;
+      std::size_t rx_capacity,
+      uint32_t max_time_ms) override;
 
  private:
   static void gpio_isr_handler_(void *arg);
   bool wait_for_frame_start_(uint32_t max_time_ms);
+  std::size_t determine_target_frame_bytes_(std::size_t rx_capacity) const;
 
   MhiTransportConfig config_{};
   TaskHandle_t waiter_task_{nullptr};

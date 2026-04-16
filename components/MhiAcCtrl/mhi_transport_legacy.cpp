@@ -1,5 +1,6 @@
 #include "mhi_transport_legacy.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -88,13 +89,36 @@ void MhiTransportLegacy::setup(const MhiTransportConfig &config) {
   gpio_set_level(static_cast<gpio_num_t>(this->config_.miso_pin), 0);
 }
 
-int IRAM_ATTR MhiTransportLegacy::exchange_frame(
+std::size_t MhiTransportLegacy::determine_target_frame_bytes_(std::size_t rx_capacity) const {
+  std::size_t target = static_cast<std::size_t>(this->config_.frame_size_hint);
+
+  if (target != 20U && target != 33U) {
+    target = 20U;
+  }
+
+  if (this->config_.protocol_mode == MhiProtocolMode::EXTENDED_PREFER) {
+    target = 33U;
+  } else if (this->config_.protocol_mode == MhiProtocolMode::STANDARD_ONLY) {
+    target = 20U;
+  }
+
+  target = std::min<std::size_t>(target, static_cast<std::size_t>(this->config_.max_frame_size));
+  target = std::min<std::size_t>(target, rx_capacity);
+  return target;
+}
+
+MhiFrameExchangeResult IRAM_ATTR MhiTransportLegacy::exchange_frame(
     const uint8_t *tx_frame,
     uint8_t *rx_frame,
-    std::size_t frame_size,
-    uint32_t max_time_ms,
-    bool &new_data_packet_received) {
-  new_data_packet_received = false;
+    std::size_t rx_capacity,
+    uint32_t max_time_ms) {
+  MhiFrameExchangeResult result{};
+
+  const std::size_t target_frame_size = this->determine_target_frame_bytes_(rx_capacity);
+  if (target_frame_size == 0U) {
+    result.status = err_msg_timeout_SCK_low;
+    return result;
+  }
 
   const int sck_pin = this->config_.sck_pin;
   const int mosi_pin = this->config_.mosi_pin;
@@ -102,19 +126,20 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
 
   const uint32_t start_ms = mhi_now_ms();
 
-  // Wait for 5 ms stable high on SCK to detect frame start.
+  // Wait for stable-high idle on SCK to detect frame boundary.
   uint32_t sck_high_start_ms = mhi_now_ms();
   uint32_t wait_spin_counter = 0;
-  while ((mhi_now_ms() - sck_high_start_ms) < 5U) {
+  while ((mhi_now_ms() - sck_high_start_ms) < this->config_.frame_start_idle_ms) {
     if (!fast_gpio_read(sck_pin)) {
       sck_high_start_ms = mhi_now_ms();
     }
     if (timed_out(start_ms, max_time_ms, wait_spin_counter)) {
-      return err_msg_timeout_SCK_low;
+      result.status = err_msg_timeout_SCK_low;
+      return result;
     }
   }
 
-  for (std::size_t byte_cnt = 0; byte_cnt < frame_size; byte_cnt++) {
+  for (std::size_t byte_cnt = 0; byte_cnt < target_frame_size; byte_cnt++) {
     uint8_t mosi_byte = 0;
     uint8_t bit_mask = 1;
     uint32_t byte_spin_counter = 0;
@@ -123,7 +148,9 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
       // Wait for falling edge: SCK high -> low
       while (fast_gpio_read(sck_pin)) {
         if (timed_out(start_ms, max_time_ms, byte_spin_counter)) {
-          return err_msg_timeout_SCK_high;
+          result.status = err_msg_timeout_SCK_high;
+          fast_gpio_write_low(miso_pin);
+          return result;
         }
       }
 
@@ -137,7 +164,9 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
       // Wait for rising edge: SCK low -> high
       while (!fast_gpio_read(sck_pin)) {
         if (timed_out(start_ms, max_time_ms, byte_spin_counter)) {
-          return err_msg_timeout_SCK_low;
+          result.status = err_msg_timeout_SCK_low;
+          fast_gpio_write_low(miso_pin);
+          return result;
         }
       }
 
@@ -150,18 +179,36 @@ int IRAM_ATTR MhiTransportLegacy::exchange_frame(
     }
 
     if (rx_frame[byte_cnt] != mosi_byte) {
-      new_data_packet_received = true;
+      result.new_data_packet_received = true;
       rx_frame[byte_cnt] = mosi_byte;
+    }
+
+    if (byte_cnt == 0) {
+      result.header_byte = mosi_byte;
     }
 
     // Coarse timeout check between bytes
     if ((mhi_now_ms() - start_ms) > max_time_ms) {
-      return err_msg_timeout_SCK_high;
+      result.status = err_msg_timeout_SCK_high;
+      fast_gpio_write_low(miso_pin);
+      return result;
     }
   }
 
   fast_gpio_write_low(miso_pin);
-  return 0;
+
+  result.status = 0;
+  result.bytes_received = target_frame_size;
+  result.base_frame_complete = (target_frame_size >= 20U);
+
+  if (target_frame_size >= 33U) {
+    result.detected_type = MhiFrameType::EXTENDED_33;
+    result.extended_tail_present = true;
+  } else if (target_frame_size >= 20U) {
+    result.detected_type = MhiFrameType::STANDARD_20;
+  }
+
+  return result;
 }
 
 }  // namespace mhi

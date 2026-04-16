@@ -31,12 +31,26 @@ const char *MhiPlatform::get_transport_backend_name_() const {
   }
 }
 
+const char *MhiPlatform::get_protocol_mode_name_() const {
+  switch (static_cast<MhiProtocolMode>(this->protocol_mode_)) {
+    case MhiProtocolMode::STANDARD_ONLY:
+      return "standard_only";
+    case MhiProtocolMode::EXTENDED_PREFER:
+      return "extended_prefer";
+    case MhiProtocolMode::AUTO:
+    default:
+      return "auto";
+  }
+}
+
 void MhiPlatform::setup() {
   MhiTransportConfig config{};
   config.sck_pin = resolve_pin(this->sck_pin_, kDefaultSckPin);
   config.mosi_pin = resolve_pin(this->mosi_pin_, kDefaultMosiPin);
   config.miso_pin = resolve_pin(this->miso_pin_, kDefaultMisoPin);
-  config.frame_size = static_cast<uint8_t>(this->frame_size_);
+  config.frame_size_hint = static_cast<uint8_t>(this->frame_size_hint_);
+  config.max_frame_size = 33;
+  config.protocol_mode = static_cast<MhiProtocolMode>(this->protocol_mode_);
 
   MhiTransport *selected_transport = &this->transport_legacy_;
   if (this->transport_backend_ == TRANSPORT_BACKEND_GPIO_FRAME_ISR) {
@@ -46,15 +60,23 @@ void MhiPlatform::setup() {
     ESP_LOGCONFIG(TAG, "Using transport backend: esp32_fast");
   }
 
-  ESP_LOGCONFIG(TAG, "Resolved transport config: sck=%d mosi=%d miso=%d cs=%d frame_size=%u",
-                config.sck_pin, config.mosi_pin, config.miso_pin, config.cs_pin, config.frame_size);
+  ESP_LOGCONFIG(
+      TAG,
+      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u protocol_mode=%s",
+      config.sck_pin,
+      config.mosi_pin,
+      config.miso_pin,
+      config.frame_size_hint,
+      this->get_protocol_mode_name_());
 
   this->mhi_ac_ctrl_core_.set_transport(selected_transport);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
 
   this->mhi_ac_ctrl_core_.MHIAcCtrlStatus(this);
   this->mhi_ac_ctrl_core_.init();
-  this->mhi_ac_ctrl_core_.set_frame_size(static_cast<uint8_t>(this->frame_size_));
+
+  // Core frame size remains as a compatibility hint until the parser work lands.
+  this->mhi_ac_ctrl_core_.set_frame_size(static_cast<uint8_t>(this->frame_size_hint_));
 
   if (this->external_temperature_sensor_ != nullptr) {
     this->external_temperature_sensor_->add_on_state_callback(
@@ -67,7 +89,28 @@ void MhiPlatform::setup() {
 }
 
 void MhiPlatform::set_frame_size(int framesize) {
-  this->frame_size_ = framesize;
+  this->set_frame_size_hint(framesize);
+}
+
+void MhiPlatform::set_frame_size_hint(int framesize) {
+  if (framesize == 33) {
+    this->frame_size_hint_ = 33;
+  } else {
+    this->frame_size_hint_ = 20;
+  }
+}
+
+void MhiPlatform::set_protocol_mode(uint8_t mode) {
+  switch (static_cast<MhiProtocolMode>(mode)) {
+    case MhiProtocolMode::STANDARD_ONLY:
+    case MhiProtocolMode::EXTENDED_PREFER:
+    case MhiProtocolMode::AUTO:
+      this->protocol_mode_ = mode;
+      break;
+    default:
+      this->protocol_mode_ = static_cast<uint8_t>(MhiProtocolMode::AUTO);
+      break;
+  }
 }
 
 void MhiPlatform::set_room_temp_api_timeout(int time_in_seconds) {
@@ -106,15 +149,14 @@ void MhiPlatform::dump_config() {
     ESP_LOGCONFIG(TAG, "  external_temperature_sensor enabled!");
   }
 
-  ESP_LOGCONFIG(TAG, "  frame_size: %d", this->frame_size_);
+  ESP_LOGCONFIG(TAG, "  frame_size_hint: %d", this->frame_size_hint_);
+  ESP_LOGCONFIG(TAG, "  protocol_mode: %s", this->get_protocol_mode_name_());
   ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
   ESP_LOGCONFIG(TAG, "  transport_backend: %s", this->get_transport_backend_name_());
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
-  ESP_LOGCONFIG(TAG, "  spi_cs_pin: %d", this->spi_cs_pin_);
-  ESP_LOGCONFIG(TAG, "  listeners count: %d",
-                static_cast<int>(this->listeners_.size()));
+  ESP_LOGCONFIG(TAG, "  listeners count: %d", static_cast<int>(this->listeners_.size()));
 }
 
 void MhiPlatform::cbiStatusFunction(ACStatus status, int value) {
@@ -205,21 +247,21 @@ void MhiPlatform::set_vanes(int value) {
 }
 
 void MhiPlatform::set_vanesLR(int value) {
-  if (this->frame_size_ == 33) {
+  if (this->frame_size_hint_ == 33) {
     ESP_LOGD(TAG, "setting vanesLR to: %i", value);
     this->mhi_ac_ctrl_core_.set_vanesLR(static_cast<uint32_t>(value));
   } else {
-    ESP_LOGD(TAG, "Not setting vanesLR: %i", value);
+    ESP_LOGD(TAG, "Not setting vanesLR yet: %i (extended path not confirmed)", value);
   }
 }
 
 void MhiPlatform::set_3Dauto(bool value) {
-  if (this->frame_size_ == 33) {
+  if (this->frame_size_hint_ == 33) {
     this->mhi_ac_ctrl_core_.set_3Dauto(
         value ? AC3Dauto::Dauto_on : AC3Dauto::Dauto_off);
     ESP_LOGD(TAG, "set 3D auto: %i", value);
   } else {
-    ESP_LOGD(TAG, "Not setting 3D auto: %i (frame_size != 33)", value);
+    ESP_LOGD(TAG, "Not setting 3D auto yet: %i (extended path not confirmed)", value);
   }
 }
 

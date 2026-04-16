@@ -1,15 +1,15 @@
 #pragma once
 
-#include <vector>
 #include <cmath>
+#include <vector>
 
-#include "esphome/core/component.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/core/component.h"
 
 #include "MHI-AC-Ctrl-core.h"
 #include "mhi_status_listener.h"
-#include "mhi_transport_legacy.h"
 #include "mhi_transport_gpio_frame_isr.h"
+#include "mhi_transport_legacy.h"
 
 namespace esphome {
 namespace mhi {
@@ -28,6 +28,8 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   void cbiStatusFunction(ACStatus status, int value) override;
 
   void set_frame_size(int framesize);
+  void set_frame_size_hint(int framesize);
+  void set_protocol_mode(uint8_t mode);
   void set_room_temp_api_timeout(int time_in_seconds);
   void set_external_room_temperature_sensor(esphome::sensor::Sensor *sensor);
 
@@ -64,6 +66,7 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
  protected:
   void transfer_room_temperature(float value);
   const char *get_transport_backend_name_() const;
+  const char *get_protocol_mode_name_() const;
 
   MHI_AC_Ctrl_Core mhi_ac_ctrl_core_;
 
@@ -74,7 +77,8 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
 
   esphome::sensor::Sensor *external_temperature_sensor_{nullptr};
 
-  int frame_size_{20};
+  int frame_size_hint_{20};
+  uint8_t protocol_mode_{static_cast<uint8_t>(MhiProtocolMode::AUTO)};
   uint32_t room_temp_api_timeout_{60};
   uint32_t room_temp_api_timeout_start_{0};
   bool room_temp_api_active_{false};
