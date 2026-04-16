@@ -1,6 +1,7 @@
 // MHI-AC-Ctrol-core
 // implements the core functions (read & write SPI)
 
+#include "esphome/core/log.h"
 #include "mhi_time.h"
 #include "MHI-AC-Ctrl-core.h"
 
