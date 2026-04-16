@@ -2,6 +2,7 @@
 #include <cstdint>
 
 #include "mhi_transport.h"
+#include "mhi_diagnostics.h"
 
 // comment out the data you are not interested in, but leave at least one row
 static constexpr uint8_t opdata[][2] = {
@@ -231,6 +232,7 @@ private:
     
     esphome::mhi::MhiTransport *transport_ = nullptr;
     esphome::mhi::MhiTransportConfig transport_config_;
+    esphome::mhi::MhiDiagReason last_diag_reason_ = esphome::mhi::MhiDiagReason::NONE;
 
 public:
     void MHIAcCtrlStatus(CallbackInterface_Status *cb) {
@@ -239,6 +241,7 @@ public:
 
     void set_transport(esphome::mhi::MhiTransport *transport);
     void set_transport_config(const esphome::mhi::MhiTransportConfig &config);
+    esphome::mhi::MhiDiagReason get_last_diag_reason() const { return this->last_diag_reason_; }
 
     void init();                         // initialization called once after boot
     void reset_old_values();             // resets the old variables so all status information is resent

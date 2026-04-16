@@ -5,6 +5,7 @@
 
 #include "esphome/components/sensor/sensor.h"
 #include "mhi_time.h"
+#include "mhi_diagnostics.h"
 
 namespace {
 constexpr int kDefaultSckPin = 14;
@@ -100,7 +101,9 @@ void MhiPlatform::loop() {
 
   const int ret = this->mhi_ac_ctrl_core_.loop(100);
   if (ret < 0) {
-    ESP_LOGE(TAG, "mhi_ac_ctrl_core loop error: %i", ret);
+    esphome::mhi::mhi_log_platform_loop_status(
+        TAG,
+        {ret, this->mhi_ac_ctrl_core_.get_last_diag_reason()});
   }
 }
 
