@@ -4,21 +4,29 @@
 #include "mhi_time.h"
 #include "MHI-AC-Ctrl-core.h"
 
-uint16_t calc_checksum(uint8_t *frame) {
+namespace {
+
+uint16_t calc_base_checksum(const uint8_t *frame) {
   uint16_t checksum = 0;
   for (int i = 0; i < CBH; i++) {
-    checksum += frame[i];
+    checksum = static_cast<uint16_t>(checksum + frame[i]);
   }
   return checksum;
 }
 
-uint16_t calc_checksumFrame33(uint8_t *frame) {
-  uint16_t checksum = 0;
-  for (int i = 0; i < CBL2; i++) {
-    checksum += frame[i];
+uint16_t calc_extended_checksum_low(const uint8_t *frame) {
+  uint16_t checksum = calc_base_checksum(frame);
+  for (int i = DB15; i <= DB26; i++) {
+    checksum = static_cast<uint16_t>(checksum + frame[i]);
   }
   return checksum;
 }
+
+bool is_valid_mosi_header(const uint8_t *frame) {
+  return ((frame[SB0] == 0x6C || frame[SB0] == 0x6D) && frame[SB1] == 0x80 && frame[SB2] == 0x04);
+}
+
+}  // namespace
 
 void MHI_AC_Ctrl_Core::reset_old_values() {  // used e.g. when MQTT connection to broker is lost, to re-output data
   // old status
@@ -127,7 +135,22 @@ void MHI_AC_Ctrl_Core::set_troom_offset(float offset) {
 
 void MHI_AC_Ctrl_Core::set_frame_size(uint8_t framesize) {
   if (framesize == 20 || framesize == 33) {
-    frameSize = framesize;
+    frame_size_hint_ = framesize;
+  }
+}
+
+void MHI_AC_Ctrl_Core::set_protocol_mode(uint8_t mode) {
+  switch (static_cast<esphome::mhi::MhiProtocolMode>(mode)) {
+    case esphome::mhi::MhiProtocolMode::STANDARD_ONLY:
+      protocol_mode_ = esphome::mhi::MhiProtocolMode::STANDARD_ONLY;
+      break;
+    case esphome::mhi::MhiProtocolMode::EXTENDED_PREFER:
+      protocol_mode_ = esphome::mhi::MhiProtocolMode::EXTENDED_PREFER;
+      break;
+    case esphome::mhi::MhiProtocolMode::AUTO:
+    default:
+      protocol_mode_ = esphome::mhi::MhiProtocolMode::AUTO;
+      break;
   }
 }
 
@@ -140,14 +163,16 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   static int frame = 1;
   static uint8_t MOSI_frame[33];
   //                            sb0   sb1   sb2   db0   db1   db2   db3   db4   db5   db6   db7   db8   db9  db10  db11  db12  db13  db14  chkH  chkL  db15  db16  db17  db18  db19  db20  db21  db22  db23  db24  db25  db26  chk2L
-  static uint8_t MISO_frame[] = {0xA9, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x22};
+  static uint8_t MISO_frame[] = {0xA9, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00};
 
   static uint32_t call_counter = 0;
   static uint32_t lastTroomInternalMillis = 0;
 
-  if (frameSize == 33) {
-    MISO_frame[0] = 0xAA;
-  }
+  const bool prefer_extended_reply =
+      (protocol_mode_ == esphome::mhi::MhiProtocolMode::EXTENDED_PREFER) ||
+      (protocol_mode_ != esphome::mhi::MhiProtocolMode::STANDARD_ONLY && (supports_extended_ || frame_size_hint_ >= 33));
+
+  MISO_frame[SB0] = prefer_extended_reply ? 0xAA : 0xA9;
 
   call_counter++;
 
@@ -214,61 +239,70 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
 
   MISO_frame[DB3] = new_Troom;
 
-  uint16_t checksum = calc_checksum(MISO_frame);
+  MISO_frame[DB16] = 0;
+  MISO_frame[DB16] |= new_VanesLR1;
+  MISO_frame[DB17] = 0;
+  MISO_frame[DB17] |= new_VanesLR0;
+  MISO_frame[DB17] |= new_3Dauto;
+  new_3Dauto = 0;
+  new_VanesLR0 = 0;
+  new_VanesLR1 = 0;
+
+  uint16_t checksum = calc_base_checksum(MISO_frame);
   MISO_frame[CBH] = static_cast<uint8_t>((checksum >> 8) & 0xFF);
   MISO_frame[CBL] = static_cast<uint8_t>(checksum & 0xFF);
 
-  if (frameSize == 33) {
-    MISO_frame[DB16] = 0;
-    MISO_frame[DB16] |= new_VanesLR1;
-    MISO_frame[DB17] = 0;
-    MISO_frame[DB17] |= new_VanesLR0;
-    MISO_frame[DB17] |= new_3Dauto;
-    new_3Dauto = 0;
-    new_VanesLR0 = 0;
-    new_VanesLR1 = 0;
-
-    checksum = calc_checksumFrame33(MISO_frame);
-    MISO_frame[CBL2] = static_cast<uint8_t>(checksum & 0xFF);
-  }
+  checksum = calc_extended_checksum_low(MISO_frame);
+  MISO_frame[CBL2] = static_cast<uint8_t>(checksum & 0xFF);
 
   if (this->transport_ == nullptr) {
     return err_msg_timeout_SCK_low;
   }
 
-  const esphome::mhi::MhiFrameExchangeResult transport_result = this->transport_->exchange_frame(
+  const std::size_t tx_frame_size = (protocol_mode_ == esphome::mhi::MhiProtocolMode::STANDARD_ONLY) ? 20 : 33;
+  const esphome::mhi::MhiFrameExchangeResult exchange = this->transport_->exchange_frame(
       MISO_frame,
+      tx_frame_size,
       MOSI_frame,
       sizeof(MOSI_frame),
       max_time_ms);
 
-  new_datapacket_received = transport_result.new_data_packet_received;
-
-  if (transport_result.status < 0) {
-    return transport_result.status;
+  if (exchange.status < 0) {
+    return exchange.status;
   }
 
-  if (transport_result.bytes_received < frameSize) {
-    return err_msg_timeout_SCK_high;
+  new_datapacket_received = exchange.new_data_packet_received;
+
+  if (!exchange.base_frame_complete || exchange.bytes_received < 20) {
+    return err_msg_invalid_checksum;
   }
 
-  checksum = calc_checksum(MOSI_frame);
-  if (((MOSI_frame[SB0] & 0xfe) != 0x6c) | (MOSI_frame[SB1] != 0x80) | (MOSI_frame[SB2] != 0x04)) {
+  if (!is_valid_mosi_header(MOSI_frame)) {
     return err_msg_invalid_signature;
   }
+
+  checksum = calc_base_checksum(MOSI_frame);
   if (((MOSI_frame[CBH] << 8) | MOSI_frame[CBL]) != checksum) {
     return err_msg_invalid_checksum;
   }
 
-  if (frameSize == 33) {
-    checksum = calc_checksumFrame33(MOSI_frame);
+  const bool valid_extended_frame = (MOSI_frame[SB0] == 0x6D);
+  if (valid_extended_frame) {
+    if (exchange.bytes_received < 33 || !exchange.extended_tail_present) {
+      return err_msg_invalid_checksum;
+    }
+    checksum = calc_extended_checksum_low(MOSI_frame);
     if (MOSI_frame[CBL2] != static_cast<uint8_t>(checksum & 0xFF)) {
       return err_msg_invalid_checksum;
     }
+    observed_frame_type_ = esphome::mhi::MhiFrameType::EXTENDED_33;
+    supports_extended_ = true;
+  } else {
+    observed_frame_type_ = esphome::mhi::MhiFrameType::STANDARD_20;
   }
 
   if (new_datapacket_received) {
-    if (frameSize == 33) {
+    if (valid_extended_frame) {
       uint8_t vanesLRtmp = static_cast<uint8_t>((MOSI_frame[DB16] & 0x07) + ((MOSI_frame[DB17] & 0x01) << 4));
       if (vanesLRtmp != status_vanesLR_old) {
         if ((vanesLRtmp & 0x10) != 0) {
