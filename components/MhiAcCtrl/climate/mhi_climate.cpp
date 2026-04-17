@@ -11,28 +11,36 @@ static const char *TAG = "mhi.climate";
 void MhiClimate::setup() {
     this->power_ = power_off;
     this->current_temperature = NAN;
-    // restore set points
+
+    float restored_target_temperature = NAN;
     auto restore = this->restore_state_();
     if (restore.has_value()) {
-        restore->apply(this);
-    } else {
-        // restore from defaults
-        this->mode = climate::CLIMATE_MODE_OFF;
-        // initialize target temperature to some value so that it's not NAN
-        this->target_temperature = roundf(clamp(
-            this->current_temperature, this->minimum_temperature_, this->maximum_temperature_));
-        this->fan_mode = climate::CLIMATE_FAN_AUTO;
-        this->swing_mode = climate::CLIMATE_SWING_OFF;
+        restored_target_temperature = restore->target_temperature;
     }
-    // Never send nan to HA
-    if (std::isnan(this->target_temperature))
-        this->target_temperature = 20;
+
+    // Do not restore live operating state on boot.
+    // The indoor unit is the source of truth, and if it is off at startup
+    // we may not immediately receive enough status updates to correct a stale
+    // restored mode/fan/swing state from HA/NVS.
+    this->mode = climate::CLIMATE_MODE_OFF;
+    this->fan_mode = climate::CLIMATE_FAN_AUTO;
+    this->swing_mode = climate::CLIMATE_SWING_OFF;
+
+    if (!std::isnan(restored_target_temperature)) {
+        this->target_temperature = restored_target_temperature;
+    } else {
+        this->target_temperature = 20.0f;
+    }
 
     this->vanesLR_pos_old_state_ = 4;
     this->vanes_pos_old_state_ = 4;
 
     this->platform_ = this->parent_;
     this->platform_->add_listener(this);
+
+    // Publish a safe startup state instead of a potentially stale restored
+    // running state. Real device telemetry will correct this once received.
+    this->publish_state();
 }
 
 void MhiClimate::dump_config() {
@@ -278,11 +286,11 @@ void MhiClimate::update_status(ACStatus status, int value) {
 void MhiClimate::control(const climate::ClimateCall &call) {
     if (call.get_target_temperature().has_value()) {
         float target_temp = *call.get_target_temperature();
-        this->target_temperature = target_temp; // Store the user's desired temp
+        this->target_temperature = target_temp;
 
         ESP_LOGD(TAG, "MhiClimate::control - get_target_temperature - New target_temperature: %.1f°C", target_temp);
 
-        const float ac_unit_min_temp = 18.0f; // Hardware minimum for the AC unit
+        const float ac_unit_min_temp = 18.0f;
 
         float setpoint = ceil(target_temp);
         if (setpoint < ac_unit_min_temp)
@@ -381,7 +389,6 @@ void MhiClimate::control(const climate::ClimateCall &call) {
     this->publish_state();
 }
 
-/// Return the traits of this controller.
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 11, 0)
 climate::ClimateTraits MhiClimate::traits() {
     auto traits = climate::ClimateTraits();
