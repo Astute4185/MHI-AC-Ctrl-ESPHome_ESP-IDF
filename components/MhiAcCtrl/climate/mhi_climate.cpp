@@ -43,78 +43,103 @@ void MhiClimate::dump_config() {
 void MhiClimate::update_status(ACStatus status, int value) {
 
     static int mode_tmp = 0xff;
+    bool dirty = false;
 
-    
     ESP_LOGD(TAG, "received status=%i value=%i power=%i", status, value, this->power_);
-
-    if (this->power_ == power_off) {
-        // Workaround for status after reboot
-        this->mode = climate::CLIMATE_MODE_OFF;
-        this->publish_state();
-    }
 
     switch (status) {
     case status_power:
         if (value == power_on) {
-            this->power_ = power_on;
+            if (this->power_ != power_on) {
+                this->power_ = power_on;
+                dirty = true;
+            }
             update_status(status_mode, mode_tmp);
         } else {
-            this->power_ = power_off;
-            this->mode = climate::CLIMATE_MODE_OFF;
-            this->publish_state();
+            if (this->power_ != power_off) {
+                this->power_ = power_off;
+                dirty = true;
+            }
+            if (this->mode != climate::CLIMATE_MODE_OFF) {
+                this->mode = climate::CLIMATE_MODE_OFF;
+                dirty = true;
+            }
         }
         break;
+
     case status_mode:
         mode_tmp = value;
+        [[fallthrough]];
     case opdata_mode:
-    case erropdata_mode:
+    case erropdata_mode: {
+        auto new_mode = this->mode;
+
         switch (value) {
-        case mode_auto:          
+        case mode_auto:
             if (status != erropdata_mode && this->power_ > 0) {
-                this->mode = climate::CLIMATE_MODE_HEAT_COOL;
+                new_mode = climate::CLIMATE_MODE_HEAT_COOL;
             } else {
-                this->mode = climate::CLIMATE_MODE_OFF;
+                new_mode = climate::CLIMATE_MODE_OFF;
             }
             break;
         case mode_dry:
-            this->mode = climate::CLIMATE_MODE_DRY;
+            new_mode = climate::CLIMATE_MODE_DRY;
             break;
         case mode_cool:
-            this->mode = climate::CLIMATE_MODE_COOL;
+            new_mode = climate::CLIMATE_MODE_COOL;
             break;
         case mode_fan:
-            this->mode = climate::CLIMATE_MODE_FAN_ONLY;
+            new_mode = climate::CLIMATE_MODE_FAN_ONLY;
             break;
         case mode_heat:
-            this->mode = climate::CLIMATE_MODE_HEAT;
+            new_mode = climate::CLIMATE_MODE_HEAT;
             break;
         default:
             ESP_LOGD(TAG, "unknown status mode value %i", value);
+            break;
         }
-        this->publish_state();
+
+        if (this->mode != new_mode) {
+            this->mode = new_mode;
+            dirty = true;
+        }
         break;
-    case status_fan:
+    }
+
+    case status_fan: {
+        auto new_fan_mode = this->fan_mode;
+
         switch (value) {
         case 0:
-            this->fan_mode = climate::CLIMATE_FAN_QUIET;
+            new_fan_mode = climate::CLIMATE_FAN_QUIET;
             break;
         case 1:
-            this->fan_mode = climate::CLIMATE_FAN_LOW;
+            new_fan_mode = climate::CLIMATE_FAN_LOW;
             break;
         case 2:
-            this->fan_mode = climate::CLIMATE_FAN_MEDIUM;
+            new_fan_mode = climate::CLIMATE_FAN_MEDIUM;
             break;
         case 6:
-            this->fan_mode = climate::CLIMATE_FAN_HIGH;
+            new_fan_mode = climate::CLIMATE_FAN_HIGH;
             break;
         case 7:
-            this->fan_mode = climate::CLIMATE_FAN_AUTO;
+            new_fan_mode = climate::CLIMATE_FAN_AUTO;
+            break;
+        default:
             break;
         }
-        this->publish_state();
+
+        if (this->fan_mode != new_fan_mode) {
+            this->fan_mode = new_fan_mode;
+            dirty = true;
+        }
         break;
-    case status_vanes:
-        // Vanes Up Down, also known as Vertical
+    }
+
+    case status_vanes: {
+        auto new_swing_mode = this->swing_mode;
+        int new_vanes_pos_old_state = this->vanes_pos_old_state_;
+
         if (this->vanesLR_pos_state_ == vanesLR_swing) {
             switch (value) {
                 case vanes_unknown:
@@ -122,34 +147,48 @@ void MhiClimate::update_status(ACStatus status, int value) {
                 case vanes_2:
                 case vanes_3:
                 case vanes_4:
-                    this->swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
-                    this->vanes_pos_old_state_ = value;
+                    new_swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
+                    new_vanes_pos_old_state = value;
                     break;
                 case vanes_swing:
-                    this->swing_mode = climate::CLIMATE_SWING_BOTH;
+                    new_swing_mode = climate::CLIMATE_SWING_BOTH;
                     break;
             }
-        }
-        else {
+        } else {
             switch (value) {
                 case vanes_unknown:
                 case vanes_1:
                 case vanes_2:
                 case vanes_3:
                 case vanes_4:
-                    this->swing_mode = climate::CLIMATE_SWING_OFF;
-                    this->vanes_pos_old_state_ = value;
+                    new_swing_mode = climate::CLIMATE_SWING_OFF;
+                    new_vanes_pos_old_state = value;
                     break;
                 case vanes_swing:
-                    this->swing_mode = climate::CLIMATE_SWING_VERTICAL;
+                    new_swing_mode = climate::CLIMATE_SWING_VERTICAL;
                     break;
             }
-
         }
-        this->vanes_pos_state_ = value;
-        this->publish_state();
+
+        if (this->swing_mode != new_swing_mode) {
+            this->swing_mode = new_swing_mode;
+            dirty = true;
+        }
+        if (this->vanes_pos_old_state_ != new_vanes_pos_old_state) {
+            this->vanes_pos_old_state_ = new_vanes_pos_old_state;
+            dirty = true;
+        }
+        if (this->vanes_pos_state_ != value) {
+            this->vanes_pos_state_ = value;
+            dirty = true;
+        }
         break;
-    case status_vanesLR:
+    }
+
+    case status_vanesLR: {
+        auto new_swing_mode = this->swing_mode;
+        int new_vanesLR_pos_old_state = this->vanesLR_pos_old_state_;
+
         if (this->vanes_pos_state_ == vanes_swing) {
             switch (value) {
                 case vanesLR_1:
@@ -159,15 +198,14 @@ void MhiClimate::update_status(ACStatus status, int value) {
                 case vanesLR_5:
                 case vanesLR_6:
                 case vanesLR_7:
-                    this->swing_mode = climate::CLIMATE_SWING_VERTICAL;
-                    this->vanesLR_pos_old_state_ = value;
+                    new_swing_mode = climate::CLIMATE_SWING_VERTICAL;
+                    new_vanesLR_pos_old_state = value;
                     break;
                 case vanesLR_swing:
-                    this->swing_mode = climate::CLIMATE_SWING_BOTH;
+                    new_swing_mode = climate::CLIMATE_SWING_BOTH;
                     break;
             }
-        }
-        else {
+        } else {
             switch (value) {
                 case vanesLR_1:
                 case vanesLR_2:
@@ -176,48 +214,68 @@ void MhiClimate::update_status(ACStatus status, int value) {
                 case vanesLR_5:
                 case vanesLR_6:
                 case vanesLR_7:
-                    this->swing_mode = climate::CLIMATE_SWING_OFF;
-                    this->vanesLR_pos_old_state_ = value;
+                    new_swing_mode = climate::CLIMATE_SWING_OFF;
+                    new_vanesLR_pos_old_state = value;
                     break;
                 case vanesLR_swing:
-                    this->swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
+                    new_swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
                     break;
             }
-
         }
-        this->publish_state();
-        this->vanesLR_pos_state_ = value;
+
+        if (this->swing_mode != new_swing_mode) {
+            this->swing_mode = new_swing_mode;
+            dirty = true;
+        }
+        if (this->vanesLR_pos_old_state_ != new_vanesLR_pos_old_state) {
+            this->vanesLR_pos_old_state_ = new_vanesLR_pos_old_state;
+            dirty = true;
+        }
+        if (this->vanesLR_pos_state_ != value) {
+            this->vanesLR_pos_state_ = value;
+            dirty = true;
+        }
         break;
-    case status_troom:
-        // Calculate the temperature and apply the offset for 0.5°C steps
-        this->current_temperature = ((value - 61) / 4.0) - this->temperature_offset_;
-        this->publish_state();
+    }
+
+    case status_troom: {
+        float new_current_temperature = ((value - 61) / 4.0f) - this->temperature_offset_;
+        if (std::isnan(this->current_temperature) ||
+            fabs(this->current_temperature - new_current_temperature) > 0.01f) {
+            this->current_temperature = new_current_temperature;
+            dirty = true;
+        }
         break;
+    }
 
     case status_tsetpoint: {
-        float ac_setpoint = (value & 0x7f) / 2.0;
+        float ac_setpoint = (value & 0x7f) / 2.0f;
 
-        // If we are using an offset, check if the AC's update is just an
-        // echo of the command we already sent (our target + our offset).
-        if (this->temperature_offset_ != 0.0 && 
-            fabs(ac_setpoint - (this->target_temperature + this->temperature_offset_)) < 0.1) {
-            
-            // This is an expected echo. Do nothing to prevent overwriting our state.
+        if (this->temperature_offset_ != 0.0f &&
+            fabs(ac_setpoint - (this->target_temperature + this->temperature_offset_)) < 0.1f) {
             ESP_LOGD(TAG, "Ignoring tsetpoint echo from AC: %.1f", ac_setpoint);
             break;
         }
 
-        // If it's not an echo, it's a new value from the remote.
-        // Update the target temperature and reset the offset.
         ESP_LOGI(TAG, "Remote setpoint change detected. Updating target to %.1f", ac_setpoint);
-        this->target_temperature = ac_setpoint;
-        this->temperature_offset_ = 0.0;
-        this->publish_state();
+
+        if (fabs(this->target_temperature - ac_setpoint) > 0.01f) {
+            this->target_temperature = ac_setpoint;
+            dirty = true;
+        }
+        if (this->temperature_offset_ != 0.0f) {
+            this->temperature_offset_ = 0.0f;
+            dirty = true;
+        }
         break;
     }
+
     default:
-        // skip these values as they are not used currently
         break;
+    }
+
+    if (dirty) {
+        this->publish_state();
     }
 }
 
