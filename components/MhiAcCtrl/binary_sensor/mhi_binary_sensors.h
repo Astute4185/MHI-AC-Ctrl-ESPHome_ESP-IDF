@@ -22,8 +22,8 @@ protected:
     void dump_config() override;
     void update_status(ACStatus status, int value) override;
 private:
-    BinarySensor* defrost_;    
-    BinarySensor* vanes_3d_auto_enabled_;
+    BinarySensor* defrost_{nullptr};    
+    BinarySensor* vanes_3d_auto_enabled_{nullptr};
 };
 
 }

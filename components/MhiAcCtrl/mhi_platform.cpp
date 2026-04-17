@@ -5,7 +5,9 @@
 
 #include "esphome/components/sensor/sensor.h"
 #include "mhi_time.h"
+#include "mhi_diagnostics.h"
 
+#include "esphome/core/log.h"
 namespace {
 constexpr int kDefaultSckPin = 14;
 constexpr int kDefaultMosiPin = 13;
@@ -21,35 +23,23 @@ namespace mhi {
 
 static const char *TAG = "mhi.platform";
 
-const char *MhiPlatform::get_transport_backend_name_() const {
-  switch (this->transport_backend_) {
-    case TRANSPORT_BACKEND_GPIO_FRAME_ISR:
-      return "gpio_frame_isr";
-    case TRANSPORT_BACKEND_ESP32_FAST:
-    default:
-      return "esp32_fast";
-  }
-}
-
 void MhiPlatform::setup() {
   MhiTransportConfig config{};
   config.sck_pin = resolve_pin(this->sck_pin_, kDefaultSckPin);
   config.mosi_pin = resolve_pin(this->mosi_pin_, kDefaultMosiPin);
   config.miso_pin = resolve_pin(this->miso_pin_, kDefaultMisoPin);
-  config.frame_size = static_cast<uint8_t>(this->frame_size_);
+  config.frame_size_hint = static_cast<uint8_t>(this->frame_size_);
 
-  MhiTransport *selected_transport = &this->transport_legacy_;
-  if (this->transport_backend_ == TRANSPORT_BACKEND_GPIO_FRAME_ISR) {
-    selected_transport = &this->transport_gpio_frame_isr_;
-    ESP_LOGW(TAG, "Using experimental transport backend: gpio_frame_isr");
-  } else {
-    ESP_LOGCONFIG(TAG, "Using transport backend: esp32_fast");
-  }
+  ESP_LOGCONFIG(TAG, "Using transport backend: mhi_transport");
+  ESP_LOGCONFIG(
+      TAG,
+      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u",
+      config.sck_pin,
+      config.mosi_pin,
+      config.miso_pin,
+      config.frame_size_hint);
 
-  ESP_LOGCONFIG(TAG, "Resolved transport config: sck=%d mosi=%d miso=%d cs=%d frame_size=%u",
-                config.sck_pin, config.mosi_pin, config.miso_pin, config.cs_pin, config.frame_size);
-
-  this->mhi_ac_ctrl_core_.set_transport(selected_transport);
+  this->mhi_ac_ctrl_core_.set_transport(&this->transport_);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
 
   this->mhi_ac_ctrl_core_.MHIAcCtrlStatus(this);
@@ -95,7 +85,9 @@ void MhiPlatform::loop() {
 
   const int ret = this->mhi_ac_ctrl_core_.loop(100);
   if (ret < 0) {
-    ESP_LOGE(TAG, "mhi_ac_ctrl_core loop error: %i", ret);
+    esphome::mhi::mhi_log_platform_loop_status(
+        TAG,
+        {ret, this->mhi_ac_ctrl_core_.get_last_diag_reason()});
   }
 }
 
@@ -106,15 +98,13 @@ void MhiPlatform::dump_config() {
     ESP_LOGCONFIG(TAG, "  external_temperature_sensor enabled!");
   }
 
-  ESP_LOGCONFIG(TAG, "  frame_size: %d", this->frame_size_);
+  ESP_LOGCONFIG(TAG, "  frame_size_hint: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
-  ESP_LOGCONFIG(TAG, "  transport_backend: %s", this->get_transport_backend_name_());
+  ESP_LOGCONFIG(TAG, "  transport_backend: mhi_transport");
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
-  ESP_LOGCONFIG(TAG, "  spi_cs_pin: %d", this->spi_cs_pin_);
-  ESP_LOGCONFIG(TAG, "  listeners count: %d",
-                static_cast<int>(this->listeners_.size()));
+  ESP_LOGCONFIG(TAG, "  listeners count: %d", static_cast<int>(this->listeners_.size()));
 }
 
 void MhiPlatform::cbiStatusFunction(ACStatus status, int value) {

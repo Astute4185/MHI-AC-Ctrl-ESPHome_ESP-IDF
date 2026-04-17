@@ -1,5 +1,6 @@
 #include "mhi_sensors.h"
 
+#include "esphome/core/log.h"
 namespace esphome {
 namespace mhi {
 

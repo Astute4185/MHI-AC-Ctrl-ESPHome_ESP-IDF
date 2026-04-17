@@ -1,134 +1,184 @@
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/ginkage)
-[![paypal RobertJansen1](https://www.paypalobjects.com/en_GB/i/btn/btn_donate_LG.gif)](https://www.paypal.com/donate/?hosted_button_id=TL3SFZ4P6ZDHN)
+# MHI-AC-Ctrl-ESPHome — ESP-IDF Branch
 
-# How to get started
+This branch is an **ESP-IDF-focused development branch** of [ginkage/MHI-AC-Ctrl-ESPHome](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome), built to keep the original ESPHome integration model while improving transport reliability, diagnostics, and maintainability for Mitsubishi Heavy Industries air conditioners.
 
-Create a new device within ESPHome builder and combine the yaml with one of the examples from the `examples` directory. Give your unit a name, configure OTA passwords, hotspot, add an API key (generator can be found on https://esphome.io/components/api/#configuration-variables) and install!  
+It is based on the upstream ESPHome component structure and native codegen approach already used in the main project, and it keeps the same broad goal: simple Home Assistant integration with OTA, API support, and no MQTT requirement for core control.
 
-- [`simple.yaml`](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/blob/master/examples/simple.yaml): Basic yaml to get started, contains climate and fan direction control.
-- [`external_sensor.yaml`](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/blob/master/examples/external_sensor.yaml): Contains the basics to configure the room temperature using an external temperature sensor connected to Home Assistant.  
-- [`full.yaml`](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/blob/master/examples/full.yaml): Contains all (20+!) of the metrics that are possibly in the unit and returns them.  
-- [`simple-energy-management.yaml`](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/blob/master/examples/simple-energy-measurement.yaml): Contains the basics to get started with energy measuring (assuming a voltage of 230v to convert A to Wh).
+This branch also uses frame and bus-capture information from [absalom-muc/MHI-AC-Trace](https://github.com/absalom-muc/MHI-AC-Trace) to guide transport handling, frame validation, and diagnostics work.
 
-# MHI-AC-Ctrl-ESPHome
-This project is a simple integration of the amazing work [absalom-muc](https://github.com/absalom-muc) has done with his project [MHI-AC-Ctrl](https://github.com/absalom-muc/MHI-AC-Ctrl).\
-It's supposed to simplify the [Home Assistant](https://www.home-assistant.io/) setup, while giving you OTA and auto-discovery with virtually zero effort and no MQTT needed, powered by [ESPHome](https://ESPHome.io/).\
-`MHI-AC-Ctrl-core.*` files were forked directly, with a small modification to allow for pin setting in yaml, whereas your WiFi credentials should go into the `*.yaml` file, and `mhi_ac_ctrl.h` is the core of the integration.
+## What this branch is
 
-# Fan Modes Up/Down Left/Right
-Most newer MHI units (the ones supporting the WF-RAC WiFi module) support fine grained vane control for Left/Right and Up/Down.  
-When your log is flooded with `mhi_ac_ctrl_core.loop error: -2` errors after updating to the newer code, please change your yaml file to set `frame_size: 20`.  
-Currently the MHI code allows for more fine grained fan direction than ESPHome climate supports. for that, additional template parts are added.  
-There are 8 modes for Left/Right: Left, Left/Center, Center, Center/Right, Right, Wide, Spot and Swing  
-There are 5 modes for Up/Down: Up, Up/Center, Center/Down, Down and Swing  
-Setting swing from the ESPHome climate now fully works. It will store the oldvanes mode, and configure swing. After disabling swing (either vertically, horizontally or off), the old settings will be restored. Manually changing modes for Left/Right or Up/Down will update the climate state as well.
+This is **not** a clean-room rewrite. It is a branch off the upstream project with targeted engineering work in four areas:
 
-# Climate Quiet
+1. **ESP-IDF-first operation**
+2. **MHI bus transport and frame-handling improvements**
+3. **better logging and diagnostics for bad frames**
+4. **core refactoring to make future maintenance safer and smaller in scope**
 
-Climate Quiet was added to ESPhome, so QUIET was added. Ordering still needs work (https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/22#issuecomment-1744448983)
-Added the solution for the auto mode from: https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/22#issuecomment-1310271934:
-CLIMATE_FAN_DIFFUSE in fan speed and status sections and reshuffle the numbers and add CLIMATE_FAN_DIFFUSE to the traits.set_supported_fan_modes
+The current branch has been compiled and deployed in the provided test environment on **ESPHome 2026.3.3** using **ESP-IDF 5.5.3** on an **ESP32-S3** target.
 
-Has now 5 different fan modes but I'm not sure if the auto mode works proper, keep testing.
+## Key branch additions
 
-# Low temperature heating and cooling
+### 1. ESP-IDF-oriented transport work
 
-To allow for lower temperature heating or cooling, set the visual_min_temperature in the climate section of the yaml like so:
+This branch is focused on running cleanly on ESP-IDF builds rather than carrying Arduino-era assumptions forward.
+
+Current work in this area includes:
+- transport configuration passed from YAML into the component at runtime
+- frame-size hinting for 20-byte and 33-byte units
+- pin configuration support for `sck`, `mosi`, and `miso`
+- branch work toward simplifying transport ownership and reducing backend-switching complexity
+
+### 2. Improved diagnostics and logging
+
+The branch adds or is actively standardising more useful diagnostics around frame failures.
+
+Goals of this work:
+- keep the periodic summary line as the main health signal
+- keep detailed bad-frame logs when a real failure occurs
+- suppress or replace low-value numeric-only errors such as `mhi_ac_ctrl_core loop error: -2`
+- make timeout, signature, and checksum failures easier to understand
+
+Examples of the diagnostic direction for this branch:
+- periodic `mhi.diag` summary counters
+- explicit logging for extended checksum, base checksum, signature, and timeout failure classes
+- branch work to map numeric loop errors to named diagnostic reasons
+
+### 3. Modular core refactor
+
+The original core flow was difficult to patch safely because transmit build, receive/validate, status decode, opdata decode, and state management were all tightly packed into the same hot path.
+
+This branch has been progressively refactored so the pipeline is easier to reason about and easier to patch in isolation.
+
+Current refactor direction:
+- `mhi_frame_layout.h` for frame offsets and checksum helpers
+- `mhi_core_state.h` for runtime/cache state
+- `mhi_tx_builder.*` for outbound frame construction
+- `mhi_rx_validator.*` for transport exchange and frame validation
+- `mhi_status_decoder.*` for standard status decode
+- `mhi_opdata_decoder.*` for `DB9` opdata / error-opdata handling
+- optional helper layers such as `mhi_publish.*` and `mhi_core_reset.cpp` to reduce repeated boilerplate and keep the hot path small
+
+### 4. Reliability work for 33-byte units
+
+Upstream already supports frame-size selection, and this branch continues that direction with more emphasis on diagnosing and stabilising 33-byte operation.
+
+The objective is not to hide failures. The objective is to:
+- make frame problems visible
+- keep logs readable
+- make it easier to determine whether an issue is transport timing, capture integrity, checksum mismatch, or a unit/frame-size compatibility problem
+
+## Features retained from upstream
+
+This branch still builds on the upstream component feature set, including:
+- Home Assistant / ESPHome integration without MQTT for core control
+- climate entity support
+- up/down vane control
+- left/right vane support on units using larger frames
+- external room temperature support
+- low-temperature heating/cooling configuration support
+- quiet / diffuse fan related upstream work
+- YAML-based installation flow using example configs
+
+## Hardware and target notes
+
+This branch has been exercised on ESP32-S3 hardware in the provided logs.
+
+From the supplied compile and runtime output:
+- board target was `esp32-s3-devkitc-1`
+- framework was ESP-IDF
+- compile and OTA deployment completed successfully
+- runtime logs show sustained successful frame processing with periodic `mhi.diag` summaries
+
+That does **not** mean every board and every MHI indoor unit will behave the same. Older units may still require `frame_size: 20`, and newer units may benefit from `frame_size: 33` when the transport path is stable.
+
+## Getting started
+
+Create a new ESPHome device and combine your YAML with one of the examples from the `examples` directory in the upstream project.
+
+At minimum you should configure:
+- device name
+- Wi-Fi
+- OTA
+- API key
+- MHI pins (`sck`, `mosi`, `miso`) if your hardware requires them
+- `frame_size` appropriate for your unit
+
+Recommended starting points from upstream:
+- `simple.yaml`
+- `external_sensor.yaml`
+- `full.yaml`
+- `simple-energy-management.yaml`
+
+## Branch-specific notes
+
+### Frame size
+
+If you are seeing repeated checksum or loop failures on a unit that does not support the larger frame layout, set:
 
 ```yaml
-climate:  
-  - platform: MhiAcCtrl  
-    name: "MHI Air Conditioner"  
-    temperature_offset: true  
-    visual_min_temperature: 17.0  
-```
-This will allow for lower temperature heating or cooling.
-
-
-# Hardware
- - Hardware designed by [fonske](https://github.com/fonske) can be found [here](JLCPCB/Hardware.md)
- - A ready-to-go esp32-s3 based airco controller can be bought at [tinytronics.nl](https://www.tinytronics.nl/en/development-boards/microcontroller-boards/with-wi-fi/universal-air-conditioning-controller-esp32-s3) instructions can be found [here](UniversalAircoController/README.md)
-
-
-# Changelog:
-
-
-**v4.2** (2025-07)
- - Allow configuration of pins through yaml
- - Update calculation of Indoor Heat exchanger temperature 2 (capillary)
- - Don't spam unit with unchanged room_temp
- - **Deprecating set set_vertical_vanes and set_horizontal_vanes, will be removed in v4.3 use select functions for fan control**
-
-**v4.1** (2025-07)
- - Changed climate.CLIMATE_SCHEMA to fix deprecation warning in 2025.5.0 and higher https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/151
- - Make 0.5 degrees setpoint actually work https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/88
- - Allow low temp heating and cooling (below 18 degrees) https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/152
- - Allow fan speed from esphome web interface https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/136
- - Deprecating set set_vertical_vanes and set_horizontal_vanes, will be removed in v4.3 use select functions for fan control
-
-**v4.0** (2025-04)
- - Compatibility with ESPHOME 2025.2+
- - Breaking change: the implementation is ported to the native ESPHome codegen
-   - The configuration file is significantly simplified
-   - No need for custom code in the config file
-   - Sensors are no longer positional
- - External sensor support
-
-**v3.0** (2024-08)
- - Breaking change: moved all files to component and allow for easy install, thanks to @XMaarten and https://github.com/hberntsen/mhi-ac-ctrl-esp32-c3
-   - When you are upgrading from v2.1 or older, and experience compile errors, please see https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/100#issuecomment-2395388853 for manual cleanup steps
- - Manually downloading the files to your Home Assistant setup is no longer needed
- - Legacy or Large framesize files are merged again
-
-**v2.1** (2024-03)
- - Breaking change: Cleaned up conf files
- - Add restart button
- - Update Home Assistant naming convention
- - Enable energy dashboard usage 
-
-**v2.0** (2024-01)
- - Based on absalom-muc v2.8 (September 2023)
- - Breaking change in YAML configuration (need to set frame_size in globals)
- - Added legacy support configurable from YAML (removing 3d auto and vanes LR control)
-
-# FAQ
-
-### I have no clue where to start, what can i do?
-Step 1: Learn Dutch to understand the blogpost (or use some translation service :) 
-Step 2: Go to this extensive blogpost: https://www.twoenter.nl/blog/smarthome/mitsubishi-airco-voorzien-van-wifi-besturing/ 
-  
-### I am getting the following logline in the console of my device:
-```
-[W][component:237]: Component MhiAcCtrl took a long time for an operation (52 ms).
-[W][component:238]: Components should block for at most 30 ms.
+frame_size: 20
 ```
 
-This is because ESPHome now alerts for slow components. To ignore this warning you can configure logging for components to ERROR, this will suppress the WARNING. See https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/issues/61 for more information.
+If your unit supports the larger frame layout and left/right vane or 3D auto features are required, test with:
+
 ```yaml
-# Enable logging
-logger:
-    level: INFO
-    baud_rate: 0
-    logs:
-        component: ERROR
+frame_size: 33
 ```
 
-### I am getting `mhi_ac_ctrl_core.loop error: -2` errors and nothing works!  
-You probably have an older version of the Airco unit which doesn't support the newer, larger framesize.   
-You can to change the frame_size in the yaml to 20 to disable newer functionality.  
-When framsize is set to 20, 3D auto, and vane Left / Right doesn't work, vane Up / Down works limited.  
-All other features should work fine.  
+### Logging
 
-### Everything has changed, how do I update?!?  
-As time progresses, ESPHome and this project evolved, allowing for more features and easier installation and updates in the future. When you are on an older versione (whether that is v3.0, v2.0 or earlier) the best way forward is to get one of the example yaml files from the examples folder and apply this to your current yaml file. 
- 1. Make a copy of your current yaml file, and save it somewhere outside of Home Assistant.
- 2. Did you not skip step 1?
- 3. Choose one of the example yaml files from the [examples dir](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome/tree/master/examples)
- 4. Carefully copy the basic information from the backup file into the example file. Take things like name, ota password, wifi credentials, ap fallback settings, api settings and key, and frame_size
- 5. Double check your new yaml and paste it in ESPHome builder and deploy
- 6. If you replaced all information carefully, all should build fine. If not, read the message and see what parts are missing or duplicate (most frequently done wrong)
+This branch is actively improving diagnostics. Expect log formats around transport and frame validation to evolve as the diagnostics layer is cleaned up.
 
+The long-term intent is:
+- concise summaries during normal operation
+- named warnings for known failure classes
+- less spam from redundant platform-level numeric errors
 
-# License
-This project is licensed under the MIT License - see the LICENSE file for details.\
-(TL;DR: Do whatever you want with the code, no warranty given, give credit where it's due.)
+### Refactor status
+
+This branch contains ongoing codebase modularisation work. The intent is to make future fixes smaller, more reviewable, and less likely to regress unrelated behaviour.
+
+## FAQ
+
+### I am getting checksum/signature failures or legacy `mhi_ac_ctrl_core loop error: -2`
+
+In this branch, the most useful diagnostics are the `mhi.diag` warnings such as:
+- `extended_checksum_fail`
+- `base_checksum_fail`
+- `invalid_signature`
+- `short_capture`
+- `timeout_low`
+- `timeout_high`
+- `timeout_other`
+
+A raw `mhi_ac_ctrl_core loop error: -2` is a legacy/secondary symptom and should be read together with the surrounding `mhi.diag` output.
+
+The usual causes are:
+- the configured `frame_size` is wrong for the unit (`20` vs `33`)
+- the transport path is unstable
+- a bad frame was captured and rejected by signature/checksum validation
+
+The first thing to verify is whether the unit should be using `frame_size: 20` or `frame_size: 33`.
+
+### Why is this branch different from upstream?
+
+Because the priority here is engineering work around:
+- ESP-IDF compatibility
+- transport stability
+- more useful diagnostics
+- making the core easier to maintain and patch
+
+### Is this upstream?
+
+No. This is a development branch built on top of the upstream project.
+
+## Credits
+
+- Upstream ESPHome project base: [ginkage/MHI-AC-Ctrl-ESPHome](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome)
+- Bus capture and trace reference: [absalom-muc/MHI-AC-Trace](https://github.com/absalom-muc/MHI-AC-Trace)
+- Original reverse-engineering lineage and MHI protocol work from the wider community around `MHI-AC-Ctrl`
+
+## License
+
+This branch inherits the upstream licensing model. See the repository `LICENSE` file for details.
