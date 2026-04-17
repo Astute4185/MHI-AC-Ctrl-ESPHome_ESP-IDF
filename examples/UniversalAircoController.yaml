@@ -1,26 +1,26 @@
-esphome:
-  name: "airco-ctrl"
+substitutions:
+  device_name: airco-ctrl
   friendly_name: Airco Controller
-  min_version: 2025.5.0
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.3.0
   name_add_mac_suffix: false
-  platformio_options:
-    # Run CPU at 160Mhz to fix mhi_ac_ctrl_core.loop error: -2
-    board_build.f_cpu: 160000000L
 
 esp32:
   board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
 
-# Enable logging
 logger:
   level: INFO
   baud_rate: 0
 
-# Enable Home Assistant API
 api:
 
-# Allow Over-The-Air updates
 ota:
-- platform: esphome
+  - platform: esphome
 
 wifi:
   ssid: !secret wifi_ssid
@@ -30,13 +30,11 @@ web_server:
   port: 80
 
 external_components:
-  - source: github://ginkage/MHI-AC-Ctrl-ESPHome@master
+  - source: github://Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF@master
     components: [MhiAcCtrl]
 
-# Version 4.2
 MhiAcCtrl:
-  # Only 20 (legacy) or 33 (includes 3D auto and vertical vanes) possible.
-  # If you encounter mhi_ac_ctrl_core.loop error: -2 errors, change the frame_size to 20
+  # Set to 20 if your unit does not support 33-byte frames.
   frame_size: 20
   sck_pin: 21
   miso_pin: 34
@@ -44,20 +42,21 @@ MhiAcCtrl:
 
 climate:
   - platform: MhiAcCtrl
-    name: "MHI Air Conditioner"
+    name: "${friendly_name}"
 
 select:
   - platform: MhiAcCtrl
     vertical_vanes:
-      name: Fan Control Up Down
+      name: "Vanes Up-Down"
     horizontal_vanes:
-      name: Fan Control Left Right
+      name: "Vanes Left-Right"
 
 switch:
   - platform: MhiAcCtrl
     vanes_3d_auto:
       name: "3D Auto"
+
 sensor:
   - platform: MhiAcCtrl
     outdoor_temperature:
-      name: "Outdoor temperature"
+      name: "Outdoor Temperature"

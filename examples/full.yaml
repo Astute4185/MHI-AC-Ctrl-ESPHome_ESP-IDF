@@ -1,72 +1,69 @@
-esphome:
-  name: <device name>
-  friendly_name: <friendly name>
-  min_version: 2024.6.0
-  platformio_options:
-    # Run CPU at 160Mhz to fix mhi_ac_ctrl_core.loop error: -2
-    board_build.f_cpu: 160000000L
+substitutions:
+  device_name: mhi-ac-ctrl
+  friendly_name: MHI Air Conditioner
 
-esp8266:
-  board: d1_mini
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.3.0
+  name_add_mac_suffix: false
+
+esp32:
+  board: esp32-s3-devkitc-1  # Change to match your ESP32 board
+  framework:
+    type: esp-idf
 
 logger:
   level: INFO
   baud_rate: 0
 
-ota:
-  - platform: esphome
-    password: <pass here>
-
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
-  ap:
-    ssid: <hotspot name>
-    password: <hotspot pass>
-
-captive_portal:
-
-external_components:
-  - source: github://ginkage/MHI-AC-Ctrl-ESPHome@master
-    components: [MhiAcCtrl]
-
 api:
   encryption:
-    key: <your key here>
-
+    key: !secret api_encryption_key
   reboot_timeout: 0s
   services:
     - service: set_external_room_temperature
       variables:
-        temperature_value: float # temperature to set in Celsius
+        temperature_value: float
       then:
         - climate.mhi.set_external_room_temperature:
             temperature: !lambda "return temperature_value;"
 
-# Version 4.2
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+external_components:
+  - source: github://Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF@master
+    components: [MhiAcCtrl]
 
 MhiAcCtrl:
-  # Only 20 (legacy) or 33 (includes 3D auto and vertical vanes) possible.
-  # If you encounter mhi_ac_ctrl_core.loop error: -2 errors, change the frame_size to 20
+  # Verify this first if you see checksum/signature failures.
   frame_size: 33
   sck_pin: 14
   mosi_pin: 13
   miso_pin: 12
   initial_vertical_vanes_position: 5
   initial_horizontal_vanes_position: 8
-  # Update the following to change the default room temp timeout
   room_temp_timeout: 60
 
 button:
   - platform: restart
-    name: Restart
+    name: "Restart"
     entity_category: diagnostic
 
 climate:
   - platform: MhiAcCtrl
-    name: "MHI Air Conditioner"
+    name: "${friendly_name}"
     temperature_offset: true
     visual_min_temperature: 17.0
     visual:
@@ -83,51 +80,51 @@ binary_sensor:
     defrost:
       name: "Defrost"
     vanes_3d_auto_enabled:
-      name: "3D Auto"
+      name: "3D Auto Enabled"
 
 sensor:
   - platform: uptime
-    name: Uptime
+    name: "Uptime"
   - platform: wifi_signal
-    name: WiFi Signal
+    name: "WiFi Signal"
     update_interval: 60s
   - platform: MhiAcCtrl
     outdoor_temperature:
-      name: "Outdoor temperature"
+      name: "Outdoor Temperature"
     return_air_temperature:
-      name: "Return air temperature"
+      name: "Return Air Temperature"
     outdoor_unit_fan_speed:
-      name: "Outdoor unit fan speed"
+      name: "Outdoor Unit Fan Speed"
     indoor_unit_fan_speed:
-      name: "Indoor unit fan speed"
+      name: "Indoor Unit Fan Speed"
     compressor_frequency:
-      name: "Compressor frequency"
+      name: "Compressor Frequency"
     indoor_unit_total_run_time:
-      name: "Indoor unit total run time"
+      name: "Indoor Unit Total Run Time"
     compressor_total_run_time:
-      name: "Compressor total run time"
+      name: "Compressor Total Run Time"
     current_power:
-      name: "Current power"
+      name: "Current Power"
     energy_used:
-      name: "Energy used"
+      name: "Energy Used"
     indoor_unit_thi_r1:
-      name: "Indoor (U-bend) HE temp 1"
+      name: "Indoor HE Temp 1"
     indoor_unit_thi_r2:
-      name: "Indoor (capillary) HE temp 2"
+      name: "Indoor HE Temp 2"
     indoor_unit_thi_r3:
-      name: "Indoor (suction header) HE temp 3"
+      name: "Indoor HE Temp 3"
     outdoor_unit_tho_r1:
-      name: "Outdoor HE temp"
+      name: "Outdoor HE Temp"
     outdoor_unit_expansion_valve:
-      name: "Outdoor unit exp. valve"
+      name: "Outdoor Unit Expansion Valve"
     outdoor_unit_discharge_pipe:
-      name: "Outdoor unit discharge pipe"
+      name: "Outdoor Unit Discharge Pipe"
     outdoor_unit_discharge_pipe_super_heat:
-      name: "Outdoor unit discharge pipe super heat"
+      name: "Outdoor Unit Discharge Pipe Super Heat"
     protection_state_number:
-      name: "Compressor protection code"
+      name: "Compressor Protection Code"
     error_code:
-      name: "Error code"
+      name: "Error Code"
     vanes_pos:
       name: "Vanes"
     vanesLR_pos:
@@ -135,24 +132,24 @@ sensor:
 
 text_sensor:
   - platform: version
-    name: ESPHome Version
+    name: "ESPHome Version"
   - platform: wifi_info
     ip_address:
-      name: IP
+      name: "IP"
     ssid:
-      name: SSID
+      name: "SSID"
     bssid:
-      name: BSSID
+      name: "BSSID"
   - platform: MhiAcCtrl
     protection_state:
-      name: "Compressor protection status"
+      name: "Compressor Protection Status"
 
 select:
   - platform: MhiAcCtrl
     vertical_vanes:
-      name: Fan Control Up Down
+      name: "Vanes Up-Down"
     horizontal_vanes:
-      name: Fan Control Left Right
+      name: "Vanes Left-Right"
     fan_speed:
       name: "Fan Speed"
 
