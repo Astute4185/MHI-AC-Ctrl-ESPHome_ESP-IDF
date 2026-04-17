@@ -12,13 +12,6 @@ CONF_VANES_LR = "initial_horizontal_vanes_position"
 CONF_SCK_PIN = "sck_pin"
 CONF_MOSI_PIN = "mosi_pin"
 CONF_MISO_PIN = "miso_pin"
-CONF_TRANSPORT_BACKEND = "transport_backend"
-
-TRANSPORT_BACKEND_VALUES = {
-    "esp32_fast": 0,
-    "legacy": 0,
-    "gpio_frame_isr": 1,
-}
 
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
@@ -47,9 +40,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SCK_PIN): cv.int_,
         cv.Optional(CONF_MOSI_PIN): cv.int_,
         cv.Optional(CONF_MISO_PIN): cv.int_,
-        cv.Optional(CONF_TRANSPORT_BACKEND, default="esp32_fast"): cv.one_of(
-            *TRANSPORT_BACKEND_VALUES.keys(), lower=True
-        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -60,11 +50,6 @@ async def to_code(config):
 
     cg.add(var.set_frame_size(config[CONF_FRAME_SIZE]))
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
-    cg.add(
-        var.set_transport_backend(
-            TRANSPORT_BACKEND_VALUES[config[CONF_TRANSPORT_BACKEND]]
-        )
-    )
 
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])

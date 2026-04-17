@@ -39,15 +39,16 @@ struct MhiFrameExchangeResult {
 
 class MhiTransport {
  public:
-  virtual ~MhiTransport() = default;
+  void setup(const MhiTransportConfig &config);
 
-  virtual void setup(const MhiTransportConfig &config) = 0;
-
-  virtual MhiFrameExchangeResult exchange_frame(
+  MhiFrameExchangeResult exchange_frame(
       const uint8_t *tx_frame,
       uint8_t *rx_frame,
       std::size_t rx_capacity,
-      uint32_t max_time_ms) = 0;
+      uint32_t max_time_ms);
+
+ private:
+  MhiTransportConfig config_{};
 };
 
 }  // namespace mhi

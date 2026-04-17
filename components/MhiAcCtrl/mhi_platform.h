@@ -8,16 +8,10 @@
 
 #include "MHI-AC-Ctrl-core.h"
 #include "mhi_status_listener.h"
-#include "mhi_transport_gpio_frame_isr.h"
-#include "mhi_transport_legacy.h"
+#include "mhi_transport.h"
 
 namespace esphome {
 namespace mhi {
-
-enum TransportBackend : uint8_t {
-  TRANSPORT_BACKEND_ESP32_FAST = 0,
-  TRANSPORT_BACKEND_GPIO_FRAME_ISR = 1,
-};
 
 class MhiPlatform : public Component, public CallbackInterface_Status {
  public:
@@ -46,28 +40,15 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
 
   void add_listener(MhiStatusListener *listener);
 
-  void set_transport_backend(uint8_t backend) {
-    switch (backend) {
-      case TRANSPORT_BACKEND_GPIO_FRAME_ISR:
-        this->transport_backend_ = TRANSPORT_BACKEND_GPIO_FRAME_ISR;
-        break;
-      case TRANSPORT_BACKEND_ESP32_FAST:
-      default:
-        this->transport_backend_ = TRANSPORT_BACKEND_ESP32_FAST;
-        break;
-    }
-  }
   void set_sck_pin(int pin) { this->sck_pin_ = pin; }
   void set_mosi_pin(int pin) { this->mosi_pin_ = pin; }
   void set_miso_pin(int pin) { this->miso_pin_ = pin; }
 
  protected:
   void transfer_room_temperature(float value);
-  const char *get_transport_backend_name_() const;
 
   MHI_AC_Ctrl_Core mhi_ac_ctrl_core_;
-  MhiTransportLegacy transport_legacy_;
-  MhiTransportGpioFrameIsr transport_gpio_frame_isr_;
+  MhiTransport transport_;
   std::vector<MhiStatusListener *> listeners_;
   esphome::sensor::Sensor *external_temperature_sensor_{nullptr};
 
@@ -81,8 +62,6 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   int sck_pin_{-1};
   int mosi_pin_{-1};
   int miso_pin_{-1};
-
-  TransportBackend transport_backend_{TRANSPORT_BACKEND_ESP32_FAST};
 };
 
 }  // namespace mhi
