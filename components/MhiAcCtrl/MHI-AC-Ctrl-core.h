@@ -1,70 +1,14 @@
 #pragma once
+
 #include <cstdint>
 
 #include "mhi_transport.h"
 #include "mhi_diagnostics.h"
-
-// comment out the data you are not interested in, but leave at least one row
-static constexpr uint8_t opdata[][2] = {
-    {0xc0, 0x02},  //  1 "MODE"
-    {0xc0, 0x05},  //  2 "SET-TEMP" [°C]
-    {0xc0, 0x80},  //  3 "RETURN-AIR" [°C]
-    {0xc0, 0x81},  //  5 "THI-R1" [°C]
-    {0x40, 0x81},  //  6 "THI-R2" [°C]
-    {0xc0, 0x87},  //  7 "THI-R3" [°C]
-    {0xc0, 0x1f},  //  8 "IU-FANSPEED"
-    {0xc0, 0x1e},  // 12 "TOTAL-IU-RUN" [h]
-    {0x40, 0x80},  // 21 "OUTDOOR" [°C]
-    {0x40, 0x82},  // 22 "THO-R1" [°C]
-    {0x40, 0x11},  // 24 "COMP" [Hz]
-    {0x40, 0x85},  // 27 "TD" [°C]
-    {0x40, 0x90},  // 29 "CT" [A]
-    {0x40, 0xb1},  // 32 "TDSH" [°C]
-    {0x40, 0x7c},  // 33 "PROTECTION-No"
-    {0x40, 0x1f},  // 34 "OU-FANSPEED"
-    {0x40, 0x0c},  // 36 "DEFROST"
-    {0x40, 0x1e},  // 37 "TOTAL-COMP-RUN" [h]
-    {0x40, 0x13},  // 38 "OU-EEV" [Puls]
-    {0xc0, 0x94},  //    "energy-used" [kWh]
-};
-
-// number of frames used for an OpData request cycle; will be 20s (20 frames are 1s)
-static constexpr uint32_t NoFramesPerOpDataCycle = 400;
+#include "mhi_frame_layout.h"
+#include "mhi_core_state.h"
 
 // minimal time in ms used for Troom internal sensor changes for publishing to avoid jitter
 static constexpr uint32_t MinTimeInternalTroomMs = 5000;
-
-
-// constants for the frame
-#define SB0 0
-#define SB1 SB0 + 1
-#define SB2 SB0 + 2
-#define DB0 SB2 + 1
-#define DB1 SB2 + 2
-#define DB2 SB2 + 3
-#define DB3 SB2 + 4
-#define DB4 SB2 + 5
-#define DB6 SB2 + 7
-#define DB9 SB2 + 10
-#define DB10 SB2 + 11
-#define DB11 SB2 + 12
-#define DB12 SB2 + 13
-#define DB14 SB2 + 15
-#define CBH DB14 + 1
-#define CBL DB14 + 2
-#define DB15 CBL + 1
-#define DB16 CBL + 2
-#define DB17 CBL + 3
-#define DB18 CBL + 4
-#define DB19 CBL + 5
-#define DB20 CBL + 6
-#define DB21 CBL + 7
-#define DB22 CBL + 8
-#define DB23 CBL + 9
-#define DB24 CBL + 10
-#define DB25 CBL + 11
-#define DB26 CBL + 12
-#define CBL2 DB26 + 1
 
 enum ErrMsg {
     err_msg_valid_frame = 0,
@@ -178,60 +122,18 @@ public:
 
 class MHI_AC_Ctrl_Core {
 private:
-    // old status
-    uint8_t status_power_old;
-    uint8_t status_mode_old;
-    uint8_t status_fan_old;
-    uint8_t status_vanes_old;
-    uint8_t status_troom_old;
-    uint8_t status_tsetpoint_old;
-    uint8_t status_errorcode_old;
+    MhiStatusCacheState status_cache_{};
+    MhiOpDataCacheState opdata_cache_{};
 
-    uint8_t status_vanesLR_old;
-    uint8_t status_3Dauto_old;
-
-    // old operating data
-    uint16_t op_kwh_old;
-    uint8_t op_mode_old;
-    uint8_t op_settemp_old;
-    uint8_t op_return_air_old;
-    uint8_t op_iu_fanspeed_old;
-    uint8_t op_thi_r1_old;
-    uint8_t op_thi_r2_old;
-    uint8_t op_thi_r3_old;
-    uint8_t op_total_iu_run_old;
-    uint8_t op_outdoor_old;
-    uint8_t op_tho_r1_old;
-    uint8_t op_total_comp_run_old;
-    uint8_t op_ct_old;
-    uint8_t op_tdsh_old;
-    uint8_t op_protection_no_old;
-    uint8_t op_ou_fanspeed_old;
-    uint8_t op_defrost_old;
-    uint16_t op_comp_old;
-    uint8_t op_td_old;
-    uint16_t op_ou_eev1_old;
-
-    // for writing to AC
-    uint8_t new_Power = 0;
-    uint8_t new_Mode = 0;
-    uint8_t new_Tsetpoint = 0;
-    uint8_t new_Fan = 0;
-    uint8_t new_Vanes0 = 0;
-    uint8_t new_Vanes1 = 0;
-    bool request_erropData = false;
-    uint8_t new_Troom = 0xff; // 0xff in DB3 indicates use of the internal room temperature sensor
-    float Troom_offset = 0.0f;
-
-    uint8_t new_VanesLR0 = 0;
-    uint8_t new_VanesLR1 = 0;
-    uint8_t new_3Dauto = 0;
+    MhiTxWriteState tx_write_state_{};
     uint8_t frameSize = 20;
 
     CallbackInterface_Status *m_cbiStatus = nullptr;
-    
+
     esphome::mhi::MhiTransport *transport_ = nullptr;
     esphome::mhi::MhiTransportConfig transport_config_;
+    MhiLoopRuntimeState loop_state_{};
+    MhiDiagRuntimeState diag_state_{};
     esphome::mhi::MhiDiagReason last_diag_reason_ = esphome::mhi::MhiDiagReason::NONE;
 
 public:
