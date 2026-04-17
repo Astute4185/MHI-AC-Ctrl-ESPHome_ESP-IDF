@@ -6,7 +6,7 @@
 namespace esphome {
 namespace mhi {
 
-static const char* TAG = "mhi.climate";
+static const char *TAG = "mhi.climate";
 
 void MhiClimate::setup() {
     this->power_ = power_off;
@@ -33,7 +33,6 @@ void MhiClimate::setup() {
 
     this->platform_ = this->parent_;
     this->platform_->add_listener(this);
-    
 }
 
 void MhiClimate::dump_config() {
@@ -41,11 +40,8 @@ void MhiClimate::dump_config() {
 }
 
 void MhiClimate::update_status(ACStatus status, int value) {
-
     static int mode_tmp = 0xff;
     bool dirty = false;
-
-    ESP_LOGD(TAG, "received status=%i value=%i power=%i", status, value, this->power_);
 
     switch (status) {
     case status_power:
@@ -95,7 +91,7 @@ void MhiClimate::update_status(ACStatus status, int value) {
             new_mode = climate::CLIMATE_MODE_HEAT;
             break;
         default:
-            ESP_LOGD(TAG, "unknown status mode value %i", value);
+            ESP_LOGV(TAG, "unknown status mode value %i", value);
             break;
         }
 
@@ -253,11 +249,11 @@ void MhiClimate::update_status(ACStatus status, int value) {
 
         if (this->temperature_offset_ != 0.0f &&
             fabs(ac_setpoint - (this->target_temperature + this->temperature_offset_)) < 0.1f) {
-            ESP_LOGD(TAG, "Ignoring tsetpoint echo from AC: %.1f", ac_setpoint);
+            ESP_LOGV(TAG, "Ignoring tsetpoint echo from AC: %.1f", ac_setpoint);
             break;
         }
 
-        ESP_LOGI(TAG, "Remote setpoint change detected. Updating target to %.1f", ac_setpoint);
+        ESP_LOGV(TAG, "Remote setpoint change detected. Updating target to %.1f", ac_setpoint);
 
         if (fabs(this->target_temperature - ac_setpoint) > 0.01f) {
             this->target_temperature = ac_setpoint;
@@ -279,7 +275,7 @@ void MhiClimate::update_status(ACStatus status, int value) {
     }
 }
 
-void MhiClimate::control(const climate::ClimateCall& call) {
+void MhiClimate::control(const climate::ClimateCall &call) {
     if (call.get_target_temperature().has_value()) {
         float target_temp = *call.get_target_temperature();
         this->target_temperature = target_temp; // Store the user's desired temp
@@ -292,7 +288,7 @@ void MhiClimate::control(const climate::ClimateCall& call) {
         if (setpoint < ac_unit_min_temp)
             setpoint = ac_unit_min_temp;
 
-        float offset = 0.0;
+        float offset = 0.0f;
         if (this->temperature_offset_enabled_) {
             offset = setpoint - target_temp;
         }
@@ -305,7 +301,7 @@ void MhiClimate::control(const climate::ClimateCall& call) {
 
     if (call.get_mode().has_value()) {
         this->mode = *call.get_mode();
-        
+
         this->power_ = power_on;
         switch (this->mode) {
         case climate::CLIMATE_MODE_OFF:
@@ -374,25 +370,23 @@ void MhiClimate::control(const climate::ClimateCall& call) {
             break;
         default:
         case climate::CLIMATE_SWING_BOTH:
-            // vanes_ = vanes_swing;
             vanesLR_ = vanesLR_swing;
             vanes_ = vanes_swing;
             break;
         }
-        this->platform_->set_vanesLR(vanesLR_); // Set vanesLR to swing
-        this->platform_->set_vanes(vanes_); // Set vanes to swing
+        this->platform_->set_vanesLR(vanesLR_);
+        this->platform_->set_vanes(vanes_);
     }
 
     this->publish_state();
 }
-
 
 /// Return the traits of this controller.
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 11, 0)
 climate::ClimateTraits MhiClimate::traits() {
     auto traits = climate::ClimateTraits();
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
-    traits.set_supported_modes({ climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_HEAT_COOL, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_DRY,climate::CLIMATE_MODE_FAN_ONLY });
+    traits.set_supported_modes({ climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_HEAT_COOL, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_DRY, climate::CLIMATE_MODE_FAN_ONLY });
     traits.set_visual_min_temperature(this->minimum_temperature_);
     traits.set_visual_max_temperature(this->maximum_temperature_);
     traits.set_visual_temperature_step(this->temperature_step_);
@@ -415,6 +409,5 @@ climate::ClimateTraits MhiClimate::traits() {
 }
 #endif
 
-
-} //namespace mhi
-} //namespace esphome
+} // namespace mhi
+} // namespace esphome
