@@ -1,5 +1,6 @@
 #include "mhi_text_sensors.h"
 
+#include "esphome/core/log.h"
 namespace esphome {
 namespace mhi {
 
@@ -37,7 +38,7 @@ void MhiTextSensors::dump_config() {
 
     ESP_LOGCONFIG(TAG, "MHI Text Sensors");
     if (protection_state_ != NULL) {
-        ESP_LOGCONFIG(TAG, "  protection_state: %s", this->protection_state_->state);
+        ESP_LOGCONFIG(TAG, "  protection_state: %s", this->protection_state_->state.c_str());
     }
 }
 

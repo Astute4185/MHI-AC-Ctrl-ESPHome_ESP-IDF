@@ -21,7 +21,7 @@ protected:
     void update_status(ACStatus status, int value) override;
 private:
 
-    text_sensor::TextSensor* protection_state_;
+    text_sensor::TextSensor* protection_state_{nullptr};
 
 };
 

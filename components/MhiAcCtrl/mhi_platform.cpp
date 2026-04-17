@@ -7,6 +7,7 @@
 #include "mhi_time.h"
 #include "mhi_diagnostics.h"
 
+#include "esphome/core/log.h"
 namespace {
 constexpr int kDefaultSckPin = 14;
 constexpr int kDefaultMosiPin = 13;

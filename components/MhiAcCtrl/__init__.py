@@ -33,7 +33,7 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MhiAcCtrl),
         cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
-        cv.Optional(CONF_FRAME_SIZE, default=20): cv.int_range(min=20, max=33),
+        cv.Optional(CONF_FRAME_SIZE, default=20): cv.one_of(20, 33, int=True),
         cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
         cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
         cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
