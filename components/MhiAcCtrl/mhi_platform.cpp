@@ -70,11 +70,6 @@ void MhiPlatform::set_external_room_temperature_sensor(
 }
 
 void MhiPlatform::loop() {
-  if (this->external_temperature_sensor_ != nullptr) {
-    this->transfer_room_temperature(this->external_temperature_sensor_->state);
-    this->room_temp_api_active_ = false;
-  }
-
   if (this->room_temp_api_active_ &&
       mhi_now_ms() - this->room_temp_api_timeout_start_ >=
           this->room_temp_api_timeout_ * 1000U) {
@@ -108,7 +103,7 @@ void MhiPlatform::dump_config() {
 }
 
 void MhiPlatform::cbiStatusFunction(ACStatus status, int value) {
-  ESP_LOGD(TAG, "received status=%i value=%i", status, value);
+  ESP_LOGV(TAG, "received status=%i value=%i", status, value);
 
   for (MhiStatusListener *listener : this->listeners_) {
     listener->update_status(status, value);
@@ -132,7 +127,7 @@ float MhiPlatform::get_room_temp_offset() {
 void MhiPlatform::transfer_room_temperature(float value) {
   if (std::isnan(value)) {
     if (!std::isnan(this->last_room_temperature_)) {
-      ESP_LOGD(TAG, "set room_temp_api: value is NaN, using internal sensor");
+      ESP_LOGV(TAG, "set room_temp_api: value is NaN, using internal sensor");
       this->mhi_ac_ctrl_core_.set_troom(0xff);
       this->last_room_temperature_ = NAN;
     }
@@ -151,7 +146,7 @@ void MhiPlatform::transfer_room_temperature(float value) {
     const uint8_t tmp = static_cast<uint8_t>(value * 4 + 61);
     this->mhi_ac_ctrl_core_.set_troom(tmp);
     this->last_room_temperature_ = value;
-    ESP_LOGD(TAG, "set room_temp_api: %f %i", value, tmp);
+    ESP_LOGV(TAG, "set room_temp_api: %f %i", value, tmp);
   }
 }
 
@@ -176,7 +171,7 @@ void MhiPlatform::set_tsetpoint(float value) {
     const float last = this->last_room_temperature_;
     this->last_room_temperature_ = NAN;
     this->transfer_room_temperature(last);
-    ESP_LOGD(TAG, "resending external troom: %f", last);
+    ESP_LOGV(TAG, "resending external troom: %f", last);
   }
 }
 
