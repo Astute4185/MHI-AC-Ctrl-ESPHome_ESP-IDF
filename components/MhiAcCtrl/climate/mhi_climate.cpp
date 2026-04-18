@@ -2,11 +2,42 @@
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
 #include "mhi_climate.h"
+#include "../mhi_time.h"
 
 namespace esphome {
 namespace mhi {
 
 static const char *TAG = "mhi.climate";
+
+bool MhiClimate::pending_window_active_() const {
+    return (mhi_now_ms() - this->pending_until_ms_) <= 0x7FFFFFFFU &&
+           mhi_now_ms() < this->pending_until_ms_;
+}
+
+void MhiClimate::start_pending_window_() {
+    this->pending_until_ms_ = mhi_now_ms() + kCommandSettleWindowMs;
+}
+
+void MhiClimate::clear_expired_pending_() {
+    if (this->pending_window_active_()) {
+        return;
+    }
+
+    this->pending_power_valid_ = false;
+    this->pending_mode_valid_ = false;
+    this->pending_target_temperature_valid_ = false;
+    this->pending_fan_valid_ = false;
+    this->pending_swing_valid_ = false;
+}
+
+void MhiClimate::clear_all_pending_() {
+    this->pending_power_valid_ = false;
+    this->pending_mode_valid_ = false;
+    this->pending_target_temperature_valid_ = false;
+    this->pending_fan_valid_ = false;
+    this->pending_swing_valid_ = false;
+    this->pending_until_ms_ = 0;
+}
 
 void MhiClimate::setup() {
     this->power_ = power_off;
@@ -18,10 +49,6 @@ void MhiClimate::setup() {
         restored_target_temperature = restore->target_temperature;
     }
 
-    // Do not restore live operating state on boot.
-    // The indoor unit is the source of truth, and if it is off at startup
-    // we may not immediately receive enough status updates to correct a stale
-    // restored mode/fan/swing state from HA/NVS.
     this->mode = climate::CLIMATE_MODE_OFF;
     this->fan_mode = climate::CLIMATE_FAN_AUTO;
     this->swing_mode = climate::CLIMATE_SWING_OFF;
@@ -38,8 +65,6 @@ void MhiClimate::setup() {
     this->platform_ = this->parent_;
     this->platform_->add_listener(this);
 
-    // Publish a safe startup state instead of a potentially stale restored
-    // running state. Real device telemetry will correct this once received.
     this->publish_state();
 }
 
@@ -48,12 +73,26 @@ void MhiClimate::dump_config() {
 }
 
 void MhiClimate::update_status(ACStatus status, int value) {
+    this->clear_expired_pending_();
+
     static int mode_tmp = 0xff;
     bool dirty = false;
 
     switch (status) {
-    case status_power:
-        if (value == power_on) {
+    case status_power: {
+        const ACPower new_power = (value == power_on) ? power_on : power_off;
+
+        if (this->pending_power_valid_ && this->pending_window_active_() &&
+            new_power != this->pending_power_) {
+            ESP_LOGV(TAG, "Suppressing stale power status %d during pending window", value);
+            break;
+        }
+
+        if (this->pending_power_valid_ && new_power == this->pending_power_) {
+            this->pending_power_valid_ = false;
+        }
+
+        if (new_power == power_on) {
             if (this->power_ != power_on) {
                 this->power_ = power_on;
                 dirty = true;
@@ -68,8 +107,10 @@ void MhiClimate::update_status(ACStatus status, int value) {
                 this->mode = climate::CLIMATE_MODE_OFF;
                 dirty = true;
             }
+            this->pending_mode_valid_ = false;
         }
         break;
+    }
 
     case status_mode:
         mode_tmp = value;
@@ -103,6 +144,16 @@ void MhiClimate::update_status(ACStatus status, int value) {
             break;
         }
 
+        if (this->pending_mode_valid_ && this->pending_window_active_() &&
+            new_mode != this->pending_mode_) {
+            ESP_LOGV(TAG, "Suppressing stale mode status %d during pending window", value);
+            break;
+        }
+
+        if (this->pending_mode_valid_ && new_mode == this->pending_mode_) {
+            this->pending_mode_valid_ = false;
+        }
+
         if (this->mode != new_mode) {
             this->mode = new_mode;
             dirty = true;
@@ -131,6 +182,16 @@ void MhiClimate::update_status(ACStatus status, int value) {
             break;
         default:
             break;
+        }
+
+        if (this->pending_fan_valid_ && this->pending_window_active_() &&
+            new_fan_mode != this->pending_fan_mode_) {
+            ESP_LOGV(TAG, "Suppressing stale fan status %d during pending window", value);
+            break;
+        }
+
+        if (this->pending_fan_valid_ && new_fan_mode == this->pending_fan_mode_) {
+            this->pending_fan_valid_ = false;
         }
 
         if (this->fan_mode != new_fan_mode) {
@@ -172,6 +233,16 @@ void MhiClimate::update_status(ACStatus status, int value) {
                     new_swing_mode = climate::CLIMATE_SWING_VERTICAL;
                     break;
             }
+        }
+
+        if (this->pending_swing_valid_ && this->pending_window_active_() &&
+            new_swing_mode != this->pending_swing_mode_) {
+            ESP_LOGV(TAG, "Suppressing stale vertical vanes status %d during pending window", value);
+            break;
+        }
+
+        if (this->pending_swing_valid_ && new_swing_mode == this->pending_swing_mode_) {
+            this->pending_swing_valid_ = false;
         }
 
         if (this->swing_mode != new_swing_mode) {
@@ -227,6 +298,16 @@ void MhiClimate::update_status(ACStatus status, int value) {
             }
         }
 
+        if (this->pending_swing_valid_ && this->pending_window_active_() &&
+            new_swing_mode != this->pending_swing_mode_) {
+            ESP_LOGV(TAG, "Suppressing stale horizontal vanes status %d during pending window", value);
+            break;
+        }
+
+        if (this->pending_swing_valid_ && new_swing_mode == this->pending_swing_mode_) {
+            this->pending_swing_valid_ = false;
+        }
+
         if (this->swing_mode != new_swing_mode) {
             this->swing_mode = new_swing_mode;
             dirty = true;
@@ -261,7 +342,16 @@ void MhiClimate::update_status(ACStatus status, int value) {
             break;
         }
 
-        ESP_LOGV(TAG, "Remote setpoint change detected. Updating target to %.1f", ac_setpoint);
+        if (this->pending_target_temperature_valid_ && this->pending_window_active_() &&
+            fabs(ac_setpoint - this->pending_target_temperature_) > 0.11f) {
+            ESP_LOGV(TAG, "Suppressing stale tsetpoint %.1f during pending window", ac_setpoint);
+            break;
+        }
+
+        if (this->pending_target_temperature_valid_ &&
+            fabs(ac_setpoint - this->pending_target_temperature_) <= 0.11f) {
+            this->pending_target_temperature_valid_ = false;
+        }
 
         if (fabs(this->target_temperature - ac_setpoint) > 0.01f) {
             this->target_temperature = ac_setpoint;
@@ -278,21 +368,28 @@ void MhiClimate::update_status(ACStatus status, int value) {
         break;
     }
 
+    if (!this->pending_window_active_()) {
+        this->clear_expired_pending_();
+    } else if (!this->pending_power_valid_ && !this->pending_mode_valid_ &&
+               !this->pending_target_temperature_valid_ && !this->pending_fan_valid_ &&
+               !this->pending_swing_valid_) {
+        this->pending_until_ms_ = 0;
+    }
+
     if (dirty) {
         this->publish_state();
     }
 }
 
 void MhiClimate::control(const climate::ClimateCall &call) {
+    bool had_change = false;
+
     if (call.get_target_temperature().has_value()) {
         float target_temp = *call.get_target_temperature();
         this->target_temperature = target_temp;
 
-        ESP_LOGD(TAG, "MhiClimate::control - get_target_temperature - New target_temperature: %.1f°C", target_temp);
-
         const float ac_unit_min_temp = 18.0f;
-
-        float setpoint = ceil(target_temp);
+        float setpoint = ceilf(target_temp);
         if (setpoint < ac_unit_min_temp)
             setpoint = ac_unit_min_temp;
 
@@ -304,7 +401,12 @@ void MhiClimate::control(const climate::ClimateCall &call) {
         this->temperature_offset_ = offset;
         this->platform_->set_tsetpoint(setpoint);
 
-        ESP_LOGD(TAG, "MhiClimate::control - get_target_temperature - set_tsetpoint %f, set_offset %f", setpoint, offset);
+        this->pending_target_temperature_valid_ = true;
+        this->pending_target_temperature_ = setpoint;
+        had_change = true;
+
+        ESP_LOGD(TAG, "Requested target_temperature %.1f°C (AC setpoint %.1f°C, offset %.1f°C)",
+                 target_temp, setpoint, offset);
     }
 
     if (call.get_mode().has_value()) {
@@ -335,6 +437,12 @@ void MhiClimate::control(const climate::ClimateCall &call) {
 
         this->platform_->set_power(power_);
         this->platform_->set_mode(mode_);
+
+        this->pending_power_valid_ = true;
+        this->pending_power_ = power_;
+        this->pending_mode_valid_ = true;
+        this->pending_mode_ = this->mode;
+        had_change = true;
     }
 
     if (call.get_fan_mode().has_value()) {
@@ -360,6 +468,9 @@ void MhiClimate::control(const climate::ClimateCall &call) {
         }
 
         this->platform_->set_fan(fan_);
+        this->pending_fan_valid_ = true;
+        this->pending_fan_mode_ = this->fan_mode.value();
+        had_change = true;
     }
 
     if (call.get_swing_mode().has_value()) {
@@ -376,14 +487,24 @@ void MhiClimate::control(const climate::ClimateCall &call) {
         case climate::CLIMATE_SWING_HORIZONTAL:
             vanesLR_ = vanesLR_swing;
             break;
-        default:
         case climate::CLIMATE_SWING_BOTH:
+        default:
             vanesLR_ = vanesLR_swing;
             vanes_ = vanes_swing;
             break;
         }
+
         this->platform_->set_vanesLR(vanesLR_);
         this->platform_->set_vanes(vanes_);
+        this->pending_swing_valid_ = true;
+        this->pending_swing_mode_ = this->swing_mode;
+        had_change = true;
+    }
+
+    if (had_change) {
+        this->start_pending_window_();
+    } else {
+        this->clear_expired_pending_();
     }
 
     this->publish_state();
