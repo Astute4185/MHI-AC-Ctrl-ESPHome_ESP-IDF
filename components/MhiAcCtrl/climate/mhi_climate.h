@@ -62,6 +62,8 @@ private:
     bool pending_swing_valid_{false};
     climate::ClimateSwingMode pending_swing_mode_{climate::CLIMATE_SWING_OFF};
 
+    bool startup_power_synced_{false};
+
     bool pending_window_active_() const;
     void start_pending_window_();
     void clear_expired_pending_();

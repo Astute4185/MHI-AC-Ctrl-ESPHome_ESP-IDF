@@ -42,6 +42,7 @@ void MhiClimate::clear_all_pending_() {
 void MhiClimate::setup() {
     this->power_ = power_off;
     this->current_temperature = NAN;
+    this->startup_power_synced_ = false;
 
     float restored_target_temperature = NAN;
     auto restore = this->restore_state_();
@@ -80,6 +81,8 @@ void MhiClimate::update_status(ACStatus status, int value) {
 
     switch (status) {
     case status_power: {
+        this->startup_power_synced_ = true;
+
         const ACPower new_power = (value == power_on) ? power_on : power_off;
 
         if (this->pending_power_valid_ && this->pending_window_active_() &&
@@ -117,15 +120,24 @@ void MhiClimate::update_status(ACStatus status, int value) {
         [[fallthrough]];
     case opdata_mode:
     case erropdata_mode: {
+        if (!this->startup_power_synced_) {
+            ESP_LOGV(TAG, "Ignoring mode status %d before initial power sync", value);
+            break;
+        }
+
+        if (this->power_ != power_on) {
+            if (this->mode != climate::CLIMATE_MODE_OFF) {
+                this->mode = climate::CLIMATE_MODE_OFF;
+                dirty = true;
+            }
+            break;
+        }
+
         auto new_mode = this->mode;
 
         switch (value) {
         case mode_auto:
-            if (status != erropdata_mode && this->power_ > 0) {
-                new_mode = climate::CLIMATE_MODE_HEAT_COOL;
-            } else {
-                new_mode = climate::CLIMATE_MODE_OFF;
-            }
+            new_mode = climate::CLIMATE_MODE_HEAT_COOL;
             break;
         case mode_dry:
             new_mode = climate::CLIMATE_MODE_DRY;
@@ -162,6 +174,11 @@ void MhiClimate::update_status(ACStatus status, int value) {
     }
 
     case status_fan: {
+        if (!this->startup_power_synced_) {
+            ESP_LOGV(TAG, "Ignoring fan status %d before initial power sync", value);
+            break;
+        }
+
         auto new_fan_mode = this->fan_mode;
 
         switch (value) {
@@ -202,6 +219,11 @@ void MhiClimate::update_status(ACStatus status, int value) {
     }
 
     case status_vanes: {
+        if (!this->startup_power_synced_) {
+            ESP_LOGV(TAG, "Ignoring vertical vanes status %d before initial power sync", value);
+            break;
+        }
+
         auto new_swing_mode = this->swing_mode;
         int new_vanes_pos_old_state = this->vanes_pos_old_state_;
 
@@ -261,6 +283,11 @@ void MhiClimate::update_status(ACStatus status, int value) {
     }
 
     case status_vanesLR: {
+        if (!this->startup_power_synced_) {
+            ESP_LOGV(TAG, "Ignoring horizontal vanes status %d before initial power sync", value);
+            break;
+        }
+
         auto new_swing_mode = this->swing_mode;
         int new_vanesLR_pos_old_state = this->vanesLR_pos_old_state_;
 
@@ -334,6 +361,11 @@ void MhiClimate::update_status(ACStatus status, int value) {
     }
 
     case status_tsetpoint: {
+        if (!this->startup_power_synced_) {
+            ESP_LOGV(TAG, "Ignoring tsetpoint %.1f before initial power sync", (value & 0x7f) / 2.0f);
+            break;
+        }
+
         float ac_setpoint = (value & 0x7f) / 2.0f;
 
         if (this->temperature_offset_ != 0.0f &&
