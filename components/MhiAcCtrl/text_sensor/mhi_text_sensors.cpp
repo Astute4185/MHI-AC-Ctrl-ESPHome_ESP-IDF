@@ -1,10 +1,12 @@
 #include "mhi_text_sensors.h"
 
 #include "esphome/core/log.h"
+
 namespace esphome {
 namespace mhi {
 
-static const std::vector<std::string> protection_states = {
+namespace {
+static constexpr const char *const kProtectionStates[] = {
     "Normal",
     "Discharge pipe temperature protection control",
     "Discharge pipe temperature anomaly",
@@ -22,33 +24,40 @@ static const std::vector<std::string> protection_states = {
     "Condensation prevention control",
     "Current safe control of inverter secondary current",
     "Stop by compressor rotor lock",
-    "Stop by compressor startup failure"
+    "Stop by compressor startup failure",
 };
 
-static const char* TAG = "mhi.text_sensor";
+static constexpr int kProtectionStateCount =
+    static_cast<int>(sizeof(kProtectionStates) / sizeof(kProtectionStates[0]));
+}  // namespace
 
-void MhiTextSensors::set_protection_state(text_sensor::TextSensor* sensor) { protection_state_ = sensor; }
+static const char *TAG = "mhi.text_sensor";
 
+void MhiTextSensors::set_protection_state(text_sensor::TextSensor *sensor) {
+    this->protection_state_ = sensor;
+}
 
 void MhiTextSensors::setup() {
     this->parent_->add_listener(this);
 }
 
 void MhiTextSensors::dump_config() {
-
     ESP_LOGCONFIG(TAG, "MHI Text Sensors");
-    if (protection_state_ != NULL) {
+    if (this->protection_state_ != nullptr) {
         ESP_LOGCONFIG(TAG, "  protection_state: %s", this->protection_state_->state.c_str());
     }
 }
 
 void MhiTextSensors::update_status(ACStatus status, int value) {
-    ESP_LOGD(TAG, "received status=%i value=%i", status, value);
-    if (status == opdata_protection_no && value < protection_states.size() && this->protection_state_ != NULL) {
-        this->protection_state_ -> publish_state(protection_states[value]); 
-        ESP_LOGD(TAG, "Protection status updated");
+    if (status != opdata_protection_no || this->protection_state_ == nullptr) {
+        return;
+    }
+
+    if (value >= 0 && value < kProtectionStateCount) {
+        this->protection_state_->publish_state(kProtectionStates[value]);
+        ESP_LOGV(TAG, "Protection status updated");
     }
 }
 
-} //namespace mhi
-} //namespace esphome
+}  // namespace mhi
+}  // namespace esphome
