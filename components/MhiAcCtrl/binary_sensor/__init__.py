@@ -13,7 +13,9 @@ CONF_DEFROST = "defrost"
 CONF_3D_AUTO = "vanes_3d_auto_enabled"
 
 ICON_SNOWLAKE_MELT = "mdi:snowflake-melt"
-ICON_3D="mdi:video-3d"
+ICON_3D = "mdi:video-3d"
+
+MHI_OPDATA_REQ_DEFROST = 1 << 16
 
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(MhiBinarySensors),
@@ -30,7 +32,7 @@ CONFIG_SCHEMA = cv.Schema({
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     mhi = await cg.get_variable(config[CONF_MHI_AC_CTRL_ID])
-    
+
     await cg.register_component(var, config)
     await cg.register_parented(var, mhi)
 
@@ -38,6 +40,7 @@ async def to_code(config):
         conf = config[CONF_DEFROST]
         sens = await binary_sensor.new_binary_sensor(conf)
         cg.add(var.set_defrost(sens))
+        cg.add(mhi.add_opdata_mask(MHI_OPDATA_REQ_DEFROST))
     if CONF_3D_AUTO in config:
         conf = config[CONF_3D_AUTO]
         sens = await binary_sensor.new_binary_sensor(conf)

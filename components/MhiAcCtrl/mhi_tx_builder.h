@@ -9,5 +9,6 @@ public:
   static void prepare_next_frame(
       MhiLoopRuntimeState &loop_state,
       MhiTxWriteState &tx_state,
-      uint8_t frame_size);
+      uint8_t frame_size,
+      uint32_t enabled_opdata_mask);
 };

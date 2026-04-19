@@ -1,69 +1,110 @@
 #include "mhi_tx_builder.h"
 
+#include <algorithm>
+
 #include "mhi_frame_layout.h"
 
 namespace {
 
-// comment out the data you are not interested in, but leave at least one row
-static constexpr uint8_t kMhiOpdata[][2] = {
-    {0xc0, 0x02},  //  1 "MODE"
-    {0xc0, 0x05},  //  2 "SET-TEMP" [°C]
-    {0xc0, 0x80},  //  3 "RETURN-AIR" [°C]
-    {0xc0, 0x81},  //  5 "THI-R1" [°C]
-    {0x40, 0x81},  //  6 "THI-R2" [°C]
-    {0xc0, 0x87},  //  7 "THI-R3" [°C]
-    {0xc0, 0x1f},  //  8 "IU-FANSPEED"
-    {0xc0, 0x1e},  // 12 "TOTAL-IU-RUN" [h]
-    {0x40, 0x80},  // 21 "OUTDOOR" [°C]
-    {0x40, 0x82},  // 22 "THO-R1" [°C]
-    {0x40, 0x11},  // 24 "COMP" [Hz]
-    {0x40, 0x85},  // 27 "TD" [°C]
-    {0x40, 0x90},  // 29 "CT" [A]
-    {0x40, 0xb1},  // 32 "TDSH" [°C]
-    {0x40, 0x7c},  // 33 "PROTECTION-No"
-    {0x40, 0x1f},  // 34 "OU-FANSPEED"
-    {0x40, 0x0c},  // 36 "DEFROST"
-    {0x40, 0x1e},  // 37 "TOTAL-COMP-RUN" [h]
-    {0x40, 0x13},  // 38 "OU-EEV" [Puls]
-    {0xc0, 0x94},  //    "energy-used" [kWh]
+struct MhiOpdataRequest {
+  uint8_t db6;
+  uint8_t db9;
+  uint32_t mask;
 };
 
-// number of frames used for an OpData request cycle; will be 20s (20 frames are 1s)
+static constexpr MhiOpdataRequest kMhiOpdata[] = {
+    {0xc0, 0x02, MHI_OPDATA_REQ_MODE},            // MODE
+    {0xc0, 0x05, MHI_OPDATA_REQ_TSETPOINT},       // SET-TEMP
+    {0xc0, 0x80, MHI_OPDATA_REQ_RETURN_AIR},      // RETURN-AIR
+    {0xc0, 0x81, MHI_OPDATA_REQ_THI_R1},          // THI-R1
+    {0x40, 0x81, MHI_OPDATA_REQ_THI_R2},          // THI-R2
+    {0xc0, 0x87, MHI_OPDATA_REQ_THI_R3},          // THI-R3
+    {0xc0, 0x1f, MHI_OPDATA_REQ_IU_FANSPEED},     // IU-FANSPEED
+    {0xc0, 0x1e, MHI_OPDATA_REQ_TOTAL_IU_RUN},    // TOTAL-IU-RUN
+    {0x40, 0x80, MHI_OPDATA_REQ_OUTDOOR},         // OUTDOOR
+    {0x40, 0x82, MHI_OPDATA_REQ_THO_R1},          // THO-R1
+    {0x40, 0x11, MHI_OPDATA_REQ_COMP},            // COMP
+    {0x40, 0x85, MHI_OPDATA_REQ_TD},              // TD
+    {0x40, 0x90, MHI_OPDATA_REQ_CT},              // CT
+    {0x40, 0xb1, MHI_OPDATA_REQ_TDSH},            // TDSH
+    {0x40, 0x7c, MHI_OPDATA_REQ_PROTECTION_NO},   // PROTECTION-No
+    {0x40, 0x1f, MHI_OPDATA_REQ_OU_FANSPEED},     // OU-FANSPEED
+    {0x40, 0x0c, MHI_OPDATA_REQ_DEFROST},         // DEFROST
+    {0x40, 0x1e, MHI_OPDATA_REQ_TOTAL_COMP_RUN},  // TOTAL-COMP-RUN
+    {0x40, 0x13, MHI_OPDATA_REQ_OU_EEV1},         // OU-EEV
+    {0xc0, 0x94, MHI_OPDATA_REQ_KWH},             // energy-used
+};
+
+// number of frames used for an OpData request cycle; 20 frames are ~1s.
 static constexpr uint32_t kNoFramesPerOpDataCycle = 400;
+// Keep sparse configurations from becoming excessively stale.
+static constexpr uint8_t kMinEffectiveOpdataCount = 5;
+
+uint32_t normalize_opdata_mask(uint32_t mask) {
+  return mask == 0 ? kMhiDefaultOpdataMask : mask;
+}
+
+uint8_t get_enabled_opdata_count(uint32_t mask) {
+  uint8_t count = 0;
+  for (const auto &entry : kMhiOpdata) {
+    if ((mask & entry.mask) != 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+const MhiOpdataRequest &get_enabled_opdata(uint32_t mask, uint8_t enabled_index) {
+  uint8_t current = 0;
+  for (const auto &entry : kMhiOpdata) {
+    if ((mask & entry.mask) != 0) {
+      if (current == enabled_index) {
+        return entry;
+      }
+      current++;
+    }
+  }
+  return kMhiOpdata[0];
+}
 
 }  // namespace
 
 void MhiTxBuilder::prepare_next_frame(
     MhiLoopRuntimeState &loop_state,
     MhiTxWriteState &tx_state,
-    uint8_t frame_size) {
+    uint8_t frame_size,
+    uint32_t enabled_opdata_mask) {
   uint8_t *const miso_frame = loop_state.miso_frame;
   uint8_t &opdata_no = loop_state.opdata_no;
   uint8_t &erropdata_count = loop_state.erropdata_count;
   bool &doubleframe = loop_state.doubleframe;
   int &frame = loop_state.frame;
 
-  const uint8_t opdata_count = static_cast<uint8_t>(sizeof(kMhiOpdata) / sizeof(kMhiOpdata[0]));
+  const uint32_t normalized_mask = normalize_opdata_mask(enabled_opdata_mask);
+  const uint8_t enabled_opdata_count = get_enabled_opdata_count(normalized_mask);
+  const uint8_t effective_cycle_count =
+      std::max<uint8_t>(enabled_opdata_count == 0 ? 1 : enabled_opdata_count, kMinEffectiveOpdataCount);
 
   miso_frame[0] = (frame_size == 33) ? 0xAA : 0xA9;
 
   doubleframe = !doubleframe;
   miso_frame[DB14] = static_cast<uint8_t>(doubleframe << 2);
 
-  // Requesting all different opdata's is an opdata cycle. A cycle will take 20s.
-  // With the current 20 different opdata's, every opdata request will take 1sec (interval).
-  // If there are only 5 different opdata's defined, these 5 will be spread about the 20s cycle. The interval will increase.
-  // requesting a new opdata will always start at a doubleframe start
-  if ((frame > static_cast<int>(kNoFramesPerOpDataCycle / opdata_count)) && doubleframe) {
+  // Fewer enabled opdata items reduce request traffic, but keep a floor so
+  // sparse configs do not become excessively stale.
+  if ((frame > static_cast<int>(kNoFramesPerOpDataCycle / effective_cycle_count)) && doubleframe) {
     frame = 1;
   }
 
   if (frame++ <= 2) {
     if (doubleframe) {
       if (erropdata_count == 0) {
-        miso_frame[DB6] = kMhiOpdata[opdata_no][0];
-        miso_frame[DB9] = kMhiOpdata[opdata_no][1];
-        opdata_no = static_cast<uint8_t>((opdata_no + 1) % opdata_count);
+        const uint8_t request_index =
+            (enabled_opdata_count == 0) ? 0 : static_cast<uint8_t>(opdata_no % enabled_opdata_count);
+        const auto &request = get_enabled_opdata(normalized_mask, request_index);
+        miso_frame[DB6] = request.db6;
+        miso_frame[DB9] = request.db9;
+        opdata_no = static_cast<uint8_t>((request_index + 1) % (enabled_opdata_count == 0 ? 1 : enabled_opdata_count));
       }
     }
   } else {

@@ -15,6 +15,8 @@ MhiClimate = mhi_ns.class_('MhiClimate', cg.Component, climate.Climate)
 CONF_TEMPERATURE_OFFSET = "temperature_offset"
 CONF_VISUAL_MIN_TEMPERATURE = "visual_min_temperature"
 
+MHI_OPDATA_REQ_MODE = 1 << 0
+
 CONFIG_SCHEMA = climate.climate_schema(MhiClimate).extend(
     {
         cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
@@ -32,7 +34,9 @@ async def to_code(config):
     await cg.register_parented(var, mhi)
     await cg.register_component(var, config)
     await climate.register_climate(var, config)
-    
+
+    cg.add(mhi.add_opdata_mask(MHI_OPDATA_REQ_MODE))
+
     if config[CONF_TEMPERATURE_OFFSET]:
         cg.add(var.set_temperature_offset_enabled(True))
 
