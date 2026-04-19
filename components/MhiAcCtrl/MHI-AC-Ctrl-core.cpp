@@ -20,7 +20,8 @@ int MHI_AC_Ctrl_Core::loop(uint32_t max_time_ms) {
   MhiTxBuilder::prepare_next_frame(
       loop_state,
       this->tx_write_state_,
-      this->frameSize);
+      this->frameSize,
+      loop_state.enabled_opdata_mask);
 
   const MhiRxValidationResult rx_result = MhiRxValidator::exchange_and_validate(
       this->transport_,

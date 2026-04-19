@@ -13,6 +13,8 @@ CONF_PROTECTION_STATE = "protection_state"
 
 ICON_ALERT_OUTLINE = "mdi:shield-alert-outline"
 
+MHI_OPDATA_REQ_PROTECTION_NO = 1 << 14
+
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(MhiTextSensors),
     cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
@@ -33,3 +35,4 @@ async def to_code(config):
         conf = config[CONF_PROTECTION_STATE]
         sens = await text_sensor.new_text_sensor(conf)
         cg.add(var.set_protection_state(sens))
+        cg.add(mhi.add_opdata_mask(MHI_OPDATA_REQ_PROTECTION_NO))

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include "esphome/components/sensor/sensor.h"
@@ -44,6 +45,11 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   void set_mosi_pin(int pin) { this->mosi_pin_ = pin; }
   void set_miso_pin(int pin) { this->miso_pin_ = pin; }
 
+  void add_opdata_mask(uint32_t mask) {
+    this->opdata_mask_ |= mask;
+    this->mhi_ac_ctrl_core_.set_enabled_opdata_mask(this->opdata_mask_);
+  }
+
  protected:
   void transfer_room_temperature(float value);
 
@@ -62,6 +68,8 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   int sck_pin_{-1};
   int mosi_pin_{-1};
   int miso_pin_{-1};
+
+  uint32_t opdata_mask_{kMhiDefaultOpdataMask};
 };
 
 }  // namespace mhi

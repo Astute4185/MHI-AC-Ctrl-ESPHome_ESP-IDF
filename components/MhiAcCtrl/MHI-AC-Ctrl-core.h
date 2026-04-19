@@ -145,6 +145,12 @@ public:
     void set_transport_config(const esphome::mhi::MhiTransportConfig &config);
     esphome::mhi::MhiDiagReason get_last_diag_reason() const { return this->last_diag_reason_; }
 
+    void set_enabled_opdata_mask(uint32_t mask) {
+        this->loop_state_.enabled_opdata_mask = (mask != 0) ? mask : kMhiDefaultOpdataMask;
+        this->loop_state_.opdata_no = 0;
+        this->loop_state_.frame = 1;
+    }
+
     void init();                         // initialization called once after boot
     void reset_old_values();             // resets the old variables so all status information is resent
     int loop(uint32_t max_time_ms);      // receive / transmit one frame
