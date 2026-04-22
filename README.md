@@ -177,7 +177,7 @@ No. This is a development branch built on top of the upstream project.
 
 - Upstream ESPHome project base: [ginkage/MHI-AC-Ctrl-ESPHome](https://github.com/ginkage/MHI-AC-Ctrl-ESPHome)
 - Bus capture and trace reference: [absalom-muc/MHI-AC-Trace](https://github.com/absalom-muc/MHI-AC-Trace)
-- For use of fast gpio that I used for a long time and was the inspo for this fork: [RobertJansen1/HI-AC-Ctrl-ESPHome/esp32_errors] (https://github.com/RobertJansen1/MHI-AC-Ctrl-ESPHome/tree/esp32_errors)
+- For use of fast gpio that I used for a long time and was the inspo for this fork: [RobertJansen1/HI-AC-Ctrl-ESPHome/esp32_errors](https://github.com/RobertJansen1/MHI-AC-Ctrl-ESPHome/tree/esp32_errors)
 - Original reverse-engineering lineage and MHI protocol work from the wider community around `MHI-AC-Ctrl`
 
 ## License
