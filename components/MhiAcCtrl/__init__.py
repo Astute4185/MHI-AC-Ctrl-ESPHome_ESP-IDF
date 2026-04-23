@@ -13,6 +13,12 @@ CONF_SCK_PIN = "sck_pin"
 CONF_MOSI_PIN = "mosi_pin"
 CONF_MISO_PIN = "miso_pin"
 
+CONF_TRANSPORT_BACKEND = "transport_backend"
+CONF_RAW_DUMP_ENABLE = "raw_dump_enable"
+CONF_RAW_DUMP_RATE_MS = "raw_dump_rate_ms"
+CONF_RAW_CHUNK_BYTES = "raw_chunk_bytes"
+CONF_SYNC_GAP_US = "sync_gap_us"
+
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
 CONF_EXTERNAL_TEMPERATURE_SENSOR = "external_temperature_sensor"
@@ -22,6 +28,7 @@ AUTO_LOAD = ["sensor"]
 
 mhi_ns = cg.esphome_ns.namespace("mhi")
 MhiAcCtrl = mhi_ns.class_("MhiPlatform", cg.Component)
+MhiTransportBackend = mhi_ns.enum("MhiTransportBackend")
 
 SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Action)
 SetHorizontalVanesAction = mhi_ns.class_("SetHorizontalVanesAction", automation.Action)
@@ -40,6 +47,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SCK_PIN): cv.int_,
         cv.Optional(CONF_MOSI_PIN): cv.int_,
         cv.Optional(CONF_MISO_PIN): cv.int_,
+        cv.Optional(CONF_TRANSPORT_BACKEND, default="gpio"): cv.one_of("gpio", "lcd_cam_rx", lower=True),
+        cv.Optional(CONF_RAW_DUMP_ENABLE, default=False): cv.boolean,
+        cv.Optional(CONF_RAW_DUMP_RATE_MS, default=15000): cv.int_range(min=0, max=300000),
+        cv.Optional(CONF_RAW_CHUNK_BYTES, default=24): cv.int_range(min=8, max=64),
+        cv.Optional(CONF_SYNC_GAP_US, default=5000): cv.int_range(min=250, max=50000),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -58,6 +70,12 @@ async def to_code(config):
         cg.add(var.set_vanes(config[CONF_VANES_UD]))
     if CONF_VANES_LR in config:
         cg.add(var.set_vanesLR(config[CONF_VANES_LR]))
+    cg.add(var.set_transport_backend(MhiTransportBackend.LCD_CAM_RX if config[CONF_TRANSPORT_BACKEND] == "lcd_cam_rx" else MhiTransportBackend.GPIO))
+    cg.add(var.set_raw_dump_enable(config[CONF_RAW_DUMP_ENABLE]))
+    cg.add(var.set_raw_dump_rate_ms(config[CONF_RAW_DUMP_RATE_MS]))
+    cg.add(var.set_raw_chunk_bytes(config[CONF_RAW_CHUNK_BYTES]))
+    cg.add(var.set_sync_gap_us(config[CONF_SYNC_GAP_US]))
+
     if CONF_SCK_PIN in config:
         cg.add(var.set_sck_pin(config[CONF_SCK_PIN]))
     if CONF_MOSI_PIN in config:

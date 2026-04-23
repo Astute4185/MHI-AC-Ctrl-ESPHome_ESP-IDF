@@ -10,6 +10,7 @@
 #include <freertos/FreeRTOS.h>
 
 #include "MHI-AC-Ctrl-core.h"
+#include "mhi_lcd_cam_rx_engine.h"
 #include "mhi_time.h"
 
 #if defined(ESP32) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) ||     defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) ||     defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2)
@@ -34,24 +35,24 @@ static portMUX_TYPE g_mhi_capture_mux = portMUX_INITIALIZER_UNLOCKED;
 #if MHI_USE_FAST_GPIO
 inline bool IRAM_ATTR fast_gpio_read(int pin) {
   if (pin < 32) {
-    return (GPIO.in >> pin) & 0x1;
+    return (::GPIO.in >> pin) & 0x1;
   }
-  return (GPIO.in1.val >> (pin - 32)) & 0x1;
+  return (::GPIO.in1.val >> (pin - 32)) & 0x1;
 }
 
 inline void IRAM_ATTR fast_gpio_write_high(int pin) {
   if (pin < 32) {
-    GPIO.out_w1ts = (1UL << pin);
+    ::GPIO.out_w1ts = (1UL << pin);
   } else {
-    GPIO.out1_w1ts.val = (1UL << (pin - 32));
+    ::GPIO.out1_w1ts.val = (1UL << (pin - 32));
   }
 }
 
 inline void IRAM_ATTR fast_gpio_write_low(int pin) {
   if (pin < 32) {
-    GPIO.out_w1tc = (1UL << pin);
+    ::GPIO.out_w1tc = (1UL << pin);
   } else {
-    GPIO.out1_w1tc.val = (1UL << (pin - 32));
+    ::GPIO.out1_w1tc.val = (1UL << (pin - 32));
   }
 }
 #else
@@ -186,46 +187,44 @@ bool wait_for_next_falling_edge_us(int sck_pin, uint32_t timeout_us, uint32_t st
   return true;
 }
 
-}  // namespace
+void setup_gpio_pins(const MhiTransportConfig &config) {
+  gpio_reset_pin(static_cast<gpio_num_t>(config.sck_pin));
+  gpio_reset_pin(static_cast<gpio_num_t>(config.mosi_pin));
+  gpio_reset_pin(static_cast<gpio_num_t>(config.miso_pin));
 
-void MhiTransport::setup(const MhiTransportConfig &config) {
-  this->config_ = config;
+  gpio_set_direction(static_cast<gpio_num_t>(config.sck_pin), GPIO_MODE_INPUT);
+  gpio_set_direction(static_cast<gpio_num_t>(config.mosi_pin), GPIO_MODE_INPUT);
+  gpio_set_direction(static_cast<gpio_num_t>(config.miso_pin), GPIO_MODE_OUTPUT);
 
-  gpio_reset_pin(static_cast<gpio_num_t>(this->config_.sck_pin));
-  gpio_reset_pin(static_cast<gpio_num_t>(this->config_.mosi_pin));
-  gpio_reset_pin(static_cast<gpio_num_t>(this->config_.miso_pin));
-
-  gpio_set_direction(static_cast<gpio_num_t>(this->config_.sck_pin), GPIO_MODE_INPUT);
-  gpio_set_direction(static_cast<gpio_num_t>(this->config_.mosi_pin), GPIO_MODE_INPUT);
-  gpio_set_direction(static_cast<gpio_num_t>(this->config_.miso_pin), GPIO_MODE_OUTPUT);
-
-  gpio_set_level(static_cast<gpio_num_t>(this->config_.miso_pin), 0);
+  gpio_set_level(static_cast<gpio_num_t>(config.miso_pin), 0);
 }
 
-MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
+MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
+    const MhiTransportConfig &config,
     const uint8_t *tx_frame,
     uint8_t *rx_frame,
     std::size_t rx_capacity,
     uint32_t max_time_ms) {
   MhiFrameExchangeResult result{};
+  result.backend_used = MhiTransportBackend::GPIO;
 
   const std::size_t target_frame_size =
-      std::min<std::size_t>(this->config_.frame_size_hint == 33 ? kExtendedFrameBytes : kBaseFrameBytes, rx_capacity);
+      std::min<std::size_t>(config.frame_size_hint == 33 ? kExtendedFrameBytes : kBaseFrameBytes, rx_capacity);
 
   if (target_frame_size < kBaseFrameBytes) {
     result.status = err_msg_timeout_SCK_low;
     return result;
   }
 
-  const int sck_pin = this->config_.sck_pin;
-  const int mosi_pin = this->config_.mosi_pin;
-  const int miso_pin = this->config_.miso_pin;
+  const int sck_pin = config.sck_pin;
+  const int mosi_pin = config.mosi_pin;
+  const int miso_pin = config.miso_pin;
 
   const uint32_t start_ms = mhi_now_ms();
 
   uint32_t sck_high_start_ms = mhi_now_ms();
   uint32_t wait_spin_counter = 0;
-  while ((mhi_now_ms() - sck_high_start_ms) < this->config_.frame_start_idle_ms) {
+  while ((mhi_now_ms() - sck_high_start_ms) < config.frame_start_idle_ms) {
     if (!fast_gpio_read(sck_pin)) {
       sck_high_start_ms = mhi_now_ms();
     }
@@ -261,24 +260,17 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
 
   result.status = 0;
   result.bytes_received = kBaseFrameBytes;
+  result.raw_chunk_len = kBaseFrameBytes;
   result.detected_type = MhiFrameType::STANDARD_20;
 
-  if (target_frame_size < kExtendedFrameBytes) {
-    // No extension requested.
-  } else {
+  if (target_frame_size >= kExtendedFrameBytes) {
     result.extension_probe_attempted = true;
 
-    // Keep the restart-edge wait and the extension-byte capture inside one
-    // critical section. The previous version waited for the first post-gap
-    // falling edge outside the lock and only entered the critical section when
-    // starting byte 20, which still left a tiny preemption window. The
-    // remaining failures were all consistent with losing alignment exactly at
-    // the extension restart.
     bool extension_edge_seen = false;
     portENTER_CRITICAL(&g_mhi_capture_mux);
     extension_edge_seen = wait_for_next_falling_edge_us(
         sck_pin,
-        this->config_.extension_gap_max_us,
+        config.extension_gap_max_us,
         start_ms,
         max_time_ms);
 
@@ -307,13 +299,11 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
       }
 
       result.bytes_received = kExtendedFrameBytes;
+      result.raw_chunk_len = kExtendedFrameBytes;
       result.detected_type = MhiFrameType::EXTENDED_33;
     }
   }
 
-  // Targeted overcapture only when the signature is already bad and we have a
-  // full-sized frame. This helps prove start-of-frame slip without penalising
-  // the normal fast path.
   if (result.bytes_received >= kExtendedFrameBytes && !has_valid_header_prefix(rx_frame, result.bytes_received)) {
     for (std::size_t i = 0; i < kInvalidHeaderOvercaptureBytes; i++) {
       uint8_t extra_byte = 0;
@@ -344,6 +334,45 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
 
   fast_gpio_write_low(miso_pin);
   return result;
+}
+
+}  // namespace
+
+const char *mhi_transport_backend_name(MhiTransportBackend backend) {
+  switch (backend) {
+    case MhiTransportBackend::GPIO:
+      return "gpio";
+    case MhiTransportBackend::LCD_CAM_RX:
+      return "lcd_cam_rx";
+    default:
+      return "unknown";
+  }
+}
+
+void MhiTransport::setup(const MhiTransportConfig &config) {
+  this->config_ = config;
+
+  if (this->config_.backend == MhiTransportBackend::LCD_CAM_RX) {
+    if (this->lcd_cam_rx_engine_ == nullptr) {
+      this->lcd_cam_rx_engine_ = new MhiLcdCamRxEngine();
+    }
+    this->lcd_cam_rx_engine_->setup(this->config_);
+    return;
+  }
+
+  setup_gpio_pins(this->config_);
+}
+
+MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
+    const uint8_t *tx_frame,
+    uint8_t *rx_frame,
+    std::size_t rx_capacity,
+    uint32_t max_time_ms) {
+  if (this->config_.backend == MhiTransportBackend::LCD_CAM_RX && this->lcd_cam_rx_engine_ != nullptr) {
+    return this->lcd_cam_rx_engine_->exchange_frame(tx_frame, rx_frame, rx_capacity, max_time_ms);
+  }
+
+  return exchange_frame_gpio(this->config_, tx_frame, rx_frame, rx_capacity, max_time_ms);
 }
 
 }  // namespace mhi

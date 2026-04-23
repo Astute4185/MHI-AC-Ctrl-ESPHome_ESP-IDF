@@ -29,15 +29,24 @@ void MhiPlatform::setup() {
   config.mosi_pin = resolve_pin(this->mosi_pin_, kDefaultMosiPin);
   config.miso_pin = resolve_pin(this->miso_pin_, kDefaultMisoPin);
   config.frame_size_hint = static_cast<uint8_t>(this->frame_size_);
+  config.backend = this->transport_backend_;
+  config.raw_dump_enable = this->raw_dump_enable_;
+  config.raw_dump_rate_ms = this->raw_dump_rate_ms_;
+  config.raw_chunk_bytes = this->raw_chunk_bytes_;
+  config.sync_gap_us = this->sync_gap_us_;
 
-  ESP_LOGCONFIG(TAG, "Using transport backend: mhi_transport");
+  ESP_LOGCONFIG(TAG, "Using transport backend: %s", mhi_transport_backend_name(config.backend));
   ESP_LOGCONFIG(
       TAG,
-      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u",
+      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u sync_gap_us=%u raw_dump=%s raw_rate_ms=%u raw_chunk_bytes=%u",
       config.sck_pin,
       config.mosi_pin,
       config.miso_pin,
-      config.frame_size_hint);
+      config.frame_size_hint,
+      config.sync_gap_us,
+      config.raw_dump_enable ? "on" : "off",
+      config.raw_dump_rate_ms,
+      config.raw_chunk_bytes);
 
   this->mhi_ac_ctrl_core_.set_transport(&this->transport_);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
@@ -95,7 +104,11 @@ void MhiPlatform::dump_config() {
 
   ESP_LOGCONFIG(TAG, "  frame_size_hint: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
-  ESP_LOGCONFIG(TAG, "  transport_backend: mhi_transport");
+  ESP_LOGCONFIG(TAG, "  transport_backend: %s", mhi_transport_backend_name(this->transport_backend_));
+  ESP_LOGCONFIG(TAG, "  raw_dump_enable: %s", this->raw_dump_enable_ ? "true" : "false");
+  ESP_LOGCONFIG(TAG, "  raw_dump_rate_ms: %u", this->raw_dump_rate_ms_);
+  ESP_LOGCONFIG(TAG, "  raw_chunk_bytes: %u", this->raw_chunk_bytes_);
+  ESP_LOGCONFIG(TAG, "  sync_gap_us: %u", this->sync_gap_us_);
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
