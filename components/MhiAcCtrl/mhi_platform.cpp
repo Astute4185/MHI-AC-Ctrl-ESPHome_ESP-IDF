@@ -46,6 +46,8 @@ void MhiPlatform::setup() {
   this->mhi_ac_ctrl_core_.init();
   this->mhi_ac_ctrl_core_.set_frame_size(static_cast<uint8_t>(this->frame_size_));
 
+  this->mhi_ac_ctrl_core_.set_enabled_opdata_mask(this->opdata_mask_);
+
   if (this->external_temperature_sensor_ != nullptr) {
     this->external_temperature_sensor_->add_on_state_callback(
         [this](float state) { this->transfer_room_temperature(state); });
