@@ -79,7 +79,7 @@ struct MhiFrameExchangeResult {
   uint8_t overcapture_len{0};
   bool next_frame_signature_after_tail{false};
 
-  // Experimental backend diagnostics.
+  // Backend diagnostics.
   MhiTransportBackend backend_used{MhiTransportBackend::GPIO};
   uint32_t raw_chunk_len{0};
   uint8_t pack_mode{0};

@@ -12,8 +12,10 @@
 
 namespace {
 static const char *DIAG_TAG = "mhi.diag";
-constexpr uint32_t kDiagSummaryIntervalMs = 10000U;
-constexpr uint32_t kDiagSampleIntervalMs = 15000U;
+// Keep the default runtime quiet: summaries stay visible, detailed bad-frame samples
+// remain debug-only and rate-limited.
+constexpr uint32_t kDiagSummaryIntervalMs = 30000U;
+constexpr uint32_t kDiagSampleIntervalMs = 60000U;
 constexpr std::size_t kDiagMaxMismatchPreview = 12U;
 
 void format_frame_hex(const uint8_t *frame, std::size_t len, char *out, std::size_t out_len) {
@@ -237,7 +239,7 @@ void maybe_log_bad_frame_with_reference(
   std::vsnprintf(prefix, sizeof(prefix), prefix_fmt, args);
   va_end(args);
 
-  ESP_LOGW(
+  ESP_LOGD(
       DIAG_TAG,
       "%s count=%u rx=%s ref=%s delta=%s",
       prefix,
@@ -318,7 +320,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
             transport_result.next_frame_signature_after_tail,
             flags,
             sizeof(flags));
-        ESP_LOGW(
+        ESP_LOGD(
             DIAG_TAG,
             "timeout_low count=%u frame_hint=%u len=%u hdr=%02X flags=%s",
             diag_counters.timeout_low,
@@ -339,7 +341,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
             transport_result.next_frame_signature_after_tail,
             flags,
             sizeof(flags));
-        ESP_LOGW(
+        ESP_LOGD(
             DIAG_TAG,
             "timeout_high count=%u frame_hint=%u len=%u hdr=%02X flags=%s",
             diag_counters.timeout_high,
@@ -360,7 +362,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
             transport_result.next_frame_signature_after_tail,
             flags,
             sizeof(flags));
-        ESP_LOGW(
+        ESP_LOGD(
             DIAG_TAG,
             "timeout_other code=%d count=%u frame_hint=%u len=%u hdr=%02X flags=%s",
             transport_result.status,
@@ -411,7 +413,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
   }
 
   uint16_t checksum = mhi_calc_checksum(mosi_frame);
-  if (((mosi_frame[SB0] & 0xfe) != 0x6c) | (mosi_frame[SB1] != 0x80) | (mosi_frame[SB2] != 0x04)) {
+  if (((mosi_frame[SB0] & 0xfe) != 0x6c) || (mosi_frame[SB1] != 0x80) || (mosi_frame[SB2] != 0x04)) {
     last_diag_reason = esphome::mhi::MhiDiagReason::INVALID_SIGNATURE;
     diag_counters.invalid_signature++;
     if (diag_last_good_frame.valid) {

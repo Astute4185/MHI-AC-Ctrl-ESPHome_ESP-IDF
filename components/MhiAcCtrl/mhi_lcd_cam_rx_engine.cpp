@@ -343,10 +343,13 @@ bool MhiLcdCamRxEngine::setup(const MhiTransportConfig &config) {
 
   ESP_LOGCONFIG(
       TAG,
-      "configured lcd_cam_rx engine: sck=%d mosi=%d miso=%d gap_us=%u ext_gap_min_us=%u tx_suppress=%s raw_dump=%s rate_ms=%u preview=%u",
+      "configured lcd_cam_rx backend: sck=%d mosi=%d miso=%d",
       this->config_.sck_pin,
       this->config_.mosi_pin,
-      this->config_.miso_pin,
+      this->config_.miso_pin);
+  ESP_LOGV(
+      TAG,
+      "lcd_cam_rx internals: sync_gap_us=%u ext_gap_min_us=%u tx_suppress=%s raw_dump=%s rate_ms=%u preview=%u",
       this->config_.sync_gap_us,
       kMinValidExtensionGapUs,
       this->config_.tx_suppress_during_capture ? "on" : "off",
@@ -442,6 +445,8 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       if (extension_seen) {
         this->extension_probe_seen_count_++;
         result.extension_start_seen = true;
+        // Reject implausibly fast extension handoffs before they reach the validator.
+        // They are almost always resync noise rather than a stable 33-byte frame.
         if (extension_gap_us < kMinValidExtensionGapUs) {
           extension_gap_rejected = true;
           this->extension_gap_short_count_++;
@@ -479,6 +484,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
           result.bytes_received = kExtendedFrameBytes;
           result.raw_chunk_len = kExtendedFrameBytes;
           result.detected_type = MhiFrameType::EXTENDED_33;
+          // Publish only externally clean extended frames; recovery remains backend-internal.
           if (!has_valid_header_prefix(rx_frame, kExtendedFrameBytes) || !has_valid_extended_checksum(rx_frame, kExtendedFrameBytes)) {
             provisional_extension_rejected = true;
             this->extension_publish_reject_count_++;
@@ -494,6 +500,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
     }
   }
 
+  // In 33-byte mode, never publish a partial base frame as if it were complete data.
   if (target_frame_size >= kExtendedFrameBytes && !result.frame_suppressed) {
     const bool published_full_extension =
         result.bytes_received >= kExtendedFrameBytes &&
@@ -506,6 +513,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
     }
   }
 
+  // Short cooldown prevents repeated partial captures from polluting the next exchange.
   if (result.frame_suppressed && (extension_gap_rejected || provisional_extension_rejected || suppressed_partial_capture)) {
     this->resync_suppressed_count_++;
     this->resync_cooldown_until_us_ = now_us() + static_cast<uint64_t>(kResyncCooldownUs);
