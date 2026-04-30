@@ -79,9 +79,11 @@ struct MhiFrameExchangeResult {
   uint8_t overcapture_len{0};
   bool next_frame_signature_after_tail{false};
 
-  // Backend diagnostics.
+  // Backend diagnostics. Wall time includes blocking/wait time; work time is the
+  // backend-reported active polling/drain/validation portion used for CPU-cost comparison.
   MhiTransportBackend backend_used{MhiTransportBackend::GPIO};
-  uint32_t exchange_us{0};
+  uint32_t wall_us{0};
+  uint32_t work_us{0};
   uint32_t raw_chunk_len{0};
   uint8_t pack_mode{0};
   bool header_candidate_seen{false};

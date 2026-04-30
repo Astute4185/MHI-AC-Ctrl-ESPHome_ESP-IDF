@@ -185,16 +185,22 @@ void update_max(uint32_t value, uint32_t &target) {
 void record_transport_timing(MhiDiagCounters &counters, const esphome::mhi::MhiFrameExchangeResult &result) {
   if (result.backend_used == esphome::mhi::MhiTransportBackend::LCD_CAM_RX) {
     counters.exchange_calls_lcdcam++;
-    counters.exchange_total_us_lcdcam += result.exchange_us;
-    update_max(result.exchange_us, counters.exchange_max_us_lcdcam);
-    update_max(result.exchange_us, counters.exchange_interval_max_us_lcdcam);
+    counters.exchange_wall_total_us_lcdcam += result.wall_us;
+    update_max(result.wall_us, counters.exchange_wall_max_us_lcdcam);
+    update_max(result.wall_us, counters.exchange_wall_interval_max_us_lcdcam);
+    counters.exchange_work_total_us_lcdcam += result.work_us;
+    update_max(result.work_us, counters.exchange_work_max_us_lcdcam);
+    update_max(result.work_us, counters.exchange_work_interval_max_us_lcdcam);
     return;
   }
 
   counters.exchange_calls_gpio++;
-  counters.exchange_total_us_gpio += result.exchange_us;
-  update_max(result.exchange_us, counters.exchange_max_us_gpio);
-  update_max(result.exchange_us, counters.exchange_interval_max_us_gpio);
+  counters.exchange_wall_total_us_gpio += result.wall_us;
+  update_max(result.wall_us, counters.exchange_wall_max_us_gpio);
+  update_max(result.wall_us, counters.exchange_wall_interval_max_us_gpio);
+  counters.exchange_work_total_us_gpio += result.work_us;
+  update_max(result.work_us, counters.exchange_work_max_us_gpio);
+  update_max(result.work_us, counters.exchange_work_interval_max_us_gpio);
 }
 
 uint32_t average_us(uint64_t total_us, uint32_t calls) {
@@ -204,7 +210,7 @@ uint32_t average_us(uint64_t total_us, uint32_t calls) {
   return static_cast<uint32_t>(total_us / calls);
 }
 
-uint32_t busy_percent_x100(uint64_t total_us, uint32_t elapsed_ms) {
+uint32_t percent_x100(uint64_t total_us, uint32_t elapsed_ms) {
   if (elapsed_ms == 0U) {
     return 0U;
   }
@@ -225,20 +231,24 @@ void maybe_log_summary(
   last_summary_ms = now_ms;
 
   const uint32_t gpio_calls = counters.exchange_calls_gpio - timing_snapshot.exchange_calls_gpio;
-  const uint64_t gpio_total_us = counters.exchange_total_us_gpio - timing_snapshot.exchange_total_us_gpio;
-  const uint32_t gpio_avg_us = average_us(gpio_total_us, gpio_calls);
-  const uint32_t gpio_busy_x100 = busy_percent_x100(gpio_total_us, elapsed_ms);
+  const uint64_t gpio_wall_total_us = counters.exchange_wall_total_us_gpio - timing_snapshot.exchange_wall_total_us_gpio;
+  const uint64_t gpio_work_total_us = counters.exchange_work_total_us_gpio - timing_snapshot.exchange_work_total_us_gpio;
+  const uint32_t gpio_wall_avg_us = average_us(gpio_wall_total_us, gpio_calls);
+  const uint32_t gpio_work_avg_us = average_us(gpio_work_total_us, gpio_calls);
+  const uint32_t gpio_work_busy_x100 = percent_x100(gpio_work_total_us, elapsed_ms);
 
   const uint32_t lcdcam_calls = counters.exchange_calls_lcdcam - timing_snapshot.exchange_calls_lcdcam;
-  const uint64_t lcdcam_total_us = counters.exchange_total_us_lcdcam - timing_snapshot.exchange_total_us_lcdcam;
-  const uint32_t lcdcam_avg_us = average_us(lcdcam_total_us, lcdcam_calls);
-  const uint32_t lcdcam_busy_x100 = busy_percent_x100(lcdcam_total_us, elapsed_ms);
+  const uint64_t lcdcam_wall_total_us = counters.exchange_wall_total_us_lcdcam - timing_snapshot.exchange_wall_total_us_lcdcam;
+  const uint64_t lcdcam_work_total_us = counters.exchange_work_total_us_lcdcam - timing_snapshot.exchange_work_total_us_lcdcam;
+  const uint32_t lcdcam_wall_avg_us = average_us(lcdcam_wall_total_us, lcdcam_calls);
+  const uint32_t lcdcam_work_avg_us = average_us(lcdcam_work_total_us, lcdcam_calls);
+  const uint32_t lcdcam_work_busy_x100 = percent_x100(lcdcam_work_total_us, elapsed_ms);
 
   char mismatch_top[96];
   format_histogram_top(counters.byte_mismatch_counts, mismatch_top, sizeof(mismatch_top));
   ESP_LOGI(
       DIAG_TAG,
-      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u crit=%u nextsig=%u gpio_calls=%u gpio_avg_us=%u gpio_max_us=%u gpio_busy=%u.%02u%% lcdcam_calls=%u lcdcam_avg_us=%u lcdcam_max_us=%u lcdcam_busy=%u.%02u%% mismatch_top=%s",
+      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u crit=%u nextsig=%u gpio_calls=%u gpio_wall_avg_us=%u gpio_wall_max_us=%u gpio_work_avg_us=%u gpio_work_max_us=%u gpio_work_busy=%u.%02u%% lcdcam_calls=%u lcdcam_wall_avg_us=%u lcdcam_wall_max_us=%u lcdcam_work_avg_us=%u lcdcam_work_max_us=%u lcdcam_work_busy=%u.%02u%% mismatch_top=%s",
       counters.ok_frames,
       counters.ok_20,
       counters.ok_33,
@@ -257,23 +267,31 @@ void maybe_log_summary(
       counters.critical_capture_frames,
       counters.next_frame_sig_after_tail,
       gpio_calls,
-      gpio_avg_us,
-      counters.exchange_interval_max_us_gpio,
-      gpio_busy_x100 / 100U,
-      gpio_busy_x100 % 100U,
+      gpio_wall_avg_us,
+      counters.exchange_wall_interval_max_us_gpio,
+      gpio_work_avg_us,
+      counters.exchange_work_interval_max_us_gpio,
+      gpio_work_busy_x100 / 100U,
+      gpio_work_busy_x100 % 100U,
       lcdcam_calls,
-      lcdcam_avg_us,
-      counters.exchange_interval_max_us_lcdcam,
-      lcdcam_busy_x100 / 100U,
-      lcdcam_busy_x100 % 100U,
+      lcdcam_wall_avg_us,
+      counters.exchange_wall_interval_max_us_lcdcam,
+      lcdcam_work_avg_us,
+      counters.exchange_work_interval_max_us_lcdcam,
+      lcdcam_work_busy_x100 / 100U,
+      lcdcam_work_busy_x100 % 100U,
       mismatch_top);
 
   timing_snapshot.exchange_calls_gpio = counters.exchange_calls_gpio;
-  timing_snapshot.exchange_total_us_gpio = counters.exchange_total_us_gpio;
+  timing_snapshot.exchange_wall_total_us_gpio = counters.exchange_wall_total_us_gpio;
+  timing_snapshot.exchange_work_total_us_gpio = counters.exchange_work_total_us_gpio;
   timing_snapshot.exchange_calls_lcdcam = counters.exchange_calls_lcdcam;
-  timing_snapshot.exchange_total_us_lcdcam = counters.exchange_total_us_lcdcam;
-  counters.exchange_interval_max_us_gpio = 0U;
-  counters.exchange_interval_max_us_lcdcam = 0U;
+  timing_snapshot.exchange_wall_total_us_lcdcam = counters.exchange_wall_total_us_lcdcam;
+  timing_snapshot.exchange_work_total_us_lcdcam = counters.exchange_work_total_us_lcdcam;
+  counters.exchange_wall_interval_max_us_gpio = 0U;
+  counters.exchange_work_interval_max_us_gpio = 0U;
+  counters.exchange_wall_interval_max_us_lcdcam = 0U;
+  counters.exchange_work_interval_max_us_lcdcam = 0U;
 }
 
 void maybe_log_bad_frame_with_reference(

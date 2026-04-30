@@ -87,6 +87,11 @@ inline uint64_t now_us() {
   return static_cast<uint64_t>(esp_timer_get_time());
 }
 
+inline uint32_t elapsed_us_since(uint64_t begin_us) {
+  const uint64_t elapsed = now_us() - begin_us;
+  return elapsed > 0xFFFFFFFFULL ? 0xFFFFFFFFU : static_cast<uint32_t>(elapsed);
+}
+
 inline bool has_valid_header_prefix(const uint8_t *frame, std::size_t len) {
   return len >= 3U && (frame[0] == 0x6C || frame[0] == 0x6D) && frame[1] == 0x80 && frame[2] == 0x04;
 }
@@ -396,6 +401,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
     return result;
   }
 
+  const uint64_t work_begin_us = now_us();
   int rc = read_frame_range(
       sck_pin,
       mosi_pin,
@@ -422,6 +428,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
     result.status = rc;
     result.raw_chunk_len = 0;
     this->maybe_log_chunk_(rx_frame, 0U, false, rc, false, PACK_IDENTITY, false, false, false, false, false, 0U);
+    result.work_us = elapsed_us_since(work_begin_us);
     return result;
   }
 
@@ -477,6 +484,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
             result.status = rc;
             result.raw_chunk_len = kBaseFrameBytes;
             this->maybe_log_chunk_(rx_frame, kBaseFrameBytes, true, rc, false, PACK_IDENTITY, base_gate_passed, false, false, false, false, extension_gap_us);
+            result.work_us = elapsed_us_since(work_begin_us);
             return result;
           }
           extension_stage_complete = true;
@@ -555,6 +563,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       extension_gap_us);
 
   fast_gpio_write_low(miso_pin);
+  result.work_us = elapsed_us_since(work_begin_us);
   return result;
 }
 

@@ -237,6 +237,7 @@ MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
   result.critical_capture_used = true;
 
   int rc = 0;
+  uint64_t work_begin_us = mhi_now_us();
   portENTER_CRITICAL(&g_mhi_capture_mux);
   rc = read_frame_range(
       sck_pin,
@@ -252,6 +253,7 @@ MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
       &result.new_data_packet_received,
       &result.header_byte);
   portEXIT_CRITICAL(&g_mhi_capture_mux);
+  result.work_us += elapsed_us_since(work_begin_us);
 
   if (rc < 0) {
     result.status = rc;
@@ -267,6 +269,7 @@ MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
     result.extension_probe_attempted = true;
 
     bool extension_edge_seen = false;
+    work_begin_us = mhi_now_us();
     portENTER_CRITICAL(&g_mhi_capture_mux);
     extension_edge_seen = wait_for_next_falling_edge_us(
         sck_pin,
@@ -291,6 +294,7 @@ MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
           nullptr);
     }
     portEXIT_CRITICAL(&g_mhi_capture_mux);
+    result.work_us += elapsed_us_since(work_begin_us);
 
     if (extension_edge_seen) {
       if (rc < 0) {
@@ -305,6 +309,7 @@ MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
   }
 
   if (result.bytes_received >= kExtendedFrameBytes && !has_valid_header_prefix(rx_frame, result.bytes_received)) {
+    work_begin_us = mhi_now_us();
     for (std::size_t i = 0; i < kInvalidHeaderOvercaptureBytes; i++) {
       uint8_t extra_byte = 0;
       rc = read_one_byte(
@@ -330,6 +335,7 @@ MhiFrameExchangeResult IRAM_ATTR exchange_frame_gpio(
         result.overcapture_bytes[0] == 0x80 && result.overcapture_bytes[1] == 0x04) {
       result.next_frame_signature_after_tail = true;
     }
+    result.work_us += elapsed_us_since(work_begin_us);
   }
 
   fast_gpio_write_low(miso_pin);
@@ -368,7 +374,7 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
     uint8_t *rx_frame,
     std::size_t rx_capacity,
     uint32_t max_time_ms) {
-  const uint64_t exchange_begin_us = mhi_now_us();
+  const uint64_t wall_begin_us = mhi_now_us();
   MhiFrameExchangeResult result{};
 
   if (this->config_.backend == MhiTransportBackend::LCD_CAM_RX && this->lcd_cam_rx_engine_ != nullptr) {
@@ -377,7 +383,7 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
     result = exchange_frame_gpio(this->config_, tx_frame, rx_frame, rx_capacity, max_time_ms);
   }
 
-  result.exchange_us = elapsed_us_since(exchange_begin_us);
+  result.wall_us = elapsed_us_since(wall_begin_us);
   return result;
 }
 

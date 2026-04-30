@@ -114,21 +114,29 @@ struct MhiDiagCounters {
   uint32_t critical_capture_frames = 0;
   uint32_t next_frame_sig_after_tail = 0;
   uint32_t exchange_calls_gpio = 0;
-  uint64_t exchange_total_us_gpio = 0;
-  uint32_t exchange_max_us_gpio = 0;
-  uint32_t exchange_interval_max_us_gpio = 0;
+  uint64_t exchange_wall_total_us_gpio = 0;
+  uint32_t exchange_wall_max_us_gpio = 0;
+  uint32_t exchange_wall_interval_max_us_gpio = 0;
+  uint64_t exchange_work_total_us_gpio = 0;
+  uint32_t exchange_work_max_us_gpio = 0;
+  uint32_t exchange_work_interval_max_us_gpio = 0;
   uint32_t exchange_calls_lcdcam = 0;
-  uint64_t exchange_total_us_lcdcam = 0;
-  uint32_t exchange_max_us_lcdcam = 0;
-  uint32_t exchange_interval_max_us_lcdcam = 0;
+  uint64_t exchange_wall_total_us_lcdcam = 0;
+  uint32_t exchange_wall_max_us_lcdcam = 0;
+  uint32_t exchange_wall_interval_max_us_lcdcam = 0;
+  uint64_t exchange_work_total_us_lcdcam = 0;
+  uint32_t exchange_work_max_us_lcdcam = 0;
+  uint32_t exchange_work_interval_max_us_lcdcam = 0;
   uint32_t byte_mismatch_counts[kMhiMaxFrameBytes] = {0};
 };
 
 struct MhiTransportTimingSnapshot {
   uint32_t exchange_calls_gpio = 0;
-  uint64_t exchange_total_us_gpio = 0;
+  uint64_t exchange_wall_total_us_gpio = 0;
+  uint64_t exchange_work_total_us_gpio = 0;
   uint32_t exchange_calls_lcdcam = 0;
-  uint64_t exchange_total_us_lcdcam = 0;
+  uint64_t exchange_wall_total_us_lcdcam = 0;
+  uint64_t exchange_work_total_us_lcdcam = 0;
 };
 
 struct MhiLastGoodFrame {
