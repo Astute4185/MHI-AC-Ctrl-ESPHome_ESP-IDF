@@ -28,6 +28,7 @@ class MhiLcdCamRxEngine {
       uint8_t pack_mode,
       bool base_gate_passed,
       bool extension_stage_complete,
+      bool extension_gap_rejected,
       uint32_t extension_gap_us);
 
   void update_reference_stats_(const uint8_t *frame, std::size_t len, bool valid_header);
@@ -53,6 +54,9 @@ class MhiLcdCamRxEngine {
   uint32_t extension_complete_count_{0};
   uint32_t extension_probe_timeout_count_{0};
   uint32_t extension_skipped_bad_base_count_{0};
+  uint32_t extension_gap_good_count_{0};
+  uint32_t extension_gap_short_count_{0};
+  uint32_t extension_gap_reject_count_{0};
   uint32_t last_extension_gap_us_{0};
 };
 
