@@ -277,6 +277,12 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
 
   result.new_data_packet_received = transport_result.new_data_packet_received;
 
+  if (transport_result.frame_suppressed) {
+    last_diag_reason = esphome::mhi::MhiDiagReason::NONE;
+    result.new_data_packet_received = false;
+    result.status = err_msg_valid_frame;
+    return result;
+  }
   if (transport_result.extension_probe_attempted) {
     diag_counters.extension_probe_attempted++;
   }

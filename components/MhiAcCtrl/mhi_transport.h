@@ -64,6 +64,7 @@ struct MhiFrameExchangeResult {
   uint32_t raw_chunk_len{0};
   uint8_t pack_mode{0};
   bool header_candidate_seen{false};
+  bool frame_suppressed{false};
 };
 
 class MhiTransport {

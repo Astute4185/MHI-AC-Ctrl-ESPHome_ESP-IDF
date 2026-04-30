@@ -12,6 +12,7 @@
 
 #include "MHI-AC-Ctrl-core.h"
 #include "esphome/core/log.h"
+#include "mhi_frame_layout.h"
 #include "mhi_time.h"
 
 #if defined(ESP32) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) ||     defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) ||     defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2)
@@ -87,6 +88,16 @@ inline uint64_t now_us() {
 
 inline bool has_valid_header_prefix(const uint8_t *frame, std::size_t len) {
   return len >= 3U && (frame[0] == 0x6C || frame[0] == 0x6D) && frame[1] == 0x80 && frame[2] == 0x04;
+}
+
+inline bool has_valid_base_checksum(const uint8_t *frame, std::size_t len) {
+  return len >= kBaseFrameBytes &&
+         static_cast<uint16_t>((static_cast<uint16_t>(frame[CBH]) << 8) | frame[CBL]) == mhi_calc_checksum(frame);
+}
+
+inline bool has_valid_extended_checksum(const uint8_t *frame, std::size_t len) {
+  return len >= kExtendedFrameBytes &&
+         frame[CBL2] == static_cast<uint8_t>(mhi_calc_checksum_frame33(frame) & 0xFFU);
 }
 
 inline uint8_t reverse_bits(uint8_t value) {
@@ -385,14 +396,16 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       &result.header_byte,
       this->config_.tx_suppress_during_capture);
   const bool base_header_ok = (rc >= 0) && has_valid_header_prefix(rx_frame, kBaseFrameBytes);
-  bool base_gate_passed = base_header_ok;
+  const bool base_checksum_ok = base_header_ok && has_valid_base_checksum(rx_frame, kBaseFrameBytes);
+  bool base_gate_passed = base_header_ok && base_checksum_ok;
   bool extension_stage_complete = false;
   bool extension_gap_rejected = false;
+  bool provisional_extension_rejected = false;
   uint32_t extension_gap_us = 0U;
   if (rc < 0) {
     result.status = rc;
     result.raw_chunk_len = 0;
-    this->maybe_log_chunk_(rx_frame, 0U, false, rc, false, PACK_IDENTITY, false, false, false, 0U);
+    this->maybe_log_chunk_(rx_frame, 0U, false, rc, false, PACK_IDENTITY, false, false, false, false, false, 0U);
     return result;
   }
 
@@ -424,6 +437,8 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
           result.bytes_received = kBaseFrameBytes;
           result.raw_chunk_len = kBaseFrameBytes;
           result.detected_type = MhiFrameType::STANDARD_20;
+          result.frame_suppressed = true;
+          result.new_data_packet_received = false;
         } else {
           this->extension_gap_good_count_++;
           rc = read_frame_range(
@@ -443,7 +458,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
           if (rc < 0) {
             result.status = rc;
             result.raw_chunk_len = kBaseFrameBytes;
-            this->maybe_log_chunk_(rx_frame, kBaseFrameBytes, true, rc, false, PACK_IDENTITY, base_gate_passed, false, false, extension_gap_us);
+            this->maybe_log_chunk_(rx_frame, kBaseFrameBytes, true, rc, false, PACK_IDENTITY, base_gate_passed, false, false, false, false, extension_gap_us);
             return result;
           }
           extension_stage_complete = true;
@@ -451,6 +466,12 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
           result.bytes_received = kExtendedFrameBytes;
           result.raw_chunk_len = kExtendedFrameBytes;
           result.detected_type = MhiFrameType::EXTENDED_33;
+          if (!has_valid_header_prefix(rx_frame, kExtendedFrameBytes) || !has_valid_extended_checksum(rx_frame, kExtendedFrameBytes)) {
+            provisional_extension_rejected = true;
+            this->extension_publish_reject_count_++;
+            result.frame_suppressed = true;
+            result.new_data_packet_received = false;
+          }
         }
       } else {
         this->extension_probe_timeout_count_++;
@@ -467,7 +488,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
 
   this->capture_counter_++;
   const bool valid_header = has_valid_header_prefix(rx_frame, result.bytes_received);
-  if (!extension_gap_rejected) {
+  if (!extension_gap_rejected && !provisional_extension_rejected && !result.frame_suppressed) {
     this->update_reference_stats_(rx_frame, result.bytes_received, valid_header);
   } else {
     this->first_bad_index_ = -1;
@@ -475,7 +496,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
     this->last_good_index_ = valid_header ? static_cast<int>(result.bytes_received) - 1 : -1;
     this->mismatch_count_ = 0;
   }
-  if (!valid_header) {
+  if (!valid_header && !result.frame_suppressed) {
     this->bad_capture_counter_++;
   }
 
@@ -489,6 +510,8 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       base_gate_passed,
       extension_stage_complete,
       extension_gap_rejected,
+      provisional_extension_rejected,
+      result.frame_suppressed,
       extension_gap_us);
 
   fast_gpio_write_low(miso_pin);
@@ -505,10 +528,12 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
     bool base_gate_passed,
     bool extension_stage_complete,
     bool extension_gap_rejected,
+    bool provisional_extension_rejected,
+    bool frame_suppressed,
     uint32_t extension_gap_us) {
   const uint32_t now_ms = mhi_now_ms();
   const bool valid_header = has_valid_header_prefix(frame, len);
-  const bool force_log = this->config_.raw_dump_enable || !valid_header || status < 0 || extension_gap_rejected;
+  const bool force_log = this->config_.raw_dump_enable || !valid_header || status < 0 || extension_gap_rejected || provisional_extension_rejected || frame_suppressed;
 
   if (!force_log) {
     return;
@@ -529,7 +554,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
 
   ESP_LOGW(
       TAG,
-      "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s base_ok=%u ext_done=%u ext_reject=%u ext_gap_us=%u first_bad=%d last_good=%d last_bad=%d mismatches=%u post20=%u post31=%u tail_only=%u tx_suppress=%u focus=%s head=%s tail=%s",
+      "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s base_ok=%u ext_done=%u ext_reject=%u ext_pub_reject=%u suppress=%u ext_gap_us=%u first_bad=%d last_good=%d last_bad=%d mismatches=%u post20=%u post31=%u tail_only=%u tx_suppress=%u focus=%s head=%s tail=%s",
       this->capture_counter_,
       this->bad_capture_counter_,
       static_cast<unsigned>(len),
@@ -542,6 +567,8 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
       base_gate_passed ? 1U : 0U,
       extension_stage_complete ? 1U : 0U,
       extension_gap_rejected ? 1U : 0U,
+      provisional_extension_rejected ? 1U : 0U,
+      frame_suppressed ? 1U : 0U,
       extension_gap_us,
       this->first_bad_index_,
       this->last_good_index_,
@@ -558,7 +585,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
   if (valid_header && this->has_reference_) {
     ESP_LOGW(
         TAG,
-        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u base_ok_total=%u ext_seen_total=%u ext_done_total=%u ext_timeout_total=%u ext_skipped_total=%u ext_gap_good_total=%u ext_gap_short_total=%u ext_gap_reject_total=%u ext_gap_min_us=%u focus18/19/20/21/22/27/31/32=%u/%u/%u/%u/%u/%u/%u/%u last_gap_us=%u",
+        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u base_ok_total=%u ext_seen_total=%u ext_done_total=%u ext_timeout_total=%u ext_skipped_total=%u ext_gap_good_total=%u ext_gap_short_total=%u ext_gap_reject_total=%u ext_publish_reject_total=%u ext_gap_min_us=%u focus18/19/20/21/22/27/31/32=%u/%u/%u/%u/%u/%u/%u/%u last_gap_us=%u",
         static_cast<unsigned>(this->reference_len_),
         this->identical_to_reference_count_,
         this->post20_corrupt_count_,
@@ -572,6 +599,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
         this->extension_gap_good_count_,
         this->extension_gap_short_count_,
         this->extension_gap_reject_count_,
+        this->extension_publish_reject_count_,
         kMinValidExtensionGapUs,
         this->boundary_focus_mismatch_counts_[18],
         this->boundary_focus_mismatch_counts_[19],
