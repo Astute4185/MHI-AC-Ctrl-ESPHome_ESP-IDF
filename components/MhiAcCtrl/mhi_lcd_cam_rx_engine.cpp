@@ -32,6 +32,8 @@ constexpr std::size_t kBaseFrameBytes = 20U;
 constexpr std::size_t kExtendedFrameBytes = 33U;
 constexpr std::size_t kMaxHeadPreviewBytes = 32U;
 constexpr std::size_t kTailPreviewBytes = 8U;
+constexpr std::size_t kFocusByteCount = 8U;
+constexpr std::size_t kFocusIndices[kFocusByteCount] = {18U, 19U, 20U, 21U, 22U, 27U, 31U, 32U};
 
 #if MHI_LCD_CAM_RX_USE_FAST_GPIO
 inline bool IRAM_ATTR fast_gpio_read(int pin) {
@@ -290,6 +292,24 @@ void format_preview_hex(const uint8_t *src, std::size_t len, char *out, std::siz
   out[out_len - 1U] = '\0';
 }
 
+void format_focus_hex(const uint8_t *src, std::size_t len, char *out, std::size_t out_len) {
+  if (out_len == 0U) {
+    return;
+  }
+  out[0] = '\0';
+  std::size_t pos = 0;
+  for (std::size_t i = 0; i < kFocusByteCount && (pos + 4U) < out_len; i++) {
+    const std::size_t index = kFocusIndices[i];
+    const uint8_t value = index < len ? src[index] : 0U;
+    const int written = std::snprintf(out + pos, out_len - pos, "%02X%s", value, (i + 1U < kFocusByteCount) ? " " : "");
+    if (written <= 0) {
+      break;
+    }
+    pos += static_cast<std::size_t>(written);
+  }
+  out[out_len - 1U] = '\0';
+}
+
 }  // namespace
 
 bool MhiLcdCamRxEngine::setup(const MhiTransportConfig &config) {
@@ -362,10 +382,14 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       &result.new_data_packet_received,
       &result.header_byte,
       this->config_.tx_suppress_during_capture);
+  const bool base_header_ok = (rc >= 0) && has_valid_header_prefix(rx_frame, kBaseFrameBytes);
+  bool base_gate_passed = base_header_ok;
+  bool extension_stage_complete = false;
+  uint32_t extension_gap_us = 0U;
   if (rc < 0) {
     result.status = rc;
     result.raw_chunk_len = 0;
-    this->maybe_log_chunk_(rx_frame, 0U, false, rc, false, PACK_IDENTITY);
+    this->maybe_log_chunk_(rx_frame, 0U, false, rc, false, PACK_IDENTITY, false, false, 0U);
     return result;
   }
 
@@ -376,36 +400,49 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
 
   if (target_frame_size >= kExtendedFrameBytes) {
     result.extension_probe_attempted = true;
-    const bool extension_seen = wait_for_next_falling_edge_us(
-        sck_pin,
-        this->config_.extension_gap_max_us,
-        start_ms,
-        max_time_ms);
-    if (extension_seen) {
-      result.extension_start_seen = true;
-      rc = read_frame_range(
+    if (base_gate_passed) {
+      this->base_gate_pass_count_++;
+      const uint64_t extension_wait_begin_us = now_us();
+      const bool extension_seen = wait_for_next_falling_edge_us(
           sck_pin,
-          mosi_pin,
-          miso_pin,
-          tx_frame,
-          rx_frame,
-          kBaseFrameBytes,
-          kExtendedFrameBytes,
+          this->config_.extension_gap_max_us,
           start_ms,
-          max_time_ms,
-          true,
-          &result.new_data_packet_received,
-          nullptr,
-          this->config_.tx_suppress_during_capture);
-      if (rc < 0) {
-        result.status = rc;
-        result.raw_chunk_len = kBaseFrameBytes;
-        this->maybe_log_chunk_(rx_frame, kBaseFrameBytes, true, rc, false, PACK_IDENTITY);
-        return result;
+          max_time_ms);
+      extension_gap_us = static_cast<uint32_t>(now_us() - extension_wait_begin_us);
+      this->last_extension_gap_us_ = extension_gap_us;
+      if (extension_seen) {
+        this->extension_probe_seen_count_++;
+        result.extension_start_seen = true;
+        rc = read_frame_range(
+            sck_pin,
+            mosi_pin,
+            miso_pin,
+            tx_frame,
+            rx_frame,
+            kBaseFrameBytes,
+            kExtendedFrameBytes,
+            start_ms,
+            max_time_ms,
+            true,
+            &result.new_data_packet_received,
+            nullptr,
+            this->config_.tx_suppress_during_capture);
+        if (rc < 0) {
+          result.status = rc;
+          result.raw_chunk_len = kBaseFrameBytes;
+          this->maybe_log_chunk_(rx_frame, kBaseFrameBytes, true, rc, false, PACK_IDENTITY, base_gate_passed, false, extension_gap_us);
+          return result;
+        }
+        extension_stage_complete = true;
+        this->extension_complete_count_++;
+        result.bytes_received = kExtendedFrameBytes;
+        result.raw_chunk_len = kExtendedFrameBytes;
+        result.detected_type = MhiFrameType::EXTENDED_33;
+      } else {
+        this->extension_probe_timeout_count_++;
       }
-      result.bytes_received = kExtendedFrameBytes;
-      result.raw_chunk_len = kExtendedFrameBytes;
-      result.detected_type = MhiFrameType::EXTENDED_33;
+    } else {
+      this->extension_skipped_bad_base_count_++;
     }
   }
 
@@ -426,7 +463,10 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       result.extension_start_seen,
       result.status,
       header_candidate,
-      pack_mode);
+      pack_mode,
+      base_gate_passed,
+      extension_stage_complete,
+      extension_gap_us);
 
   fast_gpio_write_low(miso_pin);
   return result;
@@ -438,7 +478,10 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
     bool extension_seen,
     int status,
     bool header_candidate,
-    uint8_t pack_mode) {
+    uint8_t pack_mode,
+    bool base_gate_passed,
+    bool extension_stage_complete,
+    uint32_t extension_gap_us) {
   const uint32_t now_ms = mhi_now_ms();
   const bool valid_header = has_valid_header_prefix(frame, len);
   const bool force_log = this->config_.raw_dump_enable || !valid_header || status < 0;
@@ -455,12 +498,14 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
   const std::size_t tail_len = std::min<std::size_t>(len, kTailPreviewBytes);
   char head_hex[160];
   char tail_hex[64];
+  char focus_hex[64];
   format_preview_hex(frame, preview_len, head_hex, sizeof(head_hex));
   format_preview_hex(len > tail_len ? frame + (len - tail_len) : frame, tail_len, tail_hex, sizeof(tail_hex));
+  format_focus_hex(frame, len, focus_hex, sizeof(focus_hex));
 
   ESP_LOGW(
       TAG,
-      "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s first_bad=%d last_good=%d last_bad=%d mismatches=%u post20=%u post31=%u tail_only=%u tx_suppress=%u head=%s tail=%s",
+      "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s base_ok=%u ext_done=%u ext_gap_us=%u first_bad=%d last_good=%d last_bad=%d mismatches=%u post20=%u post31=%u tail_only=%u tx_suppress=%u focus=%s head=%s tail=%s",
       this->capture_counter_,
       this->bad_capture_counter_,
       static_cast<unsigned>(len),
@@ -470,6 +515,9 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
       valid_header ? 1U : 0U,
       header_candidate ? 1U : 0U,
       pack_mode_name(pack_mode),
+      base_gate_passed ? 1U : 0U,
+      extension_stage_complete ? 1U : 0U,
+      extension_gap_us,
       this->first_bad_index_,
       this->last_good_index_,
       this->last_bad_index_,
@@ -478,18 +526,33 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
       (this->mismatch_count_ > 0U && this->first_bad_index_ >= 31) ? 1U : 0U,
       (this->mismatch_count_ > 0U && this->first_bad_index_ >= static_cast<int>(len >= 2U ? len - 2U : 0U)) ? 1U : 0U,
       this->config_.tx_suppress_during_capture ? 1U : 0U,
+      focus_hex,
       head_hex,
       tail_hex);
 
   if (valid_header && this->has_reference_) {
     ESP_LOGW(
         TAG,
-        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u",
+        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u base_ok_total=%u ext_seen_total=%u ext_done_total=%u ext_timeout_total=%u ext_skipped_total=%u focus18/19/20/21/22/27/31/32=%u/%u/%u/%u/%u/%u/%u/%u last_gap_us=%u",
         static_cast<unsigned>(this->reference_len_),
         this->identical_to_reference_count_,
         this->post20_corrupt_count_,
         this->post31_corrupt_count_,
-        this->tail_only_corrupt_count_);
+        this->tail_only_corrupt_count_,
+        this->base_gate_pass_count_,
+        this->extension_probe_seen_count_,
+        this->extension_complete_count_,
+        this->extension_probe_timeout_count_,
+        this->extension_skipped_bad_base_count_,
+        this->boundary_focus_mismatch_counts_[18],
+        this->boundary_focus_mismatch_counts_[19],
+        this->boundary_focus_mismatch_counts_[20],
+        this->boundary_focus_mismatch_counts_[21],
+        this->boundary_focus_mismatch_counts_[22],
+        this->boundary_focus_mismatch_counts_[27],
+        this->boundary_focus_mismatch_counts_[31],
+        this->boundary_focus_mismatch_counts_[32],
+        this->last_extension_gap_us_);
   }
 }
 
@@ -519,6 +582,9 @@ void MhiLcdCamRxEngine::update_reference_stats_(const uint8_t *frame, std::size_
       }
       this->last_bad_index_ = static_cast<int>(i);
       this->mismatch_count_++;
+      if (i < 33U) {
+        this->boundary_focus_mismatch_counts_[i]++;
+      }
     }
   }
 

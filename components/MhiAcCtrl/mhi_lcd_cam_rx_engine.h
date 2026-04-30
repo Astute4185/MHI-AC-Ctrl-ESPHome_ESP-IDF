@@ -25,7 +25,10 @@ class MhiLcdCamRxEngine {
       bool extension_seen,
       int status,
       bool header_candidate,
-      uint8_t pack_mode);
+      uint8_t pack_mode,
+      bool base_gate_passed,
+      bool extension_stage_complete,
+      uint32_t extension_gap_us);
 
   void update_reference_stats_(const uint8_t *frame, std::size_t len, bool valid_header);
 
@@ -44,6 +47,13 @@ class MhiLcdCamRxEngine {
   uint32_t post20_corrupt_count_{0};
   uint32_t post31_corrupt_count_{0};
   uint32_t tail_only_corrupt_count_{0};
+  uint32_t boundary_focus_mismatch_counts_[33]{};
+  uint32_t base_gate_pass_count_{0};
+  uint32_t extension_probe_seen_count_{0};
+  uint32_t extension_complete_count_{0};
+  uint32_t extension_probe_timeout_count_{0};
+  uint32_t extension_skipped_bad_base_count_{0};
+  uint32_t last_extension_gap_us_{0};
 };
 
 }  // namespace mhi
