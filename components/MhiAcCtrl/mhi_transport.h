@@ -3,6 +3,26 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifndef MHI_LCD_CAM_RX_RAW_DUMP_ENABLE
+#define MHI_LCD_CAM_RX_RAW_DUMP_ENABLE 0
+#endif
+
+#ifndef MHI_LCD_CAM_RX_RAW_DUMP_RATE_MS
+#define MHI_LCD_CAM_RX_RAW_DUMP_RATE_MS 15000
+#endif
+
+#ifndef MHI_LCD_CAM_RX_RAW_CHUNK_BYTES
+#define MHI_LCD_CAM_RX_RAW_CHUNK_BYTES 24
+#endif
+
+#ifndef MHI_LCD_CAM_RX_SYNC_GAP_US
+#define MHI_LCD_CAM_RX_SYNC_GAP_US 5000
+#endif
+
+#ifndef MHI_LCD_CAM_RX_TX_SUPPRESS_DURING_CAPTURE
+#define MHI_LCD_CAM_RX_TX_SUPPRESS_DURING_CAPTURE 0
+#endif
+
 namespace esphome {
 namespace mhi {
 
@@ -36,12 +56,12 @@ struct MhiTransportConfig {
   uint32_t extension_gap_max_us{3000};
   MhiTransportBackend backend{MhiTransportBackend::GPIO};
 
-  // Experimental extclk / LCD-CAM style receive path diagnostics.
-  bool raw_dump_enable{false};
-  uint32_t raw_dump_rate_ms{15000};
-  uint32_t raw_chunk_bytes{24};
-  uint32_t sync_gap_us{5000};
-  bool tx_suppress_during_capture{false};
+  // Internal LCD-CAM receive path controls; intentionally not exposed in YAML.
+  bool raw_dump_enable{MHI_LCD_CAM_RX_RAW_DUMP_ENABLE != 0};
+  uint32_t raw_dump_rate_ms{MHI_LCD_CAM_RX_RAW_DUMP_RATE_MS};
+  uint32_t raw_chunk_bytes{MHI_LCD_CAM_RX_RAW_CHUNK_BYTES};
+  uint32_t sync_gap_us{MHI_LCD_CAM_RX_SYNC_GAP_US};
+  bool tx_suppress_during_capture{MHI_LCD_CAM_RX_TX_SUPPRESS_DURING_CAPTURE != 0};
 };
 
 struct MhiFrameExchangeResult {

@@ -26,11 +26,6 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   void set_room_temp_api_timeout(int time_in_seconds);
   void set_external_room_temperature_sensor(esphome::sensor::Sensor *sensor);
   void set_transport_backend(MhiTransportBackend backend) { this->transport_backend_ = backend; }
-  void set_raw_dump_enable(bool value) { this->raw_dump_enable_ = value; }
-  void set_raw_dump_rate_ms(uint32_t value) { this->raw_dump_rate_ms_ = value; }
-  void set_raw_chunk_bytes(uint32_t value) { this->raw_chunk_bytes_ = value; }
-  void set_sync_gap_us(uint32_t value) { this->sync_gap_us_ = value; }
-  void set_tx_suppress_during_capture(bool value) { this->tx_suppress_during_capture_ = value; }
 
   void set_room_temperature(float value);
   bool get_room_temp_api_active();
@@ -75,11 +70,6 @@ class MhiPlatform : public Component, public CallbackInterface_Status {
   int mosi_pin_{-1};
   int miso_pin_{-1};
   MhiTransportBackend transport_backend_{MhiTransportBackend::GPIO};
-  bool raw_dump_enable_{false};
-  uint32_t raw_dump_rate_ms_{15000};
-  uint32_t raw_chunk_bytes_{24};
-  uint32_t sync_gap_us_{5000};
-  bool tx_suppress_during_capture_{false};
 
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
 };

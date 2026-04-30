@@ -338,12 +338,12 @@ bool MhiLcdCamRxEngine::setup(const MhiTransportConfig &config) {
   gpio_set_level(static_cast<gpio_num_t>(this->config_.miso_pin), 0);
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S3)
-  ESP_LOGW(TAG, "lcd_cam_rx backend is experimental and currently intended for ESP32-S3; continuing with GPIO-backed sampler");
+  ESP_LOGW(TAG, "lcd_cam_rx backend is intended for ESP32-S3; current target is not ESP32-S3");
 #endif
 
   ESP_LOGCONFIG(
       TAG,
-      "configured experimental rx engine: sck=%d mosi=%d miso=%d gap_us=%u ext_gap_min_us=%u tx_suppress=%s dump=%s rate_ms=%u preview=%u",
+      "configured lcd_cam_rx engine: sck=%d mosi=%d miso=%d gap_us=%u ext_gap_min_us=%u tx_suppress=%s raw_dump=%s rate_ms=%u preview=%u",
       this->config_.sck_pin,
       this->config_.mosi_pin,
       this->config_.miso_pin,
@@ -563,13 +563,12 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
     bool provisional_extension_rejected,
     bool frame_suppressed,
     uint32_t extension_gap_us) {
-  const uint32_t now_ms = mhi_now_ms();
-  const bool valid_header = has_valid_header_prefix(frame, len);
-  const bool force_log = this->config_.raw_dump_enable || !valid_header || status < 0 || extension_gap_rejected || provisional_extension_rejected || frame_suppressed;
-
-  if (!force_log) {
+  if (!this->config_.raw_dump_enable) {
     return;
   }
+
+  const uint32_t now_ms = mhi_now_ms();
+  const bool valid_header = has_valid_header_prefix(frame, len);
   if ((now_ms - this->last_dump_ms_) < this->config_.raw_dump_rate_ms) {
     return;
   }
@@ -584,7 +583,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
   format_preview_hex(len > tail_len ? frame + (len - tail_len) : frame, tail_len, tail_hex, sizeof(tail_hex));
   format_focus_hex(frame, len, focus_hex, sizeof(focus_hex));
 
-  ESP_LOGW(
+  ESP_LOGD(
       TAG,
       "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s base_ok=%u ext_done=%u ext_reject=%u ext_pub_reject=%u suppress=%u ext_gap_us=%u first_bad=%d last_good=%d last_bad=%d mismatches=%u post20=%u post31=%u tail_only=%u tx_suppress=%u focus=%s head=%s tail=%s",
       this->capture_counter_,
@@ -615,7 +614,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
       tail_hex);
 
   if (valid_header && this->has_reference_) {
-    ESP_LOGW(
+    ESP_LOGD(
         TAG,
         "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u base_ok_total=%u ext_seen_total=%u ext_done_total=%u ext_timeout_total=%u ext_skipped_total=%u ext_gap_good_total=%u ext_gap_short_total=%u ext_gap_reject_total=%u ext_publish_reject_total=%u resync_suppress_total=%u resync_cooldown_hits_total=%u ext_gap_min_us=%u focus18/19/20/21/22/27/31/32=%u/%u/%u/%u/%u/%u/%u/%u last_gap_us=%u",
         static_cast<unsigned>(this->reference_len_),

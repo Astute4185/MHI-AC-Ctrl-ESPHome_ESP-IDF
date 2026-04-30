@@ -30,25 +30,15 @@ void MhiPlatform::setup() {
   config.miso_pin = resolve_pin(this->miso_pin_, kDefaultMisoPin);
   config.frame_size_hint = static_cast<uint8_t>(this->frame_size_);
   config.backend = this->transport_backend_;
-  config.raw_dump_enable = this->raw_dump_enable_;
-  config.raw_dump_rate_ms = this->raw_dump_rate_ms_;
-  config.raw_chunk_bytes = this->raw_chunk_bytes_;
-  config.sync_gap_us = this->sync_gap_us_;
-  config.tx_suppress_during_capture = this->tx_suppress_during_capture_;
 
   ESP_LOGCONFIG(TAG, "Using transport backend: %s", mhi_transport_backend_name(config.backend));
   ESP_LOGCONFIG(
       TAG,
-      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u sync_gap_us=%u tx_suppress=%s raw_dump=%s raw_rate_ms=%u raw_chunk_bytes=%u",
+      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u",
       config.sck_pin,
       config.mosi_pin,
       config.miso_pin,
-      config.frame_size_hint,
-      config.sync_gap_us,
-      config.tx_suppress_during_capture ? "on" : "off",
-      config.raw_dump_enable ? "on" : "off",
-      config.raw_dump_rate_ms,
-      config.raw_chunk_bytes);
+      config.frame_size_hint);
 
   this->mhi_ac_ctrl_core_.set_transport(&this->transport_);
   this->mhi_ac_ctrl_core_.set_transport_config(config);
@@ -56,6 +46,7 @@ void MhiPlatform::setup() {
   this->mhi_ac_ctrl_core_.MHIAcCtrlStatus(this);
   this->mhi_ac_ctrl_core_.init();
   this->mhi_ac_ctrl_core_.set_frame_size(static_cast<uint8_t>(this->frame_size_));
+  this->mhi_ac_ctrl_core_.set_enabled_opdata_mask(this->opdata_mask_);
 
   if (this->external_temperature_sensor_ != nullptr) {
     this->external_temperature_sensor_->add_on_state_callback(
@@ -107,11 +98,6 @@ void MhiPlatform::dump_config() {
   ESP_LOGCONFIG(TAG, "  frame_size_hint: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  room_temp_api_timeout: %u", this->room_temp_api_timeout_);
   ESP_LOGCONFIG(TAG, "  transport_backend: %s", mhi_transport_backend_name(this->transport_backend_));
-  ESP_LOGCONFIG(TAG, "  raw_dump_enable: %s", this->raw_dump_enable_ ? "true" : "false");
-  ESP_LOGCONFIG(TAG, "  raw_dump_rate_ms: %u", this->raw_dump_rate_ms_);
-  ESP_LOGCONFIG(TAG, "  raw_chunk_bytes: %u", this->raw_chunk_bytes_);
-  ESP_LOGCONFIG(TAG, "  sync_gap_us: %u", this->sync_gap_us_);
-  ESP_LOGCONFIG(TAG, "  tx_suppress_during_capture: %s", this->tx_suppress_during_capture_ ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
