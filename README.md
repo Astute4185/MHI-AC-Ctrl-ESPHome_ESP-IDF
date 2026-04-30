@@ -126,6 +126,22 @@ If your unit supports the larger frame layout and left/right vane or 3D auto fea
 frame_size: 33
 ```
 
+### Transport backend
+
+The public backend selector is intentionally limited to one optional field:
+
+```yaml
+transport_backend: gpio
+```
+
+or:
+
+```yaml
+transport_backend: lcd_cam_rx
+```
+
+If omitted, the component uses `gpio`. Backend-specific recovery, gating, and raw capture diagnostics are internal implementation details and are not YAML tuning knobs.
+
 ### Logging
 
 This branch is actively improving diagnostics. Expect log formats around transport and frame validation to evolve as the diagnostics layer is cleaned up.
