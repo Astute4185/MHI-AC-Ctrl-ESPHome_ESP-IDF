@@ -41,6 +41,7 @@ struct MhiTransportConfig {
   uint32_t raw_dump_rate_ms{15000};
   uint32_t raw_chunk_bytes{24};
   uint32_t sync_gap_us{5000};
+  bool tx_suppress_during_capture{false};
 };
 
 struct MhiFrameExchangeResult {

@@ -145,6 +145,7 @@ int IRAM_ATTR read_one_byte(
     int mosi_pin,
     int miso_pin,
     uint8_t tx_byte,
+    bool tx_suppress_during_capture,
     uint8_t *rx_byte,
     uint32_t start_ms,
     uint32_t max_time_ms,
@@ -163,7 +164,9 @@ int IRAM_ATTR read_one_byte(
       }
     }
 
-    if ((tx_byte & bit_mask) != 0U) {
+    const uint8_t driven_tx_byte = tx_suppress_during_capture ? 0U : tx_byte;
+
+    if ((driven_tx_byte & bit_mask) != 0U) {
       fast_gpio_write_high(miso_pin);
     } else {
       fast_gpio_write_low(miso_pin);
@@ -200,7 +203,8 @@ int IRAM_ATTR read_frame_range(
     uint32_t max_time_ms,
     bool first_falling_edge_already_seen,
     bool *new_data_packet_received,
-    uint8_t *header_byte) {
+    uint8_t *header_byte,
+    bool tx_suppress_during_capture) {
   for (std::size_t byte_cnt = start_index; byte_cnt < end_index; byte_cnt++) {
     uint8_t rx_byte = 0;
     const int rc = read_one_byte(
@@ -208,6 +212,7 @@ int IRAM_ATTR read_frame_range(
         mosi_pin,
         miso_pin,
         tx_frame[byte_cnt],
+        tx_suppress_during_capture,
         &rx_byte,
         start_ms,
         max_time_ms,
@@ -305,11 +310,12 @@ bool MhiLcdCamRxEngine::setup(const MhiTransportConfig &config) {
 
   ESP_LOGCONFIG(
       TAG,
-      "configured experimental rx engine: sck=%d mosi=%d miso=%d gap_us=%u dump=%s rate_ms=%u preview=%u",
+      "configured experimental rx engine: sck=%d mosi=%d miso=%d gap_us=%u tx_suppress=%s dump=%s rate_ms=%u preview=%u",
       this->config_.sck_pin,
       this->config_.mosi_pin,
       this->config_.miso_pin,
       this->config_.sync_gap_us,
+      this->config_.tx_suppress_during_capture ? "on" : "off",
       this->config_.raw_dump_enable ? "on" : "off",
       this->config_.raw_dump_rate_ms,
       this->config_.raw_chunk_bytes);
@@ -354,7 +360,8 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       max_time_ms,
       false,
       &result.new_data_packet_received,
-      &result.header_byte);
+      &result.header_byte,
+      this->config_.tx_suppress_during_capture);
   if (rc < 0) {
     result.status = rc;
     result.raw_chunk_len = 0;
@@ -388,7 +395,8 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
           max_time_ms,
           true,
           &result.new_data_packet_received,
-          nullptr);
+          nullptr,
+          this->config_.tx_suppress_during_capture);
       if (rc < 0) {
         result.status = rc;
         result.raw_chunk_len = kBaseFrameBytes;
@@ -407,6 +415,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
   result.header_candidate_seen = header_candidate;
 
   this->capture_counter_++;
+  this->update_reference_stats_(rx_frame, result.bytes_received, has_valid_header_prefix(rx_frame, result.bytes_received));
   if (!has_valid_header_prefix(rx_frame, result.bytes_received)) {
     this->bad_capture_counter_++;
   }
@@ -451,7 +460,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
 
   ESP_LOGW(
       TAG,
-      "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s head=%s tail=%s",
+      "chunk seq=%u bad=%u len=%u ext=%u status=%d hdr=%02X valid=%u candidate=%u pack=%s first_bad=%d last_good=%d last_bad=%d mismatches=%u post20=%u post31=%u tail_only=%u tx_suppress=%u head=%s tail=%s",
       this->capture_counter_,
       this->bad_capture_counter_,
       static_cast<unsigned>(len),
@@ -461,8 +470,73 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
       valid_header ? 1U : 0U,
       header_candidate ? 1U : 0U,
       pack_mode_name(pack_mode),
+      this->first_bad_index_,
+      this->last_good_index_,
+      this->last_bad_index_,
+      this->mismatch_count_,
+      (this->mismatch_count_ > 0U && this->first_bad_index_ >= 20) ? 1U : 0U,
+      (this->mismatch_count_ > 0U && this->first_bad_index_ >= 31) ? 1U : 0U,
+      (this->mismatch_count_ > 0U && this->first_bad_index_ >= static_cast<int>(len >= 2U ? len - 2U : 0U)) ? 1U : 0U,
+      this->config_.tx_suppress_during_capture ? 1U : 0U,
       head_hex,
       tail_hex);
+
+  if (valid_header && this->has_reference_) {
+    ESP_LOGW(
+        TAG,
+        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u",
+        static_cast<unsigned>(this->reference_len_),
+        this->identical_to_reference_count_,
+        this->post20_corrupt_count_,
+        this->post31_corrupt_count_,
+        this->tail_only_corrupt_count_);
+  }
+}
+
+void MhiLcdCamRxEngine::update_reference_stats_(const uint8_t *frame, std::size_t len, bool valid_header) {
+  this->first_bad_index_ = -1;
+  this->last_bad_index_ = -1;
+  this->last_good_index_ = valid_header ? static_cast<int>(len) - 1 : -1;
+  this->mismatch_count_ = 0;
+
+  if (!valid_header || len == 0U) {
+    return;
+  }
+
+  if (!this->has_reference_ || this->reference_len_ != len) {
+    std::memcpy(this->reference_frame_, frame, len);
+    this->reference_len_ = len;
+    this->has_reference_ = true;
+    this->identical_to_reference_count_ = 1;
+    return;
+  }
+
+  for (std::size_t i = 0; i < len; i++) {
+    if (this->reference_frame_[i] != frame[i]) {
+      if (this->first_bad_index_ < 0) {
+        this->first_bad_index_ = static_cast<int>(i);
+        this->last_good_index_ = static_cast<int>(i) - 1;
+      }
+      this->last_bad_index_ = static_cast<int>(i);
+      this->mismatch_count_++;
+    }
+  }
+
+  if (this->mismatch_count_ == 0U) {
+    this->identical_to_reference_count_++;
+    this->last_good_index_ = static_cast<int>(len) - 1;
+    return;
+  }
+
+  if (this->first_bad_index_ >= 20) {
+    this->post20_corrupt_count_++;
+  }
+  if (this->first_bad_index_ >= 31) {
+    this->post31_corrupt_count_++;
+  }
+  if (this->first_bad_index_ >= static_cast<int>(len >= 2U ? len - 2U : 0U)) {
+    this->tail_only_corrupt_count_++;
+  }
 }
 
 }  // namespace mhi

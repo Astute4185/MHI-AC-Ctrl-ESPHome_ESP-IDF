@@ -34,16 +34,18 @@ void MhiPlatform::setup() {
   config.raw_dump_rate_ms = this->raw_dump_rate_ms_;
   config.raw_chunk_bytes = this->raw_chunk_bytes_;
   config.sync_gap_us = this->sync_gap_us_;
+  config.tx_suppress_during_capture = this->tx_suppress_during_capture_;
 
   ESP_LOGCONFIG(TAG, "Using transport backend: %s", mhi_transport_backend_name(config.backend));
   ESP_LOGCONFIG(
       TAG,
-      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u sync_gap_us=%u raw_dump=%s raw_rate_ms=%u raw_chunk_bytes=%u",
+      "Resolved transport config: sck=%d mosi=%d miso=%d frame_size_hint=%u sync_gap_us=%u tx_suppress=%s raw_dump=%s raw_rate_ms=%u raw_chunk_bytes=%u",
       config.sck_pin,
       config.mosi_pin,
       config.miso_pin,
       config.frame_size_hint,
       config.sync_gap_us,
+      config.tx_suppress_during_capture ? "on" : "off",
       config.raw_dump_enable ? "on" : "off",
       config.raw_dump_rate_ms,
       config.raw_chunk_bytes);
@@ -109,6 +111,7 @@ void MhiPlatform::dump_config() {
   ESP_LOGCONFIG(TAG, "  raw_dump_rate_ms: %u", this->raw_dump_rate_ms_);
   ESP_LOGCONFIG(TAG, "  raw_chunk_bytes: %u", this->raw_chunk_bytes_);
   ESP_LOGCONFIG(TAG, "  sync_gap_us: %u", this->sync_gap_us_);
+  ESP_LOGCONFIG(TAG, "  tx_suppress_during_capture: %s", this->tx_suppress_during_capture_ ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  resolved_sck_pin: %d", resolve_pin(this->sck_pin_, kDefaultSckPin));
   ESP_LOGCONFIG(TAG, "  resolved_mosi_pin: %d", resolve_pin(this->mosi_pin_, kDefaultMosiPin));
   ESP_LOGCONFIG(TAG, "  resolved_miso_pin: %d", resolve_pin(this->miso_pin_, kDefaultMisoPin));
