@@ -60,6 +60,9 @@ class MhiLcdCamRxEngine {
   uint32_t extension_gap_short_count_{0};
   uint32_t extension_gap_reject_count_{0};
   uint32_t extension_publish_reject_count_{0};
+  uint32_t resync_suppressed_count_{0};
+  uint32_t resync_cooldown_return_count_{0};
+  uint64_t resync_cooldown_until_us_{0};
   uint32_t last_extension_gap_us_{0};
 };
 

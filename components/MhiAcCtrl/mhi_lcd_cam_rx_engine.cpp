@@ -36,6 +36,7 @@ constexpr std::size_t kTailPreviewBytes = 8U;
 constexpr std::size_t kFocusByteCount = 8U;
 constexpr std::size_t kFocusIndices[kFocusByteCount] = {18U, 19U, 20U, 21U, 22U, 27U, 31U, 32U};
 constexpr uint32_t kMinValidExtensionGapUs = 150U;
+constexpr uint32_t kResyncCooldownUs = 300U;
 
 #if MHI_LCD_CAM_RX_USE_FAST_GPIO
 inline bool IRAM_ATTR fast_gpio_read(int pin) {
@@ -376,6 +377,17 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
   const int mosi_pin = this->config_.mosi_pin;
   const int miso_pin = this->config_.miso_pin;
 
+  const uint64_t exchange_begin_us = now_us();
+  if (this->resync_cooldown_until_us_ != 0U && exchange_begin_us < this->resync_cooldown_until_us_) {
+    this->resync_cooldown_return_count_++;
+    result.status = 0;
+    result.frame_suppressed = true;
+    result.new_data_packet_received = false;
+    result.raw_chunk_len = 0U;
+    result.bytes_received = 0U;
+    return result;
+  }
+
   if (!wait_for_idle_gap_us(sck_pin, this->config_.sync_gap_us, start_ms, max_time_ms)) {
     result.status = err_msg_timeout_SCK_low;
     return result;
@@ -401,6 +413,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
   bool extension_stage_complete = false;
   bool extension_gap_rejected = false;
   bool provisional_extension_rejected = false;
+  bool suppressed_partial_capture = false;
   uint32_t extension_gap_us = 0U;
   if (rc < 0) {
     result.status = rc;
@@ -481,6 +494,25 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
     }
   }
 
+  if (target_frame_size >= kExtendedFrameBytes && !result.frame_suppressed) {
+    const bool published_full_extension =
+        result.bytes_received >= kExtendedFrameBytes &&
+        result.detected_type == MhiFrameType::EXTENDED_33 &&
+        extension_stage_complete;
+    if (!published_full_extension) {
+      suppressed_partial_capture = true;
+      result.frame_suppressed = true;
+      result.new_data_packet_received = false;
+    }
+  }
+
+  if (result.frame_suppressed && (extension_gap_rejected || provisional_extension_rejected || suppressed_partial_capture)) {
+    this->resync_suppressed_count_++;
+    this->resync_cooldown_until_us_ = now_us() + static_cast<uint64_t>(kResyncCooldownUs);
+  } else if (!result.frame_suppressed) {
+    this->resync_cooldown_until_us_ = 0U;
+  }
+
   uint8_t pack_mode = PACK_IDENTITY;
   const bool header_candidate = detect_header_candidate(rx_frame, result.bytes_received, pack_mode);
   result.pack_mode = pack_mode;
@@ -511,7 +543,7 @@ MhiFrameExchangeResult MhiLcdCamRxEngine::exchange_frame(
       extension_stage_complete,
       extension_gap_rejected,
       provisional_extension_rejected,
-      result.frame_suppressed,
+      result.frame_suppressed || suppressed_partial_capture,
       extension_gap_us);
 
   fast_gpio_write_low(miso_pin);
@@ -585,7 +617,7 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
   if (valid_header && this->has_reference_) {
     ESP_LOGW(
         TAG,
-        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u base_ok_total=%u ext_seen_total=%u ext_done_total=%u ext_timeout_total=%u ext_skipped_total=%u ext_gap_good_total=%u ext_gap_short_total=%u ext_gap_reject_total=%u ext_publish_reject_total=%u ext_gap_min_us=%u focus18/19/20/21/22/27/31/32=%u/%u/%u/%u/%u/%u/%u/%u last_gap_us=%u",
+        "stats ref_len=%u same=%u post20_total=%u post31_total=%u tail_only_total=%u base_ok_total=%u ext_seen_total=%u ext_done_total=%u ext_timeout_total=%u ext_skipped_total=%u ext_gap_good_total=%u ext_gap_short_total=%u ext_gap_reject_total=%u ext_publish_reject_total=%u resync_suppress_total=%u resync_cooldown_hits_total=%u ext_gap_min_us=%u focus18/19/20/21/22/27/31/32=%u/%u/%u/%u/%u/%u/%u/%u last_gap_us=%u",
         static_cast<unsigned>(this->reference_len_),
         this->identical_to_reference_count_,
         this->post20_corrupt_count_,
@@ -600,6 +632,8 @@ void MhiLcdCamRxEngine::maybe_log_chunk_(
         this->extension_gap_short_count_,
         this->extension_gap_reject_count_,
         this->extension_publish_reject_count_,
+        this->resync_suppressed_count_,
+        this->resync_cooldown_return_count_,
         kMinValidExtensionGapUs,
         this->boundary_focus_mismatch_counts_[18],
         this->boundary_focus_mismatch_counts_[19],
