@@ -176,16 +176,69 @@ bool should_log_reason(MhiDiagSampleReason reason, uint32_t now_ms, uint32_t *la
   return false;
 }
 
-void maybe_log_summary(const MhiDiagCounters &counters, uint32_t now_ms, uint32_t &last_summary_ms) {
-  if ((now_ms - last_summary_ms) < kDiagSummaryIntervalMs) {
+void update_max(uint32_t value, uint32_t &target) {
+  if (value > target) {
+    target = value;
+  }
+}
+
+void record_transport_timing(MhiDiagCounters &counters, const esphome::mhi::MhiFrameExchangeResult &result) {
+  if (result.backend_used == esphome::mhi::MhiTransportBackend::LCD_CAM_RX) {
+    counters.exchange_calls_lcdcam++;
+    counters.exchange_total_us_lcdcam += result.exchange_us;
+    update_max(result.exchange_us, counters.exchange_max_us_lcdcam);
+    update_max(result.exchange_us, counters.exchange_interval_max_us_lcdcam);
+    return;
+  }
+
+  counters.exchange_calls_gpio++;
+  counters.exchange_total_us_gpio += result.exchange_us;
+  update_max(result.exchange_us, counters.exchange_max_us_gpio);
+  update_max(result.exchange_us, counters.exchange_interval_max_us_gpio);
+}
+
+uint32_t average_us(uint64_t total_us, uint32_t calls) {
+  if (calls == 0U) {
+    return 0U;
+  }
+  return static_cast<uint32_t>(total_us / calls);
+}
+
+uint32_t busy_percent_x100(uint64_t total_us, uint32_t elapsed_ms) {
+  if (elapsed_ms == 0U) {
+    return 0U;
+  }
+  const uint64_t interval_us = static_cast<uint64_t>(elapsed_ms) * 1000ULL;
+  const uint64_t scaled = (total_us * 10000ULL) / interval_us;
+  return scaled > 999999ULL ? 999999U : static_cast<uint32_t>(scaled);
+}
+
+void maybe_log_summary(
+    MhiDiagCounters &counters,
+    uint32_t now_ms,
+    uint32_t &last_summary_ms,
+    MhiTransportTimingSnapshot &timing_snapshot) {
+  const uint32_t elapsed_ms = now_ms - last_summary_ms;
+  if (elapsed_ms < kDiagSummaryIntervalMs) {
     return;
   }
   last_summary_ms = now_ms;
+
+  const uint32_t gpio_calls = counters.exchange_calls_gpio - timing_snapshot.exchange_calls_gpio;
+  const uint64_t gpio_total_us = counters.exchange_total_us_gpio - timing_snapshot.exchange_total_us_gpio;
+  const uint32_t gpio_avg_us = average_us(gpio_total_us, gpio_calls);
+  const uint32_t gpio_busy_x100 = busy_percent_x100(gpio_total_us, elapsed_ms);
+
+  const uint32_t lcdcam_calls = counters.exchange_calls_lcdcam - timing_snapshot.exchange_calls_lcdcam;
+  const uint64_t lcdcam_total_us = counters.exchange_total_us_lcdcam - timing_snapshot.exchange_total_us_lcdcam;
+  const uint32_t lcdcam_avg_us = average_us(lcdcam_total_us, lcdcam_calls);
+  const uint32_t lcdcam_busy_x100 = busy_percent_x100(lcdcam_total_us, elapsed_ms);
+
   char mismatch_top[96];
   format_histogram_top(counters.byte_mismatch_counts, mismatch_top, sizeof(mismatch_top));
   ESP_LOGI(
       DIAG_TAG,
-      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u crit=%u nextsig=%u mismatch_top=%s",
+      "summary ok=%u ok20=%u ok33=%u short=%u sig=%u basechk=%u extchk=%u t_low=%u t_high=%u t_other=%u hdr6c=%u hdr6d=%u hdrother=%u ext_probe=%u ext_seen=%u crit=%u nextsig=%u gpio_calls=%u gpio_avg_us=%u gpio_max_us=%u gpio_busy=%u.%02u%% lcdcam_calls=%u lcdcam_avg_us=%u lcdcam_max_us=%u lcdcam_busy=%u.%02u%% mismatch_top=%s",
       counters.ok_frames,
       counters.ok_20,
       counters.ok_33,
@@ -203,7 +256,24 @@ void maybe_log_summary(const MhiDiagCounters &counters, uint32_t now_ms, uint32_
       counters.extension_start_seen,
       counters.critical_capture_frames,
       counters.next_frame_sig_after_tail,
+      gpio_calls,
+      gpio_avg_us,
+      counters.exchange_interval_max_us_gpio,
+      gpio_busy_x100 / 100U,
+      gpio_busy_x100 % 100U,
+      lcdcam_calls,
+      lcdcam_avg_us,
+      counters.exchange_interval_max_us_lcdcam,
+      lcdcam_busy_x100 / 100U,
+      lcdcam_busy_x100 % 100U,
       mismatch_top);
+
+  timing_snapshot.exchange_calls_gpio = counters.exchange_calls_gpio;
+  timing_snapshot.exchange_total_us_gpio = counters.exchange_total_us_gpio;
+  timing_snapshot.exchange_calls_lcdcam = counters.exchange_calls_lcdcam;
+  timing_snapshot.exchange_total_us_lcdcam = counters.exchange_total_us_lcdcam;
+  counters.exchange_interval_max_us_gpio = 0U;
+  counters.exchange_interval_max_us_lcdcam = 0U;
 }
 
 void maybe_log_bad_frame_with_reference(
@@ -263,6 +333,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
   MhiDiagCounters &diag_counters = diag_state.counters;
   MhiLastGoodFrame &diag_last_good_frame = diag_state.last_good_frame;
   uint32_t &diag_last_summary_ms = diag_state.last_summary_ms;
+  MhiTransportTimingSnapshot &diag_timing_snapshot = diag_state.last_timing_summary;
   uint32_t *diag_last_sample_ms = diag_state.last_sample_ms;
 
   if (transport == nullptr) {
@@ -279,10 +350,14 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
 
   result.new_data_packet_received = transport_result.new_data_packet_received;
 
+  const uint32_t now_ms = esphome::mhi::mhi_now_ms();
+  record_transport_timing(diag_counters, transport_result);
+
   if (transport_result.frame_suppressed) {
     last_diag_reason = esphome::mhi::MhiDiagReason::NONE;
     result.new_data_packet_received = false;
     result.status = err_msg_valid_frame;
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
     return result;
   }
   if (transport_result.extension_probe_attempted) {
@@ -304,8 +379,6 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
   } else if (transport_result.bytes_received > 0U) {
     diag_counters.header_other++;
   }
-
-  const uint32_t now_ms = esphome::mhi::mhi_now_ms();
 
   if (transport_result.status < 0) {
     if (transport_result.status == err_msg_timeout_SCK_low) {
@@ -373,7 +446,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
             flags);
       }
     }
-    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
     result.status = transport_result.status;
     return result;
   }
@@ -407,7 +480,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
         static_cast<unsigned>(transport_result.bytes_received),
         transport_result.header_byte,
         flags);
-    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
     result.status = err_msg_invalid_checksum;
     return result;
   }
@@ -445,7 +518,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
         mosi_frame[2],
         flags,
         over_hex);
-    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
     result.status = err_msg_invalid_signature;
     return result;
   }
@@ -481,7 +554,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
         checksum,
         static_cast<unsigned>(((mosi_frame[CBH] << 8) | mosi_frame[CBL])),
         flags);
-    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+    maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
     result.status = err_msg_invalid_checksum;
     return result;
   }
@@ -519,7 +592,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
           static_cast<unsigned>(checksum & 0xFF),
           static_cast<unsigned>(mosi_frame[CBL2]),
           flags);
-      maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+      maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
       result.status = err_msg_invalid_checksum;
       return result;
     }
@@ -535,7 +608,7 @@ MhiRxValidationResult MhiRxValidator::exchange_and_validate(
   diag_last_good_frame.valid = true;
   diag_last_good_frame.len = transport_result.bytes_received;
   std::memcpy(diag_last_good_frame.frame, mosi_frame, transport_result.bytes_received);
-  maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms);
+  maybe_log_summary(diag_counters, now_ms, diag_last_summary_ms, diag_timing_snapshot);
 
   result.status = err_msg_valid_frame;
   return result;

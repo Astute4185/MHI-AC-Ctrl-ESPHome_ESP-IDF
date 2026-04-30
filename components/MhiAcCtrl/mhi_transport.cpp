@@ -6,7 +6,6 @@
 
 #include <driver/gpio.h>
 #include <esp_attr.h>
-#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 
 #include "MHI-AC-Ctrl-core.h"
@@ -77,8 +76,9 @@ inline bool IRAM_ATTR timed_out(uint32_t start_ms, uint32_t max_time_ms, uint32_
   return (mhi_now_ms() - start_ms) > max_time_ms;
 }
 
-inline uint64_t now_us() {
-  return static_cast<uint64_t>(esp_timer_get_time());
+inline uint32_t elapsed_us_since(uint64_t begin_us) {
+  const uint64_t elapsed = mhi_now_us() - begin_us;
+  return elapsed > 0xFFFFFFFFULL ? 0xFFFFFFFFU : static_cast<uint32_t>(elapsed);
 }
 
 inline bool has_valid_header_prefix(const uint8_t *frame, std::size_t len) {
@@ -175,9 +175,9 @@ int IRAM_ATTR read_frame_range(
 }
 
 bool wait_for_next_falling_edge_us(int sck_pin, uint32_t timeout_us, uint32_t start_ms, uint32_t max_time_ms) {
-  const uint64_t begin_us = now_us();
+  const uint64_t begin_us = mhi_now_us();
   while (fast_gpio_read(sck_pin)) {
-    if ((now_us() - begin_us) > static_cast<uint64_t>(timeout_us)) {
+    if ((mhi_now_us() - begin_us) > static_cast<uint64_t>(timeout_us)) {
       return false;
     }
     if ((mhi_now_ms() - start_ms) > max_time_ms) {
@@ -368,11 +368,17 @@ MhiFrameExchangeResult IRAM_ATTR MhiTransport::exchange_frame(
     uint8_t *rx_frame,
     std::size_t rx_capacity,
     uint32_t max_time_ms) {
+  const uint64_t exchange_begin_us = mhi_now_us();
+  MhiFrameExchangeResult result{};
+
   if (this->config_.backend == MhiTransportBackend::LCD_CAM_RX && this->lcd_cam_rx_engine_ != nullptr) {
-    return this->lcd_cam_rx_engine_->exchange_frame(tx_frame, rx_frame, rx_capacity, max_time_ms);
+    result = this->lcd_cam_rx_engine_->exchange_frame(tx_frame, rx_frame, rx_capacity, max_time_ms);
+  } else {
+    result = exchange_frame_gpio(this->config_, tx_frame, rx_frame, rx_capacity, max_time_ms);
   }
 
-  return exchange_frame_gpio(this->config_, tx_frame, rx_frame, rx_capacity, max_time_ms);
+  result.exchange_us = elapsed_us_since(exchange_begin_us);
+  return result;
 }
 
 }  // namespace mhi

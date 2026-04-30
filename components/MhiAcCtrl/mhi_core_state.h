@@ -113,7 +113,22 @@ struct MhiDiagCounters {
   uint32_t extension_start_seen = 0;
   uint32_t critical_capture_frames = 0;
   uint32_t next_frame_sig_after_tail = 0;
+  uint32_t exchange_calls_gpio = 0;
+  uint64_t exchange_total_us_gpio = 0;
+  uint32_t exchange_max_us_gpio = 0;
+  uint32_t exchange_interval_max_us_gpio = 0;
+  uint32_t exchange_calls_lcdcam = 0;
+  uint64_t exchange_total_us_lcdcam = 0;
+  uint32_t exchange_max_us_lcdcam = 0;
+  uint32_t exchange_interval_max_us_lcdcam = 0;
   uint32_t byte_mismatch_counts[kMhiMaxFrameBytes] = {0};
+};
+
+struct MhiTransportTimingSnapshot {
+  uint32_t exchange_calls_gpio = 0;
+  uint64_t exchange_total_us_gpio = 0;
+  uint32_t exchange_calls_lcdcam = 0;
+  uint64_t exchange_total_us_lcdcam = 0;
 };
 
 struct MhiLastGoodFrame {
@@ -140,5 +155,6 @@ struct MhiDiagRuntimeState {
   MhiDiagCounters counters{};
   MhiLastGoodFrame last_good_frame{};
   uint32_t last_summary_ms{0};
+  MhiTransportTimingSnapshot last_timing_summary{};
   uint32_t last_sample_ms[kMhiDiagReasonCount] = {0};
 };
