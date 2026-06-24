@@ -1,0 +1,29 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["components"]
+exclude = [
+  ".git",
+  ".pioenvs",
+  ".esphome",
+  "build",
+  "dist",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "I",    # import sorting
+  "UP",   # pyupgrade
+  "B",    # bugbear
+  "SIM",  # simplify
+]
+ignore = [
+  "E501", # line length is handled by formatter where possible
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

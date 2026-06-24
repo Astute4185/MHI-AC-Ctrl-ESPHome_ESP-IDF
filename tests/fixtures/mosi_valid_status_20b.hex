@@ -1,0 +1,3 @@
+# MOSI status frame
+# Power ON, mode COOL, fan 2, target 22.0C, room 24.0C, error 0
+6c 80 04 09 21 2c 9d 00 00 00 00 00 00 00 00 00 00 00 01 e3

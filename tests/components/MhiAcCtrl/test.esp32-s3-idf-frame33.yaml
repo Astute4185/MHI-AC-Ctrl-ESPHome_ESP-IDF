@@ -1,0 +1,49 @@
+esphome:
+  name: mhi-redux-compile-33
+  friendly_name: MHI Redux Compile 33
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [MhiAcCtrl]
+
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  sck_pin: 08
+  mosi_pin: 38
+  miso_pin: 39
+  rx_driver: fast_gpio
+  tx_driver: fast_gpio
+
+climate:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    name: MHI Climate
+
+select:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    horizontal_vanes:
+      name: MHI Horizontal Vanes
+
+binary_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    vanes_3d_auto_enabled:
+      name: MHI 3D Auto Enabled
+
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    vanes_3d_auto:
+      name: MHI 3D Auto
