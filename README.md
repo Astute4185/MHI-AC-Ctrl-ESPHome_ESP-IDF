@@ -28,6 +28,8 @@ Implemented and runtime-tested:
 Still intentionally conservative:
 
 - `rx_worker` remains configurable and should be validated on each hardware target.
+- ESP32-S3 is the validated RX worker target.
+- Original ESP32 / M5 Atom devices are working with issues when the RX worker is enabled.
 - Single-core chips are not the recommended target for RX worker mode.
 
 ## Hardware assumptions
@@ -50,6 +52,15 @@ Known-good current development target:
 - `rx_worker: auto` or `rx_worker: true` after validation
 
 Single-core chips should generally use `rx_worker: false` unless you are explicitly testing them.
+
+## Hardware support status
+
+| Hardware target | Framework | CPU / board notes | RX/TX driver | Recommended `rx_worker` | Status | Notes |
+|---|---|---|---|---|---|---|
+| ESP32-S3 | ESP-IDF | Validated development target | `fast_gpio` / `fast_gpio` | `auto` or `true` | Validated / recommended | Current primary target. RX worker has been runtime-tested with clean frame handling, low loop time, no queue overflows, and confirmed sensor/control operation. |
+| Original ESP32 / M5 Atom | ESP-IDF | `m5stack-atom` / original ESP32 | `fast_gpio` / `fast_gpio` | `false` | Working | Best current setting for this target. Synchronous FastGPIO at 240 MHz appears to run cleanly in testing. |
+
+`rx_worker: auto` currently resolves from chip core count. This means original ESP32 devices may enable the worker because they are dual-core. ESP32-S3 is the validated worker target. For original ESP32 / M5 Atom devices, set `rx_worker: false` unless you are deliberately testing worker tuning.
 
 ## Why FastGPIO is specified explicitly
 
@@ -100,7 +111,7 @@ MhiAcCtrl:
 `rx_worker` supports three behaviours:
 
 ```yaml
-rx_worker: auto   # omitted/null/auto: enable on multi-core chips, disable on single-core chips
+rx_worker: auto   # omitted/null/auto: resolve from chip core count
 rx_worker: true   # force enabled
 rx_worker: false  # force disabled
 ```
@@ -111,7 +122,13 @@ Recommended default for ESP32-S3 testing:
 rx_worker: auto
 ```
 
-Recommended safe fallback:
+Recommended setting for original ESP32 / M5 Atom hardware:
+
+```yaml
+rx_worker: false
+```
+
+Recommended safe fallback for any target showing checksum, sync, or worker stall issues:
 
 ```yaml
 rx_worker: false
@@ -305,35 +322,7 @@ MhiAcCtrl:
   external_temperature_sensor: external_room_temp
 ```
 
-Manual action support also exists:
-
-```yaml
-on_...:
-  then:
-    - climate.mhi.set_external_room_temperature:
-        mhi_ac_ctrl_id: mhi_ac
-        temperature: 22.5
-```
-
-## Vane actions
-
-Automation actions are available for direct vane control:
-
-```yaml
-on_...:
-  then:
-    - climate.mhi.set_vertical_vanes:
-        mhi_ac_ctrl_id: mhi_ac
-        position: 5
-```
-
-```yaml
-on_...:
-  then:
-    - climate.mhi.set_horizontal_vanes:
-        mhi_ac_ctrl_id: mhi_ac
-        position: 8
-```
+Direct custom API actions for setting vanes or external room temperature are not documented for the current Redux path. Use the climate, select, and switch entities unless the automation action classes are explicitly re-added and tested.
 
 ## Runtime diagnostics
 
@@ -354,6 +343,7 @@ Recommended use:
 
 - Use detailed diagnostics while bringing up hardware or soak testing.
 - Reduce log level once the device is stable.
+- Use `rx_worker: false` on original ESP32 / M5 Atom hardware unless deliberately testing worker tuning.
 - Avoid enabling the RX worker by default on single-core chips unless that target has been separately validated.
 
 Important counters:
@@ -416,13 +406,38 @@ commands confirm
 Home Assistant state settles to confirmed AC feedback
 ```
 
+## Uploading
+
+Use `--device` when uploading to a specific IP address:
+
+```bash
+esphome upload 33guest-bedroom.yaml --device 10.0.9.154
+```
+
+or:
+
+```bash
+esphome run 33guest-bedroom.yaml --device 10.0.9.154
+```
+
+Do not pass the IP as a second config file argument.
+
 ## Troubleshooting
 
 ### Long ESPHome loop warnings
 
 If `rx_worker: false`, synchronous FastGPIO RX can block the ESPHome loop while waiting for the external MHI frame cadence. This can produce long-operation warnings even when RX is reliable.
 
-Use `rx_worker: auto` or `rx_worker: true` on validated ESP32-S3 hardware to move frame capture out of the ESPHome loop.
+Use `rx_worker: auto` or `rx_worker: true` on validated ESP32-S3 hardware to move frame capture out of the ESPHome loop. On original ESP32 / M5 Atom hardware, prefer 240 MHz with `rx_worker: false` unless you are deliberately testing the worker.
+
+### Original ESP32 / M5 Atom checksum or stall issues
+
+Current observed behaviour:
+
+- 160 MHz with RX worker enabled: worker stalls and checksum/sync errors observed.
+- 240 MHz with RX worker enabled: fewer or no observed stalls, but checksum/sync noise may remain.
+- 240 MHz with RX worker disabled: currently the best observed configuration.
+
 
 ### RX worker enabled but no frames
 
@@ -522,6 +537,8 @@ scripts/lint.sh
 - Keep sensor/opdata fields validity-gated.
 - Keep confirmed decoded state authoritative.
 - Keep RX worker optional and diagnosable.
+- Treat ESP32-S3 as the validated worker target.
+- Treat original ESP32 / M5 Atom worker mode as experimental until checksum/sync behaviour is clean.
 - Keep synchronous FastGPIO as a fallback path.
 - Keep transport backend selection explicit in examples.
 - Do not combine transport experiments with sensor parity changes.
@@ -531,6 +548,8 @@ scripts/lint.sh
 Near term:
 
 - Complete RX worker soak validation on ESP32-S3.
+- Keep original ESP32 / M5 Atom documented as working best at 240 MHz with `rx_worker: false`.
+- Continue tuning original ESP32 worker mode separately if there is still interest.
 - Keep collecting worker health diagnostics across real installations.
 - Keep `rx_worker` optional until more hardware targets are validated.
 
