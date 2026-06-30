@@ -28,6 +28,10 @@ struct MhiStatusState {
   bool has_3d_auto{false};
   bool three_d_auto{false};
 
+  bool has_extended_louver_raw{false};
+  uint8_t extended_louver_db16{0};
+  uint8_t extended_louver_db17{0};
+
   uint8_t error_code{0};
 
   uint32_t last_update_ms{0};

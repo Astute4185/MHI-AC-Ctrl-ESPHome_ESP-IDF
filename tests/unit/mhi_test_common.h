@@ -194,6 +194,8 @@ void frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise();
 
 void status_decoder_decodes_core_fields();
 void status_decoder_decodes_33_byte_vane_feedback();
+void status_decoder_ignores_unknown_horizontal_vane_feedback();
+void status_decoder_ignores_33_byte_vane_feedback_on_opdata_frames();
 
 void opdata_decoder_decodes_outdoor_temp();
 void opdata_decoder_decodes_return_air_temp();
@@ -211,6 +213,11 @@ void publish_bridge_publishes_sensor_parity_slice1_on_first_opdata_publish();
 void publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();
 void publish_bridge_maps_unknown_protection_state();
 void publish_bridge_publishes_sensor_parity_slice3_vane_feedback();
+void publish_bridge_suppresses_unchanged_sensor_republishes();
+void publish_bridge_suppresses_alternating_climate_current_temperature_chatter();
+void publish_bridge_rate_limits_low_priority_climate_current_temperature_change();
+void publish_bridge_does_not_force_low_priority_current_temp_when_other_climate_fields_change();
+void publish_bridge_publishes_high_priority_climate_current_temperature_change_immediately();
 
 void tx_builder_emits_valid_default_20_byte_frame();
 void tx_builder_applies_pending_commands_once();
@@ -220,6 +227,8 @@ void tx_builder_reports_encoded_command_mask();
 void tx_builder_keeps_double_frame_commands_pending_until_command_frame();
 void tx_builder_drops_33_byte_only_commands_in_20_byte_mode();
 void tx_builder_applies_3d_auto_in_33_byte_frame();
+void tx_builder_reports_horizontal_vane_intent_in_33_byte_frame();
+void tx_builder_preserves_horizontal_context_for_3d_auto_command();
 
 void command_confirmation_confirms_power_mode_and_vertical_vane();
 void command_confirmation_keeps_partial_pending_until_later_status();
@@ -227,6 +236,13 @@ void command_confirmation_ignores_auto_fan_because_mosi_does_not_confirm_it();
 void command_confirmation_confirms_supported_fan_codes();
 void command_confirmation_times_out_unconfirmed_commands();
 void command_confirmation_detects_duplicate_pending_commands();
+void command_confirmation_confirms_horizontal_vane_feedback();
+void command_confirmation_confirms_horizontal_swing_feedback();
+void command_confirmation_confirms_3d_auto_feedback();
+void command_confirmation_requires_preserved_horizontal_context_for_3d_auto();
+void command_confirmation_uses_longer_timeout_for_extended_louver_commands();
+void command_confirmation_reports_pending_age_for_settle_window();
+void command_confirmation_can_settle_extended_louver_pending_mask();
 void command_state_clears_pending_mask();
 
 void diagnostics_snapshot_reports_event_ages();

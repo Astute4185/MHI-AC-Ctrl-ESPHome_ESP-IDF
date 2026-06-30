@@ -61,8 +61,7 @@ class MhiPublishBridge {
     // the parent has already decoded stable frames. Force the next decoded
     // state to be republished so newly registered entities do not stay at NA
     // when the AC state has not changed.
-    has_last_status_ = false;
-    has_last_opdata_ = false;
+    this->reset_publish_cache_();
   }
 
   void publish(const MhiStateStore& state);
@@ -80,6 +79,9 @@ class MhiPublishBridge {
   void publish_status(const MhiStatusState& status);
   void publish_opdata(const MhiOpDataState& opdata);
 
+  bool should_publish_climate_current_temperature_(float decoded_temp, bool first_publish, uint32_t now_ms);
+  void reset_publish_cache_();
+
   MhiPublishTargets targets_{};
 
   bool has_last_status_{false};
@@ -87,6 +89,10 @@ class MhiPublishBridge {
 
   MhiStatusState last_status_{};
   MhiOpDataState last_opdata_{};
+
+  bool has_climate_published_current_temp_{false};
+  float climate_published_current_temp_{0.0f};
+  uint32_t last_climate_current_temp_publish_ms_{0};
 };
 
 }  // namespace mhi_ac_ctrl

@@ -31,12 +31,11 @@ void MhiHorizontalVanesSelect::control(const std::string& value) {
     return;
   }
 
-  auto& command = this->parent_->state().command();
+  const uint8_t horizontal_vane = static_cast<uint8_t>(index.value() + 1U);
 
-  command.horizontal_vane_set = true;
-  command.horizontal_vane = static_cast<uint8_t>(index.value() + 1U);
-
-  ESP_LOGD(TAG, "Horizontal vanes command staged: %s", value.c_str());
+  if (this->parent_->request_horizontal_vane_command(horizontal_vane)) {
+    ESP_LOGD(TAG, "Horizontal vanes command staged: %s", value.c_str());
+  }
 }
 
 }  // namespace mhi_ac_ctrl

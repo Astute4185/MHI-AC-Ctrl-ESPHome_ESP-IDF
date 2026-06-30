@@ -29,12 +29,9 @@ void Mhi3dAutoSwitch::write_state(bool state) {
     return;
   }
 
-  auto& command = this->parent_->state().command();
-
-  command.three_d_auto_set = true;
-  command.three_d_auto = state;
-
-  ESP_LOGD(TAG, "3D auto command staged: %s", state ? "ON" : "OFF");
+  if (this->parent_->request_three_d_auto_command(state)) {
+    ESP_LOGD(TAG, "3D auto command staged: %s", state ? "ON" : "OFF");
+  }
 }
 
 }  // namespace mhi_ac_ctrl

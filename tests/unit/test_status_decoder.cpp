@@ -34,4 +34,26 @@ void status_decoder_decodes_33_byte_vane_feedback() {
   EXPECT_TRUE(decoded.three_d_auto);
 }
 
+void status_decoder_ignores_33_byte_vane_feedback_on_opdata_frames() {
+  MhiFrameBuffer frame = make_mosi_status_frame_33(6U, false, true);
+  frame.data[DB6] = 0x80U;
+  frame.data[DB9] = 0x80U;
+  frame.data[DB10] = 0x20U;
+  frame.data[DB11] = 0x50U;
+  frame.data[DB16] = 0x00U;
+  frame.data[DB17] = 0x05U;
+
+  const uint16_t checksum = mhi_calc_checksum_frame33(frame.data);
+  frame.data[CBL2] = static_cast<uint8_t>(checksum & 0xFFU);
+
+  MhiDecodedStatus decoded{};
+  EXPECT_TRUE(MhiStatusDecoder::decode_mosi(frame.view(), decoded));
+
+  EXPECT_TRUE(decoded.valid);
+  EXPECT_TRUE(decoded.extended);
+  EXPECT_FALSE(MhiStatusDecoder::is_extended_feedback_status_frame(frame.view()));
+  EXPECT_FALSE(decoded.has_horizontal_vane);
+  EXPECT_FALSE(decoded.has_3d_auto);
+}
+
 }  // namespace mhi_unit_tests

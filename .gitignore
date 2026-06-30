@@ -23,6 +23,7 @@ __pycache__/
 *.so.*
 *.dylib
 *.dll
+*.code-workspace
 
 # Static libraries
 *.lai

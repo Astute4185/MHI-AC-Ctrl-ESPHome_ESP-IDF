@@ -5,6 +5,11 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
+namespace {
+constexpr float kClimateCurrentTempHighPriorityDeltaC = 0.5f;
+constexpr uint32_t kClimateCurrentTempLowPriorityIntervalMs = 15000U;
+}  // namespace
+
 void MhiPublishBridge::publish(const MhiStateStore& state) {
   this->publish_status(state.status());
   this->publish_opdata(state.opdata());
@@ -32,7 +37,7 @@ void MhiPublishBridge::publish_status(const MhiStatusState& status) {
       changed = true;
     }
 
-    if (float_changed(targets_.climate->current_temperature, status.room_temp_c)) {
+    if (this->should_publish_climate_current_temperature_(status.room_temp_c, first_publish, status.last_update_ms)) {
       targets_.climate->current_temperature = status.room_temp_c;
       changed = true;
     }
@@ -371,7 +376,47 @@ bool MhiPublishBridge::float_changed(float old_value, float new_value) {
     return true;
   }
 
-  return std::fabs(old_value - new_value) >= 0.05f;
+  return old_value != new_value;
+}
+
+bool MhiPublishBridge::should_publish_climate_current_temperature_(float decoded_temp, bool first_publish,
+                                                                   uint32_t now_ms) {
+  if (first_publish || !this->has_climate_published_current_temp_) {
+    this->has_climate_published_current_temp_ = true;
+    this->climate_published_current_temp_ = decoded_temp;
+    this->last_climate_current_temp_publish_ms_ = now_ms;
+    return true;
+  }
+
+  if (!float_changed(this->climate_published_current_temp_, decoded_temp)) {
+    return false;
+  }
+
+  const float delta = std::fabs(decoded_temp - this->climate_published_current_temp_);
+  if (delta >= kClimateCurrentTempHighPriorityDeltaC) {
+    this->climate_published_current_temp_ = decoded_temp;
+    this->last_climate_current_temp_publish_ms_ = now_ms;
+    return true;
+  }
+
+  const bool interval_elapsed =
+      now_ms != 0U && this->last_climate_current_temp_publish_ms_ != 0U &&
+      (now_ms - this->last_climate_current_temp_publish_ms_) >= kClimateCurrentTempLowPriorityIntervalMs;
+  if (!interval_elapsed) {
+    return false;
+  }
+
+  this->climate_published_current_temp_ = decoded_temp;
+  this->last_climate_current_temp_publish_ms_ = now_ms;
+  return true;
+}
+
+void MhiPublishBridge::reset_publish_cache_() {
+  this->has_last_status_ = false;
+  this->has_last_opdata_ = false;
+  this->has_climate_published_current_temp_ = false;
+  this->climate_published_current_temp_ = 0.0f;
+  this->last_climate_current_temp_publish_ms_ = 0U;
 }
 
 }  // namespace mhi_ac_ctrl

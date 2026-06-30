@@ -1,6 +1,8 @@
 esphome:
   name: mhi-redux-compile-test
   friendly_name: MHI Redux Compile Test
+  includes:
+    - ../../../components/MhiAcCtrl/firmware_identity.h
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -36,6 +38,7 @@ climate:
     visual_min_temperature: 16
     visual_max_temperature: 31
     visual_temperature_step: 1
+
 
 sensor:
   - platform: MhiAcCtrl
@@ -96,6 +99,26 @@ text_sensor:
       name: MHI Error Code
     protection_state:
       name: MHI Protection State
+  - platform: template
+    name: Firmware ELF SHA256
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return firmware_elf_sha256();
+
+  - platform: template
+    name: Firmware App Description
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return firmware_app_description();
+
+  - platform: template
+    name: Firmware Running Partition
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return firmware_running_partition();
 
 select:
   - platform: MhiAcCtrl

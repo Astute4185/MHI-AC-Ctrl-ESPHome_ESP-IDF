@@ -267,3 +267,198 @@ void publish_bridge_publishes_sensor_parity_slice3_vane_feedback() {
 }
 
 }  // namespace mhi_unit_tests
+
+namespace mhi_unit_tests {
+
+void publish_bridge_suppresses_unchanged_sensor_republishes() {
+  MhiStateStore state{};
+
+  auto& opdata = state.opdata();
+  opdata.valid = true;
+  opdata.has_outdoor_temp = true;
+  opdata.outdoor_temp_c = 19.50f;
+
+  esphome::sensor::Sensor outdoor{};
+
+  MhiPublishTargets targets{};
+  targets.outdoor_temp_sensor = &outdoor;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+
+  bridge.publish(state);
+  bridge.publish(state);
+
+  EXPECT_EQ(outdoor.publish_count, 1U);
+  expect_near(outdoor.state, 19.50f);
+
+  opdata.outdoor_temp_c = 19.51f;
+  bridge.publish(state);
+
+  EXPECT_EQ(outdoor.publish_count, 2U);
+  expect_near(outdoor.state, 19.51f);
+}
+
+void publish_bridge_suppresses_alternating_climate_current_temperature_chatter() {
+  MhiStateStore state{};
+
+  auto& status = state.status();
+  status.valid = true;
+  status.power = false;
+  status.mode = 0U;
+  status.fan = 7U;
+  status.target_temp_c = 19.0f;
+  status.room_temp_c = 21.50f;
+  status.last_update_ms = 1000U;
+
+  esphome::climate::Climate climate{};
+
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 21.50f);
+
+  status.room_temp_c = 21.25f;
+  status.last_update_ms = 1200U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 21.50f);
+
+  status.room_temp_c = 21.50f;
+  status.last_update_ms = 1400U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 21.50f);
+
+  status.room_temp_c = 21.25f;
+  status.last_update_ms = 1600U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 21.50f);
+}
+
+void publish_bridge_rate_limits_low_priority_climate_current_temperature_change() {
+  MhiStateStore state{};
+
+  auto& status = state.status();
+  status.valid = true;
+  status.power = false;
+  status.mode = 0U;
+  status.fan = 7U;
+  status.target_temp_c = 19.0f;
+  status.room_temp_c = 21.50f;
+  status.last_update_ms = 1000U;
+
+  esphome::climate::Climate climate{};
+
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+
+  // Adjacent 0.25 C current-temperature changes are low priority and should
+  // not publish more than once per 15 seconds.
+  status.room_temp_c = 21.25f;
+  status.last_update_ms = 1200U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 21.50f);
+
+  status.room_temp_c = 21.25f;
+  status.last_update_ms = 15999U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 21.50f);
+
+  status.room_temp_c = 21.25f;
+  status.last_update_ms = 16000U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 2U);
+  expect_near(climate.current_temperature, 21.25f);
+}
+
+
+void publish_bridge_does_not_force_low_priority_current_temp_when_other_climate_fields_change() {
+  MhiStateStore state{};
+
+  auto& status = state.status();
+  status.valid = true;
+  status.power = true;
+  status.mode = 2U;
+  status.fan = 7U;
+  status.target_temp_c = 19.0f;
+  status.room_temp_c = 20.50f;
+  status.last_update_ms = 1000U;
+
+  esphome::climate::Climate climate{};
+
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+  expect_near(climate.current_temperature, 20.50f);
+
+  // A non-temperature climate change should still publish immediately, but it
+  // must not drag a low-priority 0.25 C current-temperature flicker with it.
+  status.target_temp_c = 20.0f;
+  status.room_temp_c = 20.25f;
+  status.last_update_ms = 1200U;
+  bridge.publish(state);
+
+  EXPECT_EQ(climate.publish_count, 2U);
+  expect_near(climate.target_temperature, 20.0f);
+  expect_near(climate.current_temperature, 20.50f);
+
+  status.room_temp_c = 20.25f;
+  status.last_update_ms = 16000U;
+  bridge.publish(state);
+
+  EXPECT_EQ(climate.publish_count, 3U);
+  expect_near(climate.current_temperature, 20.25f);
+}
+
+void publish_bridge_publishes_high_priority_climate_current_temperature_change_immediately() {
+  MhiStateStore state{};
+
+  auto& status = state.status();
+  status.valid = true;
+  status.power = false;
+  status.mode = 0U;
+  status.fan = 7U;
+  status.target_temp_c = 19.0f;
+  status.room_temp_c = 21.50f;
+  status.last_update_ms = 1000U;
+
+  esphome::climate::Climate climate{};
+
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 1U);
+
+  status.room_temp_c = 22.00f;
+  status.last_update_ms = 1200U;
+  bridge.publish(state);
+  EXPECT_EQ(climate.publish_count, 2U);
+  expect_near(climate.current_temperature, 22.00f);
+}
+
+
+}  // namespace mhi_unit_tests

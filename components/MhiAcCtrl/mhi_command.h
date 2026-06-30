@@ -25,6 +25,13 @@ struct MhiCommandIntent {
   uint8_t fan{0};
   float target_temp_c{0.0f};
   uint8_t vertical_vane{0};
+  uint8_t horizontal_vane{0};
+  bool three_d_auto{false};
+
+  // Extended-louver commands are a composite DB16/DB17 state on 33-byte frames.
+  // For 3D-only commands this captures the horizontal vane/swing state that must
+  // be preserved while changing only the 3D bit. horizontal_vane=8 means swing.
+  bool has_extended_louver_context{false};
 };
 
 struct MhiCommandState {

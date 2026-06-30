@@ -86,6 +86,7 @@ void tx_builder_uses_configured_sensor_parity_slice2_opdata_mask() {
   EXPECT_EQ(out.data[DB9], 0x81U);
 }
 
+
 }  // namespace mhi_unit_tests
 namespace mhi_unit_tests {
 
@@ -174,6 +175,61 @@ void tx_builder_applies_3d_auto_in_33_byte_frame() {
   EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_THREE_D_AUTO));
   EXPECT_EQ(result.unsupported_command_mask, 0U);
   EXPECT_EQ(out.data[DB17], static_cast<uint8_t>(0x0EU));
+  EXPECT_EQ(result.intent.mask, static_cast<uint32_t>(MHI_COMMAND_THREE_D_AUTO));
+  EXPECT_TRUE(result.intent.three_d_auto);
+  EXPECT_FALSE(command.has_pending_command());
+}
+
+void tx_builder_reports_horizontal_vane_intent_in_33_byte_frame() {
+  MhiCommandState command{};
+  command.horizontal_vane_set = true;
+  command.horizontal_vane = 4U;
+
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.frame_size = kMhiFrame33Bytes;
+
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+
+  EXPECT_EQ(out.len, kMhiFrame33Bytes);
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE));
+  EXPECT_EQ(result.intent.mask, static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE));
+  EXPECT_EQ(result.intent.horizontal_vane, 4U);
+  EXPECT_EQ(out.data[DB16], static_cast<uint8_t>(0x13U));
+  EXPECT_EQ(out.data[DB17], static_cast<uint8_t>(0x0AU));
+  EXPECT_FALSE(command.has_pending_command());
+}
+
+void tx_builder_preserves_horizontal_context_for_3d_auto_command() {
+  MhiCommandState command{};
+  command.three_d_auto_set = true;
+  command.three_d_auto = false;
+
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.frame_size = kMhiFrame33Bytes;
+  config.has_extended_louver_state = true;
+  config.extended_louver_db16 = 0x1FU;
+  config.extended_louver_db17 = 0x0FU;
+  config.extended_louver_horizontal_swing = true;
+  config.extended_louver_horizontal_vane = 0U;
+  config.extended_louver_three_d_auto = true;
+
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+
+  EXPECT_EQ(out.len, kMhiFrame33Bytes);
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_THREE_D_AUTO));
+  EXPECT_EQ(out.data[DB16], static_cast<uint8_t>(0x1FU));
+  EXPECT_EQ(out.data[DB17], static_cast<uint8_t>(0x0BU));
+  EXPECT_TRUE(result.intent.has_extended_louver_context);
+  EXPECT_EQ(result.intent.horizontal_vane, 8U);
+  EXPECT_FALSE(result.intent.three_d_auto);
   EXPECT_FALSE(command.has_pending_command());
 }
 

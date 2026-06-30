@@ -44,6 +44,16 @@ struct MhiTxRuntime {
 struct MhiTxBuildConfig {
   std::size_t frame_size{kMhiFrame20Bytes};
   uint32_t enabled_opdata_mask{kMhiDefaultOpdataMask};
+
+  // Last accepted 33-byte extended-louver feedback. DB16/DB17 carry a
+  // composite horizontal-vane / horizontal-swing / 3D-auto state; 3D-only
+  // commands must preserve the currently known horizontal part.
+  bool has_extended_louver_state{false};
+  uint8_t extended_louver_db16{0};
+  uint8_t extended_louver_db17{0x0A};
+  bool extended_louver_horizontal_swing{false};
+  uint8_t extended_louver_horizontal_vane{1};
+  bool extended_louver_three_d_auto{false};
 };
 
 struct MhiTxBuildResult {
@@ -74,7 +84,7 @@ class MhiTxBuilder {
   static void apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, uint32_t enabled_opdata_mask);
 
   static void apply_commands(MhiFrameBuffer& out, MhiCommandState& command, MhiTxRuntime& runtime,
-                             MhiTxBuildResult& result);
+                             const MhiTxBuildConfig& config, MhiTxBuildResult& result);
 
   static void apply_checksums(MhiFrameBuffer& out);
 

@@ -268,6 +268,9 @@ class MhiAcCtrl : public Component {
     return this->state_;
   }
 
+  bool request_horizontal_vane_command(uint8_t horizontal_vane);
+  bool request_three_d_auto_command(bool enabled);
+
   MhiDiagnostics& diagnostics() {
     return this->diagnostics_;
   }
@@ -282,6 +285,17 @@ class MhiAcCtrl : public Component {
   uint32_t drain_rx_worker_frames_(bool& state_changed);
   bool read_and_sync_rx_frame_();
   bool decode_frame_(const MhiFrameBuffer& frame);
+  bool apply_status_update_(const MhiDecodedStatus& decoded_status, const MhiFrameBuffer& frame);
+  bool apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, const MhiFrameBuffer& frame);
+  bool is_sane_status_(const MhiDecodedStatus& decoded_status, const MhiFrameBuffer& frame) const;
+  bool accept_extended_feedback_(const MhiDecodedStatus& decoded_status, const MhiFrameBuffer& frame);
+  bool extended_feedback_matches_pending_(const MhiDecodedStatus& decoded_status) const;
+  bool confirmed_extended_louver_matches_horizontal_(uint8_t horizontal_vane) const;
+  bool confirmed_extended_louver_matches_three_d_auto_(bool enabled) const;
+  void refresh_extended_louver_tx_context_();
+  void log_suspicious_status_change_(const char* field, int old_value, int new_value,
+                                     const MhiFrameBuffer& frame) const;
+  void log_rejected_opdata_(const char* field, float value, const MhiFrameBuffer& frame) const;
   void log_runtime_diagnostics_();
   void check_rx_worker_health_();
   void update_command_confirmation_(const MhiStatusState& status);
@@ -333,6 +347,23 @@ class MhiAcCtrl : public Component {
   bool rx_worker_startup_warning_logged_{false};
   bool rx_worker_stall_warning_logged_{false};
   bool rx_worker_not_draining_warning_logged_{false};
+
+  bool pending_extended_feedback_candidate_{false};
+  bool pending_extended_feedback_swing_{false};
+  uint8_t pending_extended_feedback_vane_{0};
+  bool pending_extended_feedback_3d_auto_{false};
+  uint8_t pending_extended_feedback_db16_{0};
+  uint8_t pending_extended_feedback_db17_{0};
+  uint8_t pending_extended_feedback_repeat_count_{0};
+  bool extended_louver_bootstrap_complete_{false};
+  uint32_t settled_extended_confirmation_mask_{0};
+
+  uint32_t last_protocol_health_valid_frames_{0};
+  uint32_t last_protocol_health_invalid_frames_{0};
+  uint32_t last_protocol_health_checksum_failures_{0};
+  uint32_t last_protocol_health_signature_misses_{0};
+  uint32_t last_protocol_health_sync_losses_{0};
+  uint32_t last_protocol_health_dropped_bytes_{0};
 
   uint32_t last_diag_log_ms_{0};
 };

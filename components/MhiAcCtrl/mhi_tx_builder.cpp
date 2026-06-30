@@ -104,7 +104,7 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
   out.data[DB14] = static_cast<uint8_t>(runtime.double_frame ? 0x04U : 0x00U);
 
   apply_opdata_request(out, runtime, config.enabled_opdata_mask);
-  apply_commands(out, command, runtime, result);
+  apply_commands(out, command, runtime, config, result);
   apply_checksums(out);
 
   return true;
@@ -163,7 +163,7 @@ void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runti
 }
 
 void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command, MhiTxRuntime& runtime,
-                                  MhiTxBuildResult& result) {
+                                  const MhiTxBuildConfig& config, MhiTxBuildResult& result) {
   if (runtime.double_frame) {
     out.data[DB0] = 0x00U;
     out.data[DB1] = 0x00U;
@@ -241,22 +241,51 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
     out.data[DB16] = 0x00U;
     out.data[DB17] = 0x00U;
 
+    const bool use_preserved_louver =
+        command.three_d_auto_set && !command.horizontal_vane_set && config.has_extended_louver_state;
+
+    if (use_preserved_louver) {
+      out.data[DB16] = config.extended_louver_db16;
+      out.data[DB17] = config.extended_louver_db17;
+      result.intent.horizontal_vane =
+          config.extended_louver_horizontal_swing ? 8U : config.extended_louver_horizontal_vane;
+      result.intent.has_extended_louver_context = true;
+    }
+
     if (command.horizontal_vane_set) {
+      result.intent.horizontal_vane = command.horizontal_vane;
+      result.intent.has_extended_louver_context = true;
+
       if (command.horizontal_vane == 8U) {
-        out.data[DB17] |= 0x0BU;
+        // Horizontal swing is a composite extended-louver state. DB16 may be
+        // returned by the AC with the previous/live position, so DB17 carries
+        // the authoritative swing flag while DB16 is left neutral in TX.
+        out.data[DB17] = 0x0BU;
       } else if (command.horizontal_vane >= 1U && command.horizontal_vane <= 7U) {
-        out.data[DB16] |= static_cast<uint8_t>(0x10U | (command.horizontal_vane - 1U));
-        out.data[DB17] |= 0x0AU;
+        out.data[DB16] = static_cast<uint8_t>(0x10U | (command.horizontal_vane - 1U));
+        out.data[DB17] = 0x0AU;
       }
 
       command.horizontal_vane_set = false;
       result.encoded_command_mask |= MHI_COMMAND_HORIZONTAL_VANE;
+      result.intent.mask |= MHI_COMMAND_HORIZONTAL_VANE;
     }
 
     if (command.three_d_auto_set) {
-      out.data[DB17] |= static_cast<uint8_t>(0x0AU | (command.three_d_auto ? 0x04U : 0x00U));
+      if (!use_preserved_louver && !result.intent.has_extended_louver_context) {
+        result.intent.horizontal_vane = 1U;
+      }
+
+      out.data[DB17] = static_cast<uint8_t>((out.data[DB17] & ~0x04U) | (command.three_d_auto ? 0x04U : 0x00U));
+
+      if ((out.data[DB17] & 0x0BU) == 0U) {
+        out.data[DB17] |= 0x0AU;
+      }
+
+      result.intent.three_d_auto = command.three_d_auto;
       command.three_d_auto_set = false;
       result.encoded_command_mask |= MHI_COMMAND_THREE_D_AUTO;
+      result.intent.mask |= MHI_COMMAND_THREE_D_AUTO;
     }
   } else {
     if (command.horizontal_vane_set) {
