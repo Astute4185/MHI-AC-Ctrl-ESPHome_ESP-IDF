@@ -47,6 +47,34 @@ inline bool timeout_expired(uint32_t start_ms, uint32_t max_time_ms, uint32_t& s
 
 #if MHI_USE_FAST_GPIO
 
+#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2)
+
+inline bool IRAM_ATTR fast_gpio_read(int pin) {
+  if (pin < 0 || pin >= 32) {
+    return false;
+  }
+
+  return ((GPIO.in.val >> pin) & 0x1U) != 0U;
+}
+
+inline void IRAM_ATTR fast_gpio_write_high(int pin) {
+  if (pin < 0 || pin >= 32) {
+    return;
+  }
+
+  GPIO.out_w1ts.val = (1UL << pin);
+}
+
+inline void IRAM_ATTR fast_gpio_write_low(int pin) {
+  if (pin < 0 || pin >= 32) {
+    return;
+  }
+
+  GPIO.out_w1tc.val = (1UL << pin);
+}
+
+#else
+
 inline bool IRAM_ATTR fast_gpio_read(int pin) {
   if (pin < 32) {
     return ((GPIO.in >> pin) & 0x1U) != 0U;
@@ -70,6 +98,8 @@ inline void IRAM_ATTR fast_gpio_write_low(int pin) {
     GPIO.out1_w1tc.val = (1UL << (pin - 32));
   }
 }
+
+#endif
 
 #else
 
