@@ -1,4 +1,3 @@
-#if defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)
 #include "mhi_fast_gpio_tx_driver.h"
 
 #include <driver/gpio.h>
@@ -24,7 +23,7 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-static const char* const FAST_GPIO_TX_TAG = "mhi_fast_gpio_tx";
+static const char* const TAG = "mhi_fast_gpio_tx";
 
 namespace {
 
@@ -160,7 +159,7 @@ bool MhiFastGpioTxDriver::setup(const MhiTransportPins& pins) {
   pins_ = pins;
 
   if (pins_.sck < 0 || pins_.miso < 0) {
-    ESP_LOGE(FAST_GPIO_TX_TAG, "FastGPIO TX setup failed: invalid pins SCK=%d MISO=%d", pins_.sck, pins_.miso);
+    ESP_LOGE(TAG, "FastGPIO TX setup failed: invalid pins SCK=%d MISO=%d", pins_.sck, pins_.miso);
     ready_ = false;
     return false;
   }
@@ -174,7 +173,7 @@ bool MhiFastGpioTxDriver::setup(const MhiTransportPins& pins) {
 
   ready_ = true;
 
-  ESP_LOGCONFIG(FAST_GPIO_TX_TAG, "FastGPIO TX-only driver ready: SCK=%d MISO=%d", pins_.sck, pins_.miso);
+  ESP_LOGCONFIG(TAG, "FastGPIO TX-only driver ready: SCK=%d MISO=%d", pins_.sck, pins_.miso);
   return true;
 }
 
@@ -209,7 +208,7 @@ bool MhiFastGpioTxDriver::transmit_frame_(const uint8_t* data, std::size_t len) 
 
     if (timeout_expired(start_ms, config_.max_exchange_time_ms, spin_counter)) {
       fast_gpio_write_low(pins_.miso);
-      ESP_LOGD(FAST_GPIO_TX_TAG, "TX-only frame timeout waiting for idle-high SCK");
+      ESP_LOGD(TAG, "TX-only frame timeout waiting for idle-high SCK");
       return false;
     }
   }
@@ -227,7 +226,7 @@ bool MhiFastGpioTxDriver::transmit_frame_(const uint8_t* data, std::size_t len) 
 
     if (rc < 0) {
       fast_gpio_write_low(pins_.miso);
-      ESP_LOGD(FAST_GPIO_TX_TAG, "TX-only frame timeout index=%u rc=%d", static_cast<unsigned int>(index), rc);
+      ESP_LOGD(TAG, "TX-only frame timeout index=%u rc=%d", static_cast<unsigned int>(index), rc);
       return false;
     }
   }
@@ -238,5 +237,3 @@ bool MhiFastGpioTxDriver::transmit_frame_(const uint8_t* data, std::size_t len) 
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
-
-#endif  // defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)

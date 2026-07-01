@@ -1,4 +1,3 @@
-#if defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)
 #include "mhi_external_clock_rx_driver.h"
 
 #include <algorithm>
@@ -370,5 +369,3 @@ std::size_t MhiExternalClockRxDriver::expected_frame_size_() const {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
-
-#endif  // defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)

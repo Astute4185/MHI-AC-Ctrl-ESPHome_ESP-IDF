@@ -1,4 +1,3 @@
-#if defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)
 #include "mhi_null_tx_driver.h"
 
 #include "esphome/core/hal.h"
@@ -34,5 +33,3 @@ bool MhiNullTxDriver::send(const uint8_t* data, std::size_t len) {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
-
-#endif  // defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)

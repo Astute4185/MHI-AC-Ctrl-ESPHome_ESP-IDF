@@ -3,17 +3,6 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
-// ESPHome external component builds do not always discover newly-added helper
-// .cpp files. Compile the S3-only experimental driver implementations through
-// this known translation unit so experimental S3 drivers link deterministically.
-#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
-#define MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL 1
-#include "mhi_external_clock_rx_driver.cpp"
-#include "mhi_fast_gpio_tx_driver.cpp"
-#include "mhi_native_spi_rx_driver.cpp"
-#include "mhi_null_tx_driver.cpp"
-#endif
-
 namespace esphome {
 namespace mhi_ac_ctrl {
 
@@ -36,16 +25,21 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   fast_gpio_config.frame_start_idle_ms = frame_start_idle_ms;
   fast_gpio_.set_config(fast_gpio_config);
 
-#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#if MHI_ENABLE_SPLIT_TX_DRIVER
   MhiFastGpioTxConfig fast_gpio_tx_config{};
   fast_gpio_tx_config.frame_size_hint = frame_size_hint;
   fast_gpio_tx_config.frame_start_idle_ms = frame_start_idle_ms;
   fast_gpio_tx_.set_config(fast_gpio_tx_config);
 
+#endif
+
+#if MHI_ENABLE_NATIVE_SPI_RX_DRIVER
   MhiNativeSpiRxConfig native_spi_rx_config{};
   native_spi_rx_config.frame_size_hint = frame_size_hint;
   native_spi_rx_.set_config(native_spi_rx_config);
+#endif
 
+#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxConfig external_clock_rx_config{};
   external_clock_rx_config.frame_size_hint = frame_size_hint;
   external_clock_rx_config.byte_gap_reset_us = external_clock_byte_gap_us;
@@ -67,13 +61,16 @@ void MhiTransportManager::resolve_drivers() {
     return;
   }
 
-#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#if MHI_ENABLE_NATIVE_SPI_RX_DRIVER
   if (rx_driver_name_ == "native_spi_rx" && tx_driver_name_ == "fast_gpio") {
     rx_ = &native_spi_rx_;
     tx_ = &fast_gpio_tx_;
     return;
   }
 
+#endif
+
+#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "none") {
     rx_ = &external_clock_rx_;
     tx_ = &null_tx_;
@@ -84,8 +81,14 @@ void MhiTransportManager::resolve_drivers() {
     ESP_LOGW(TAG, "external_clock_rx + fast_gpio TX is intentionally blocked; use tx_driver: none for RX validation");
   }
 #else
-  if (rx_driver_name_ == "native_spi_rx" || rx_driver_name_ == "external_clock_rx") {
-    ESP_LOGW(TAG, "%s is only built for ESP32-S3; falling back to fast_gpio", rx_driver_name_.c_str());
+  if (rx_driver_name_ == "external_clock_rx") {
+    ESP_LOGW(TAG, "external_clock_rx is only built for ESP32 and ESP32-S3; falling back to fast_gpio");
+  }
+#endif
+
+#if !MHI_ENABLE_NATIVE_SPI_RX_DRIVER
+  if (rx_driver_name_ == "native_spi_rx") {
+    ESP_LOGW(TAG, "native_spi_rx is only built for ESP32-S3; falling back to fast_gpio");
   }
 #endif
 
@@ -181,7 +184,7 @@ bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
 
   const bool ok = tx_->send(data, len);
 
-#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#if MHI_ENABLE_SPLIT_TX_DRIVER
   const bool tx_disabled = tx_ == &null_tx_;
 #else
   const bool tx_disabled = false;
@@ -201,7 +204,7 @@ bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
 void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
   fast_gpio_.set_rx_byte_critical_sections(enabled);
 
-#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#if MHI_ENABLE_SPLIT_TX_DRIVER
   fast_gpio_tx_.set_byte_critical_sections(enabled);
 #endif
 }

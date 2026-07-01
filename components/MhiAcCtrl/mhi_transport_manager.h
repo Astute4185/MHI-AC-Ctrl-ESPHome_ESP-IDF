@@ -16,16 +16,26 @@
 
 #if defined(USE_ESP_IDF) && defined(CONFIG_IDF_TARGET_ESP32S3)
 #define MHI_ENABLE_EXPERIMENTAL_S3_DRIVER 1
-#include "mhi_external_clock_rx_driver.h"
-#include "mhi_fast_gpio_tx_driver.h"
-#include "mhi_native_spi_rx_driver.h"
-#include "mhi_null_tx_driver.h"
 #else
 #define MHI_ENABLE_EXPERIMENTAL_S3_DRIVER 0
 #endif
 
+#if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
+#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 1
+#define MHI_ENABLE_SPLIT_TX_DRIVER 1
+#include "mhi_external_clock_rx_driver.h"
+#include "mhi_fast_gpio_tx_driver.h"
+#include "mhi_null_tx_driver.h"
+#else
+#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 0
+#define MHI_ENABLE_SPLIT_TX_DRIVER 0
+#endif
+
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#include "mhi_native_spi_rx_driver.h"
+#endif
+
 #define MHI_ENABLE_NATIVE_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -69,11 +79,15 @@ class MhiTransportManager {
   std::string tx_driver_name_{"fast_gpio"};
 
   MhiFastGpioDriver fast_gpio_{};
-#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#if MHI_ENABLE_SPLIT_TX_DRIVER
   MhiFastGpioTxDriver fast_gpio_tx_{};
-  MhiNativeSpiRxDriver native_spi_rx_{};
-  MhiExternalClockRxDriver external_clock_rx_{};
   MhiNullTxDriver null_tx_{};
+#endif
+#if MHI_ENABLE_NATIVE_SPI_RX_DRIVER
+  MhiNativeSpiRxDriver native_spi_rx_{};
+#endif
+#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
+  MhiExternalClockRxDriver external_clock_rx_{};
 #endif
 
   IMhiRxDriver* rx_{&fast_gpio_};

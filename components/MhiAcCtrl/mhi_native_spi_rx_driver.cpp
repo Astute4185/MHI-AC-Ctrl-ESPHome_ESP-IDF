@@ -1,4 +1,3 @@
-#if defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)
 #include "mhi_native_spi_rx_driver.h"
 
 #include <algorithm>
@@ -14,18 +13,18 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-static const char* const NATIVE_SPI_RX_TAG = "mhi_native_spi_rx";
+static const char* const TAG = "mhi_native_spi_rx";
 
 bool MhiNativeSpiRxDriver::setup(const MhiTransportPins& pins) {
   pins_ = pins;
 
 #ifndef USE_ESP_IDF
-  ESP_LOGE(NATIVE_SPI_RX_TAG, "native SPI RX requires ESP-IDF");
+  ESP_LOGE(TAG, "native SPI RX requires ESP-IDF");
   ready_ = false;
   return false;
 #else
   if (pins_.sck < 0 || pins_.mosi < 0) {
-    ESP_LOGE(NATIVE_SPI_RX_TAG, "Native SPI RX setup failed: invalid pins SCK=%d MOSI=%d", pins_.sck, pins_.mosi);
+    ESP_LOGE(TAG, "Native SPI RX setup failed: invalid pins SCK=%d MOSI=%d", pins_.sck, pins_.mosi);
     ready_ = false;
     return false;
   }
@@ -46,7 +45,7 @@ bool MhiNativeSpiRxDriver::setup(const MhiTransportPins& pins) {
 
   const esp_err_t init_result = spi_slave_initialize(this->host_, &bus_config, &slave_config, SPI_DMA_DISABLED);
   if (init_result != ESP_OK) {
-    ESP_LOGE(NATIVE_SPI_RX_TAG, "spi_slave_initialize failed with CS=-1: %s", esp_err_to_name(init_result));
+    ESP_LOGE(TAG, "spi_slave_initialize failed with CS=-1: %s", esp_err_to_name(init_result));
     ready_ = false;
     return false;
   }
@@ -62,7 +61,7 @@ bool MhiNativeSpiRxDriver::setup(const MhiTransportPins& pins) {
 
   ready_ = true;
 
-  ESP_LOGW(NATIVE_SPI_RX_TAG,
+  ESP_LOGW(TAG,
            "Native SPI RX probe enabled: host=SPI2 SCK=%d MOSI=%d MISO=disabled CS=-1 mode=3 capture=%u bytes. "
            "This is experimental because the ESP-IDF slave driver is still transaction/CS oriented.",
            pins_.sck, pins_.mosi, static_cast<unsigned int>(kCaptureBytes));
@@ -88,12 +87,12 @@ void MhiNativeSpiRxDriver::loop() {
     }
 
     if (result != ESP_OK) {
-      ESP_LOGW(NATIVE_SPI_RX_TAG, "spi_slave_get_trans_result failed: %s", esp_err_to_name(result));
+      ESP_LOGW(TAG, "spi_slave_get_trans_result failed: %s", esp_err_to_name(result));
       break;
     }
 
     if (completed == nullptr || completed->user == nullptr) {
-      ESP_LOGW(NATIVE_SPI_RX_TAG, "native SPI RX completed transaction missing user slot");
+      ESP_LOGW(TAG, "native SPI RX completed transaction missing user slot");
       break;
     }
 
@@ -119,7 +118,7 @@ void MhiNativeSpiRxDriver::loop() {
   const uint32_t now = millis();
   if (last_diag_log_ms_ == 0U || (now - last_diag_log_ms_) >= 30000U) {
     last_diag_log_ms_ = now;
-    ESP_LOGI(NATIVE_SPI_RX_TAG, "probe: completed=%lu zero_len=%lu queued_errors=%lu buffered=%u dropped=%lu",
+    ESP_LOGI(TAG, "probe: completed=%lu zero_len=%lu queued_errors=%lu buffered=%u dropped=%lu",
              static_cast<unsigned long>(completed_transactions_), static_cast<unsigned long>(zero_length_transactions_),
              static_cast<unsigned long>(queue_errors_), static_cast<unsigned int>(ring_available_()),
              static_cast<unsigned long>(dropped_bytes_));
@@ -156,7 +155,7 @@ bool MhiNativeSpiRxDriver::queue_slot_(TransactionSlot& slot) {
   const esp_err_t result = spi_slave_queue_trans(this->host_, &slot.transaction, 0);
   if (result != ESP_OK) {
     queue_errors_++;
-    ESP_LOGW(NATIVE_SPI_RX_TAG, "spi_slave_queue_trans failed: %s", esp_err_to_name(result));
+    ESP_LOGW(TAG, "spi_slave_queue_trans failed: %s", esp_err_to_name(result));
     return false;
   }
 
@@ -191,5 +190,3 @@ std::size_t MhiNativeSpiRxDriver::ring_available_() const {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
-
-#endif  // defined(MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL)
