@@ -14,8 +14,9 @@ namespace mhi_ac_ctrl {
 
 struct MhiFastGpioConfig {
   uint8_t frame_size_hint{20};
-  uint32_t frame_start_idle_ms{5};
+  uint32_t frame_start_idle_ms{10};
   uint32_t max_exchange_time_ms{50};
+  bool rx_byte_critical_sections{true};
 };
 
 enum class MhiFastGpioExchangeStatus : int {
@@ -30,6 +31,14 @@ class MhiFastGpioDriver final : public IMhiRxDriver, public IMhiTxDriver {
  public:
   void set_config(const MhiFastGpioConfig& config) {
     config_ = config;
+  }
+
+  void set_rx_byte_critical_sections(bool enabled) {
+    config_.rx_byte_critical_sections = enabled;
+  }
+
+  bool rx_byte_critical_sections() const {
+    return config_.rx_byte_critical_sections;
   }
 
   bool setup(const MhiTransportPins& pins) override;

@@ -108,6 +108,13 @@ void frame_sync_records_checksum_failure_stats() {
   EXPECT_EQ(snapshot.checksum_failures, 1U);
   EXPECT_EQ(snapshot.sync_losses, 1U);
   EXPECT_TRUE(snapshot.dropped_bytes >= 1U);
+  EXPECT_EQ(snapshot.checksum_failure_samples, 1U);
+  EXPECT_EQ(snapshot.last_checksum_failure_sample_len, frame.len);
+  EXPECT_EQ(snapshot.last_checksum_failure_sample[SB0], frame.data[SB0]);
+  EXPECT_EQ(snapshot.last_checksum_signature_offset, 0U);
+  EXPECT_EQ(snapshot.last_checksum_next_signature_offset, 255U);
+  EXPECT_EQ(snapshot.last_checksum_actual_20,
+            static_cast<uint16_t>((static_cast<uint16_t>(frame.data[CBH]) << 8U) | frame.data[CBL]));
 }
 
 void frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise() {

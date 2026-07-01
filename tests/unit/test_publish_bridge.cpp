@@ -9,7 +9,7 @@ void publish_bridge_republishes_cached_state_after_targets_are_registered() {
   status.valid = true;
   status.power = true;
   status.mode = 2U;
-  status.fan = 3U;
+  status.fan = 2U;
   status.target_temp_c = 22.0f;
   status.room_temp_c = 24.0f;
   status.vertical_vane = 3U;

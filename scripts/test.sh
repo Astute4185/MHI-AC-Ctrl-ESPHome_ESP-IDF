@@ -27,8 +27,6 @@ CXX="${CXX:-g++}"
   tests/unit/test_tx_builder.cpp \
   tests/unit/test_command_confirmation.cpp \
   tests/unit/test_diag.cpp \
-  tests/unit/test_rx_frame_queue.cpp \
-  tests/unit/test_rx_worker_mode.cpp \
   tests/unit/test_fixtures.cpp \
   components/MhiAcCtrl/mhi_checksum.cpp \
   components/MhiAcCtrl/mhi_diag.cpp \
@@ -39,7 +37,6 @@ CXX="${CXX:-g++}"
   components/MhiAcCtrl/mhi_publish_bridge.cpp \
   components/MhiAcCtrl/mhi_status_decoder.cpp \
   components/MhiAcCtrl/mhi_stats.cpp \
-  components/MhiAcCtrl/mhi_rx_worker_mode.cpp \
   components/MhiAcCtrl/mhi_tx_builder.cpp \
   -o "${BUILD_DIR}/mhi_protocol_tests"
 

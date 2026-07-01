@@ -177,6 +177,7 @@ void MhiFrameSync::record_signature_miss_() {
     return;
   }
 
+  stats_->on_signature_miss_sample(buffer_, buffer_len_);
   stats_->on_signature_miss();
   stats_->on_dropped_bytes(1U);
 }
@@ -186,6 +187,12 @@ void MhiFrameSync::record_checksum_failure_() {
     return;
   }
 
+  const uint16_t expected_20 = mhi_calc_checksum(buffer_);
+  const uint16_t actual_20 = static_cast<uint16_t>((static_cast<uint16_t>(buffer_[CBH]) << 8U) | buffer_[CBL]);
+  const uint16_t expected_33 = mhi_calc_checksum_frame33(buffer_);
+  const uint8_t actual_33 = buffer_[CBL2];
+
+  stats_->on_checksum_failure_sample(buffer_, buffer_len_, expected_20, actual_20, expected_33, actual_33);
   stats_->on_invalid_frame();
   stats_->on_checksum_failure();
   stats_->on_sync_loss();

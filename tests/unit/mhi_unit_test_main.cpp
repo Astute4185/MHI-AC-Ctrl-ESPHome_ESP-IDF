@@ -55,7 +55,7 @@ int main() {
 
   command_confirmation_confirms_power_mode_and_vertical_vane();
   command_confirmation_keeps_partial_pending_until_later_status();
-  command_confirmation_ignores_auto_fan_because_mosi_does_not_confirm_it();
+  command_confirmation_confirms_auto_fan();
   command_confirmation_confirms_supported_fan_codes();
   command_confirmation_times_out_unconfirmed_commands();
   command_confirmation_detects_duplicate_pending_commands();
@@ -72,15 +72,8 @@ int main() {
   diagnostics_snapshot_reports_command_event_ages();
   diagnostics_snapshot_reports_command_confirmation_event_ages();
   diagnostics_snapshot_reports_loop_budget_timing();
-  diagnostics_snapshot_reports_rx_worker_timing();
-  diagnostics_snapshot_reports_rx_worker_health_counters();
   diagnostics_snapshot_handles_missing_event_ages();
 
-  rx_worker_mode_resolves_auto_by_core_count();
-  rx_worker_mode_allows_explicit_override();
-  rx_worker_mode_reports_config_names();
-  rx_frame_queue_preserves_fifo_order();
-  rx_frame_queue_rejects_overflow_and_invalid_inputs();
 
   fixture_valid_status_frame_decodes();
   fixture_bad_checksum_rejects();

@@ -149,9 +149,6 @@ uint8_t MhiClimate::mode_to_mhi_(climate::ClimateMode mode) const {
 
 uint8_t MhiClimate::fan_to_mhi_(climate::ClimateFanMode fan) const {
   switch (fan) {
-    case climate::CLIMATE_FAN_QUIET:
-      return 0U;
-
     case climate::CLIMATE_FAN_LOW:
       return 1U;
 
@@ -225,7 +222,6 @@ climate::ClimateTraits MhiClimate::traits() {
 
   traits.set_supported_fan_modes({
       climate::CLIMATE_FAN_AUTO,
-      climate::CLIMATE_FAN_QUIET,
       climate::CLIMATE_FAN_LOW,
       climate::CLIMATE_FAN_MEDIUM,
       climate::CLIMATE_FAN_HIGH,
@@ -263,7 +259,6 @@ climate::ClimateTraits MhiClimate::traits() {
 
   traits.set_supported_fan_modes({
       climate::CLIMATE_FAN_AUTO,
-      climate::CLIMATE_FAN_QUIET,
       climate::CLIMATE_FAN_LOW,
       climate::CLIMATE_FAN_MEDIUM,
       climate::CLIMATE_FAN_HIGH,

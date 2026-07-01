@@ -18,8 +18,6 @@
 #include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
 #include "mhi_publish_bridge.h"
-#include "mhi_rx_frame_queue.h"
-#include "mhi_rx_worker_mode.h"
 #include "mhi_status_decoder.h"
 #include "mhi_tx_builder.h"
 
@@ -66,7 +64,7 @@ inline MhiFrameBuffer make_mosi_status_frame() {
   frame.data[SB2] = kMhiMosiSignature2;
 
   frame.data[DB0] = 0x09;  // power on, mode cool: DB0[4:2] = 2.
-  frame.data[DB1] = 0x21;  // fan 2, vertical vane position 3.
+  frame.data[DB1] = 0x22;  // raw fan code 2 / Medium, vertical vane position 3.
   frame.data[DB2] = 44;    // 22.0 C target.
   frame.data[DB3] = 157;   // 24.0 C room: (157 - 61) / 4.
   frame.data[DB4] = 0x00;
@@ -232,7 +230,7 @@ void tx_builder_preserves_horizontal_context_for_3d_auto_command();
 
 void command_confirmation_confirms_power_mode_and_vertical_vane();
 void command_confirmation_keeps_partial_pending_until_later_status();
-void command_confirmation_ignores_auto_fan_because_mosi_does_not_confirm_it();
+void command_confirmation_confirms_auto_fan();
 void command_confirmation_confirms_supported_fan_codes();
 void command_confirmation_times_out_unconfirmed_commands();
 void command_confirmation_detects_duplicate_pending_commands();
@@ -249,16 +247,9 @@ void diagnostics_snapshot_reports_event_ages();
 void diagnostics_snapshot_reports_command_event_ages();
 void diagnostics_snapshot_reports_command_confirmation_event_ages();
 void diagnostics_snapshot_reports_loop_budget_timing();
-void diagnostics_snapshot_reports_rx_worker_timing();
-void diagnostics_snapshot_reports_rx_worker_health_counters();
 void diagnostics_snapshot_handles_missing_event_ages();
 
-void rx_worker_mode_resolves_auto_by_core_count();
-void rx_worker_mode_allows_explicit_override();
-void rx_worker_mode_reports_config_names();
 
-void rx_frame_queue_preserves_fifo_order();
-void rx_frame_queue_rejects_overflow_and_invalid_inputs();
 
 void fixture_valid_status_frame_decodes();
 void fixture_bad_checksum_rejects();

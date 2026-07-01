@@ -17,8 +17,6 @@
 #include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
 #include "mhi_publish_bridge.h"
-#include "mhi_rx_worker.h"
-#include "mhi_rx_worker_mode.h"
 #include "mhi_state.h"
 #include "mhi_status_decoder.h"
 #include "mhi_transport_manager.h"
@@ -60,24 +58,10 @@ class MhiAcCtrl : public Component {
     this->tx_driver_ = driver;
   }
 
-  void set_rx_worker_enabled(bool enabled) {
-    this->rx_worker_mode_ = enabled ? MhiRxWorkerMode::ENABLED : MhiRxWorkerMode::DISABLED;
-  }
-
-  void set_rx_worker_mode_auto() {
-    this->rx_worker_mode_ = MhiRxWorkerMode::AUTO;
-  }
-
-  void set_rx_worker_mode_enabled() {
-    this->rx_worker_mode_ = MhiRxWorkerMode::ENABLED;
-  }
-
-  void set_rx_worker_mode_disabled() {
-    this->rx_worker_mode_ = MhiRxWorkerMode::DISABLED;
-  }
-
-  void set_rx_worker_mode(MhiRxWorkerMode mode) {
-    this->rx_worker_mode_ = mode;
+  void set_frame_start_idle_ms(int idle_ms) {
+    if (idle_ms > 0) {
+      this->frame_start_idle_ms_ = static_cast<uint32_t>(idle_ms);
+    }
   }
 
   // Compatibility with current __init__.py plumbing.
@@ -282,7 +266,6 @@ class MhiAcCtrl : public Component {
   void refresh_publish_targets_();
   void build_and_stage_tx_frame_();
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
-  uint32_t drain_rx_worker_frames_(bool& state_changed);
   bool read_and_sync_rx_frame_();
   bool decode_frame_(const MhiFrameBuffer& frame);
   bool apply_status_update_(const MhiDecodedStatus& decoded_status, const MhiFrameBuffer& frame);
@@ -297,7 +280,6 @@ class MhiAcCtrl : public Component {
                                      const MhiFrameBuffer& frame) const;
   void log_rejected_opdata_(const char* field, float value, const MhiFrameBuffer& frame) const;
   void log_runtime_diagnostics_();
-  void check_rx_worker_health_();
   void update_command_confirmation_(const MhiStatusState& status);
   void check_command_confirmation_timeout_();
   void suppress_duplicate_pending_commands_();
@@ -323,7 +305,6 @@ class MhiAcCtrl : public Component {
   MhiStateStore state_{};
   MhiFrameSync frame_sync_{};
   MhiTransportManager transport_{};
-  MhiRxWorker rx_worker_{};
   MhiDiagnostics diagnostics_{};
 
   MhiPublishTargets publish_targets_{};
@@ -333,20 +314,9 @@ class MhiAcCtrl : public Component {
   MhiTxBuildConfig tx_config_{};
   MhiCommandConfirmation command_confirmation_{};
 
-  MhiRxWorkerMode rx_worker_mode_{MhiRxWorkerMode::AUTO};
-  bool rx_worker_enabled_{false};
-  bool using_rx_worker_{false};
-  uint8_t chip_core_count_{1};
+  uint32_t frame_start_idle_ms_{10U};
+  bool rx_byte_critical_sections_enabled_{true};
   bool publish_requested_{false};
-
-  uint32_t rx_worker_started_ms_{0};
-  uint32_t last_rx_worker_health_check_ms_{0};
-  uint32_t last_rx_worker_health_frames_{0};
-  uint32_t last_rx_worker_health_drained_frames_{0};
-  uint32_t last_rx_worker_health_overflows_{0};
-  bool rx_worker_startup_warning_logged_{false};
-  bool rx_worker_stall_warning_logged_{false};
-  bool rx_worker_not_draining_warning_logged_{false};
 
   bool pending_extended_feedback_candidate_{false};
   bool pending_extended_feedback_swing_{false};

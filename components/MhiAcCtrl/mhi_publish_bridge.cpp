@@ -266,14 +266,14 @@ climate::ClimateMode MhiPublishBridge::map_climate_mode(bool power, uint8_t mode
 
 climate::ClimateFanMode MhiPublishBridge::map_climate_fan(uint8_t fan) {
   switch (fan) {
+    case 0U:
     case 1U:
-      return climate::CLIMATE_FAN_QUIET;
-    case 2U:
       return climate::CLIMATE_FAN_LOW;
-    case 3U:
+    case 2U:
       return climate::CLIMATE_FAN_MEDIUM;
-    case 4U:
+    case 6U:
       return climate::CLIMATE_FAN_HIGH;
+    case 7U:
     default:
       return climate::CLIMATE_FAN_AUTO;
   }
@@ -329,14 +329,15 @@ const char* MhiPublishBridge::map_horizontal_vane_option(const MhiStatusState& s
 
 const char* MhiPublishBridge::map_fan_option(uint8_t fan) {
   switch (fan) {
+    case 0U:
     case 1U:
-      return "Quiet";
-    case 2U:
       return "Low";
-    case 3U:
+    case 2U:
       return "Medium";
-    case 4U:
+    case 6U:
       return "High";
+    case 7U:
+      return "Auto";
     default:
       return nullptr;
   }

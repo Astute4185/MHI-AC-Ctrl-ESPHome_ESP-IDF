@@ -30,7 +30,6 @@ ICON_LEFT_RIGHT = "mdi:arrow-left-right"
 CONF_FAN_SPEED = "fan_speed"
 CONF_FAN_SPEED_SELECTS = [
     "Auto",
-    "Quiet",
     "Low",
     "Medium",
     "High",

@@ -14,7 +14,7 @@ CONF_MOSI_PIN = "mosi_pin"
 CONF_MISO_PIN = "miso_pin"
 CONF_RX_DRIVER = "rx_driver"
 CONF_TX_DRIVER = "tx_driver"
-CONF_RX_WORKER = "rx_worker"
+CONF_FRAME_START_IDLE_MS = "frame_start_idle_ms"
 
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
@@ -25,25 +25,6 @@ AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor"]
 
 mhi_ns = cg.esphome_ns.namespace("mhi_ac_ctrl")
 MhiAcCtrl = mhi_ns.class_("MhiAcCtrl", cg.Component)
-
-
-def validate_rx_worker_mode(value):
-    if value is None:
-        return "auto"
-
-    if isinstance(value, bool):
-        return "enabled" if value else "disabled"
-
-    value = str(value).lower().strip()
-
-    if value in ("auto", "automatic", "null", "none"):
-        return "auto"
-    if value in ("true", "on", "yes", "enable", "enabled"):
-        return "enabled"
-    if value in ("false", "off", "no", "disable", "disabled"):
-        return "disabled"
-
-    raise cv.Invalid("rx_worker must be auto/null, true, or false")
 
 
 SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Action)
@@ -63,7 +44,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MISO_PIN): cv.int_,
         cv.Optional(CONF_RX_DRIVER, default="fast_gpio"): cv.one_of("fast_gpio", lower=True),
         cv.Optional(CONF_TX_DRIVER, default="fast_gpio"): cv.one_of("fast_gpio", lower=True),
-        cv.Optional(CONF_RX_WORKER, default="auto"): validate_rx_worker_mode,
+        cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -76,14 +57,7 @@ async def to_code(config):
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
-    rx_worker_mode = config[CONF_RX_WORKER]
-    if rx_worker_mode == "enabled":
-        cg.add(var.set_rx_worker_mode_enabled())
-    elif rx_worker_mode == "disabled":
-        cg.add(var.set_rx_worker_mode_disabled())
-    else:
-        cg.add(var.set_rx_worker_mode_auto())
-
+    cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))

@@ -55,9 +55,6 @@ MhiAcCtrl:
   # Keeping it explicit makes future driver/backend testing easier.
   rx_driver: fast_gpio
   tx_driver: fast_gpio
-  # rx_worker is optional. Omitted means auto:
-  # - multi-core chips: enabled
-  # - single-core chips: disabled
 
 climate:
   - platform: MhiAcCtrl

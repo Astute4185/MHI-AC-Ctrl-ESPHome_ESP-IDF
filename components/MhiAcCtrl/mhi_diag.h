@@ -26,12 +26,6 @@ struct MhiDiagSnapshot {
   uint32_t last_command_confirmation_age_ms{0};
   uint32_t last_command_confirmation_timeout_age_ms{0};
   uint32_t last_loop_over_budget_age_ms{0};
-  uint32_t last_rx_worker_frame_age_ms{0};
-  uint32_t last_rx_worker_drained_frame_age_ms{0};
-  uint32_t last_rx_worker_queue_overflow_age_ms{0};
-  uint32_t last_rx_worker_no_frame_window_age_ms{0};
-  uint32_t last_rx_worker_stall_age_ms{0};
-  uint32_t last_rx_worker_not_draining_age_ms{0};
 };
 
 class MhiDiagnostics {

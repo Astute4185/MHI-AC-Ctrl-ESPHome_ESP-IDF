@@ -9,7 +9,8 @@ namespace mhi_ac_ctrl {
 static const char* const TAG = "mhi_transport";
 
 void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver,
-                                    const std::string& tx_driver, uint8_t frame_size_hint) {
+                                    const std::string& tx_driver, uint8_t frame_size_hint,
+                                    uint32_t frame_start_idle_ms) {
   pins_.sck = sck_pin;
   pins_.mosi = mosi_pin;
   pins_.miso = miso_pin;
@@ -19,6 +20,7 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
 
   MhiFastGpioConfig fast_gpio_config{};
   fast_gpio_config.frame_size_hint = frame_size_hint;
+  fast_gpio_config.frame_start_idle_ms = frame_start_idle_ms;
   fast_gpio_.set_config(fast_gpio_config);
 
   this->resolve_drivers();
@@ -112,6 +114,14 @@ bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
   }
 
   return ok;
+}
+
+void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
+  fast_gpio_.set_rx_byte_critical_sections(enabled);
+}
+
+bool MhiTransportManager::rx_byte_critical_sections() const {
+  return fast_gpio_.rx_byte_critical_sections();
 }
 
 const char* MhiTransportManager::rx_name() const {

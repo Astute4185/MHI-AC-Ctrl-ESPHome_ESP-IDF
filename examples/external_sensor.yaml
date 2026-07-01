@@ -43,14 +43,18 @@ external_components:
 
 MhiAcCtrl:
   id: mhi_ac
+  # Set to 20 for older units.
+  # Set to 33 for newer WF-RAC compatible units that expose 3D Auto and left/right vanes.
+  # If you see checksum/signature failures, verify frame_size first.
   frame_size: 33
   # Update these pins to match your hardware.
   sck_pin: 14
   mosi_pin: 13
   miso_pin: 12
+  # FastGPIO is the currently validated transport backend.
+  # Keeping it explicit makes future driver/backend testing easier.
   rx_driver: fast_gpio
   tx_driver: fast_gpio
-  rx_worker: auto
   external_temperature_sensor: room_temperature_sensor
   room_temp_timeout: 60
 

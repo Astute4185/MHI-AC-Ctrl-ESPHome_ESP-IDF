@@ -49,7 +49,7 @@ void command_confirmation_keeps_partial_pending_until_later_status() {
   EXPECT_FALSE(confirmation.has_pending());
 }
 
-void command_confirmation_ignores_auto_fan_because_mosi_does_not_confirm_it() {
+void command_confirmation_confirms_auto_fan() {
   MhiCommandConfirmation confirmation{};
 
   MhiCommandIntent intent{};
@@ -57,6 +57,13 @@ void command_confirmation_ignores_auto_fan_because_mosi_does_not_confirm_it() {
   intent.fan = 7U;
 
   confirmation.stage(intent, intent.mask, 1000U);
+  EXPECT_EQ(confirmation.pending_mask(), static_cast<uint32_t>(MHI_COMMAND_FAN));
+
+  MhiStatusState status{};
+  status.valid = true;
+  status.fan = 7U;
+
+  EXPECT_EQ(confirmation.observe_status(status), static_cast<uint32_t>(MHI_COMMAND_FAN));
   EXPECT_FALSE(confirmation.has_pending());
 }
 
@@ -72,7 +79,7 @@ void command_confirmation_confirms_supported_fan_codes() {
 
   MhiStatusState status{};
   status.valid = true;
-  status.fan = 4U;
+  status.fan = 6U;
 
   EXPECT_EQ(confirmation.observe_status(status), static_cast<uint32_t>(MHI_COMMAND_FAN));
   EXPECT_FALSE(confirmation.has_pending());
@@ -119,7 +126,7 @@ void command_confirmation_detects_duplicate_pending_commands() {
   EXPECT_EQ(confirmation.duplicate_pending_mask(duplicate),
             static_cast<uint32_t>(MHI_COMMAND_FAN | MHI_COMMAND_TARGET_TEMP));
 
-  duplicate.fan = 1U;
+  duplicate.fan = 2U;
   EXPECT_EQ(confirmation.duplicate_pending_mask(duplicate), static_cast<uint32_t>(MHI_COMMAND_TARGET_TEMP));
 }
 

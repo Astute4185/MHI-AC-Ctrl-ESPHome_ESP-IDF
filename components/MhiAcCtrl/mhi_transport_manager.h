@@ -16,7 +16,7 @@ namespace mhi_ac_ctrl {
 class MhiTransportManager {
  public:
   void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
-                 uint8_t frame_size_hint = 20U);
+                 uint8_t frame_size_hint = 20U, uint32_t frame_start_idle_ms = 10U);
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -27,6 +27,8 @@ class MhiTransportManager {
 
   std::size_t read_rx(uint8_t* dst, std::size_t max_len);
   bool send_tx(const uint8_t* data, std::size_t len);
+  void set_rx_byte_critical_sections(bool enabled);
+  bool rx_byte_critical_sections() const;
 
   const char* rx_name() const;
   const char* tx_name() const;

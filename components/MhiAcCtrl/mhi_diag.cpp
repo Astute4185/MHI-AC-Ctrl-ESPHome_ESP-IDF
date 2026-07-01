@@ -40,12 +40,6 @@ MhiDiagSnapshot MhiDiagnostics::snapshot(uint32_t now_ms) const {
   out.last_command_confirmation_age_ms = age_or_zero(now_ms, out.stats.last_command_confirmation_ms);
   out.last_command_confirmation_timeout_age_ms = age_or_zero(now_ms, out.stats.last_command_confirmation_timeout_ms);
   out.last_loop_over_budget_age_ms = age_or_zero(now_ms, out.stats.last_loop_over_budget_ms);
-  out.last_rx_worker_frame_age_ms = age_or_zero(now_ms, out.stats.last_rx_worker_frame_ms);
-  out.last_rx_worker_drained_frame_age_ms = age_or_zero(now_ms, out.stats.last_rx_worker_drained_frame_ms);
-  out.last_rx_worker_queue_overflow_age_ms = age_or_zero(now_ms, out.stats.last_rx_worker_queue_overflow_ms);
-  out.last_rx_worker_no_frame_window_age_ms = age_or_zero(now_ms, out.stats.last_rx_worker_no_frame_window_ms);
-  out.last_rx_worker_stall_age_ms = age_or_zero(now_ms, out.stats.last_rx_worker_stall_ms);
-  out.last_rx_worker_not_draining_age_ms = age_or_zero(now_ms, out.stats.last_rx_worker_not_draining_ms);
 
   return out;
 }

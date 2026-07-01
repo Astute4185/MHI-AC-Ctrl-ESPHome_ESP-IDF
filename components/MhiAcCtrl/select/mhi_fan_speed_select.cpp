@@ -10,7 +10,6 @@ static const char* const TAG = "mhi.select.fan";
 namespace {
 
 static constexpr const char* const kFanAuto = "Auto";
-static constexpr const char* const kFanQuiet = "Quiet";
 static constexpr const char* const kFanLow = "Low";
 static constexpr const char* const kFanMedium = "Medium";
 static constexpr const char* const kFanHigh = "High";
@@ -44,10 +43,6 @@ void MhiFanSpeedSelect::control(const std::string& value) {
 }
 
 uint8_t MhiFanSpeedSelect::fan_code_from_name_(const std::string& value) {
-  if (value == kFanQuiet) {
-    return 0U;
-  }
-
   if (value == kFanLow) {
     return 1U;
   }

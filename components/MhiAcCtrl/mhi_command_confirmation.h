@@ -231,22 +231,11 @@ class MhiCommandConfirmation {
   }
 
   static bool fan_command_confirmable(uint8_t command_fan) {
-    return command_fan == 0U || command_fan == 1U || command_fan == 2U || command_fan == 6U;
+    return command_fan == 0U || command_fan == 1U || command_fan == 2U || command_fan == 6U || command_fan == 7U;
   }
 
   static uint8_t expected_status_fan(uint8_t command_fan) {
-    switch (command_fan) {
-      case 0U:
-        return 1U;
-      case 1U:
-        return 2U;
-      case 2U:
-        return 3U;
-      case 6U:
-        return 4U;
-      default:
-        return 0U;
-    }
+    return command_fan;
   }
 
   static bool float_matches(float actual, float expected) {

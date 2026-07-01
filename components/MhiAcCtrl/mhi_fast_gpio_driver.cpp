@@ -250,10 +250,16 @@ MhiFastGpioExchangeStatus MhiFastGpioDriver::exchange_frame(uint8_t* rx_frame, s
     // and Wi-Fi for one whole bus frame. Byte-bounded locking gives pending
     // interrupts a chance to run between bytes while preserving the tight
     // CPHA=1 timing inside each byte.
-    portENTER_CRITICAL(&g_mhi_fast_gpio_mux);
-    const int rc = read_one_byte_fast_gpio(pins_.sck, pins_.mosi, pins_.miso, tx_byte, &rx_byte, start_ms,
-                                           config_.max_exchange_time_ms);
-    portEXIT_CRITICAL(&g_mhi_fast_gpio_mux);
+    int rc = 0;
+    if (config_.rx_byte_critical_sections) {
+      portENTER_CRITICAL(&g_mhi_fast_gpio_mux);
+      rc = read_one_byte_fast_gpio(pins_.sck, pins_.mosi, pins_.miso, tx_byte, &rx_byte, start_ms,
+                                   config_.max_exchange_time_ms);
+      portEXIT_CRITICAL(&g_mhi_fast_gpio_mux);
+    } else {
+      rc = read_one_byte_fast_gpio(pins_.sck, pins_.mosi, pins_.miso, tx_byte, &rx_byte, start_ms,
+                                   config_.max_exchange_time_ms);
+    }
 
     if (rc < 0) {
       fast_gpio_write_low(pins_.miso);

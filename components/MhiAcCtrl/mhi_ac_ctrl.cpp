@@ -3,10 +3,6 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
-#if defined(USE_ESP32)
-#include "esp_chip_info.h"
-#endif
-
 namespace esphome {
 namespace mhi_ac_ctrl {
 
@@ -14,16 +10,7 @@ static const char* const TAG = "mhi_ac_ctrl";
 static const char* const DIAG_TAG = "mhi.diag";
 static constexpr uint32_t kDiagLogIntervalMs = 30000U;
 static constexpr uint32_t kLoopBudgetUs = 30000U;
-static constexpr uint32_t kMaxWorkerFramesPerLoop = 4U;
-static constexpr uint32_t kRxWorkerHealthCheckIntervalMs = 1000U;
-static constexpr uint32_t kRxWorkerStartupGraceMs = 10000U;
-static constexpr uint32_t kRxWorkerStallWarnMs = 3000U;
-static constexpr uint32_t kRxWorkerNotDrainingWarnMs = 3000U;
-static constexpr uint32_t kRxWorkerFrameAgeHealthyMs = 5000U;
 static constexpr uint32_t kNoPendingExtendedFeedbackMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
-static constexpr uint8_t kStableStartupExtendedFeedbackRepeats = 3U;
-static constexpr uint32_t kExtendedLouverBootstrapDelayMs = kRxWorkerStartupGraceMs;
-static constexpr uint8_t kStableCommandExtendedFeedbackRepeats = 3U;
 
 namespace {
 
@@ -108,14 +95,6 @@ void MhiAcCtrl::setup() {
   this->command_confirmation_.reset();
   this->frame_sync_.set_stats(&this->diagnostics_.stats());
   this->last_diag_log_ms_ = 0U;
-  this->rx_worker_started_ms_ = 0U;
-  this->last_rx_worker_health_check_ms_ = 0U;
-  this->last_rx_worker_health_frames_ = 0U;
-  this->last_rx_worker_health_drained_frames_ = 0U;
-  this->last_rx_worker_health_overflows_ = 0U;
-  this->rx_worker_startup_warning_logged_ = false;
-  this->rx_worker_stall_warning_logged_ = false;
-  this->rx_worker_not_draining_warning_logged_ = false;
   this->pending_extended_feedback_candidate_ = false;
   this->pending_extended_feedback_swing_ = false;
   this->pending_extended_feedback_vane_ = 0U;
@@ -131,9 +110,6 @@ void MhiAcCtrl::setup() {
   this->last_protocol_health_sync_losses_ = 0U;
   this->last_protocol_health_dropped_bytes_ = 0U;
 
-  this->chip_core_count_ = detect_chip_core_count_();
-  this->rx_worker_enabled_ = mhi_rx_worker_mode_resolves_enabled(this->rx_worker_mode_, this->chip_core_count_);
-
   this->tx_config_.frame_size = this->frame_size_ == 33 ? kMhiFrame33Bytes : kMhiFrame20Bytes;
 
   this->tx_config_.enabled_opdata_mask = this->opdata_mask_;
@@ -145,32 +121,19 @@ void MhiAcCtrl::setup() {
   this->transport_.set_diagnostics(&this->diagnostics_);
 
   this->transport_.configure(this->pins_.sck, this->pins_.mosi, this->pins_.miso, this->rx_driver_, this->tx_driver_,
-                             static_cast<uint8_t>(this->frame_size_));
+                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_);
+
+  this->rx_byte_critical_sections_enabled_ = true;
+  this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);
 
   this->transport_.setup();
 
-  this->using_rx_worker_ = false;
-
-  if (this->rx_worker_enabled_) {
-    this->rx_worker_.configure(&this->transport_, &this->diagnostics_.stats(), static_cast<uint8_t>(this->frame_size_));
-    this->using_rx_worker_ = this->rx_worker_.start();
-
-    if (this->using_rx_worker_) {
-      this->rx_worker_started_ms_ = millis();
-      ESP_LOGCONFIG(TAG, "RX worker active: queue-backed FastGPIO sampling");
-    } else {
-      ESP_LOGW(TAG, "RX worker failed to start; falling back to synchronous RX sampling");
-    }
-  } else {
-    ESP_LOGCONFIG(TAG, "RX worker disabled; using synchronous FastGPIO sampling");
-  }
+  ESP_LOGCONFIG(TAG, "RX mode: synchronous FastGPIO sampling");
 }
 
 void MhiAcCtrl::loop() {
   const uint32_t loop_start_us = micros();
   bool state_changed = false;
-  uint32_t drained_rx_frames = 0U;
-
   uint32_t section_start_us = loop_start_us;
   this->transport_.loop();
   const uint32_t transport_loop_us = elapsed_us_(section_start_us);
@@ -178,25 +141,13 @@ void MhiAcCtrl::loop() {
   uint32_t tx_stage_us = 0U;
   uint32_t rx_read_sync_us = 0U;
 
-  if (this->using_rx_worker_) {
-    section_start_us = micros();
-    drained_rx_frames = this->drain_rx_worker_frames_(state_changed);
-    rx_read_sync_us = elapsed_us_(section_start_us);
+  section_start_us = micros();
+  this->build_and_stage_tx_frame_();
+  tx_stage_us = elapsed_us_(section_start_us);
 
-    if (drained_rx_frames > 0U) {
-      section_start_us = micros();
-      this->build_and_stage_tx_frame_();
-      tx_stage_us = elapsed_us_(section_start_us);
-    }
-  } else {
-    section_start_us = micros();
-    this->build_and_stage_tx_frame_();
-    tx_stage_us = elapsed_us_(section_start_us);
-
-    section_start_us = micros();
-    state_changed = this->read_and_sync_rx_frame_();
-    rx_read_sync_us = elapsed_us_(section_start_us);
-  }
+  section_start_us = micros();
+  state_changed = this->read_and_sync_rx_frame_();
+  rx_read_sync_us = elapsed_us_(section_start_us);
 
   section_start_us = micros();
   if (state_changed || this->publish_requested_) {
@@ -213,7 +164,6 @@ void MhiAcCtrl::loop() {
   this->diagnostics_.stats().on_loop_timing(loop_us, transport_loop_us, tx_stage_us, rx_read_sync_us, publish_us,
                                             command_housekeeping_us, kLoopBudgetUs, millis());
 
-  this->check_rx_worker_health_();
   this->log_runtime_diagnostics_();
 }
 
@@ -230,93 +180,10 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
   ESP_LOGCONFIG(TAG, "  RX ready: %s", diag.rx_driver_ready ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  TX ready: %s", diag.tx_driver_ready ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX worker mode: %s", mhi_rx_worker_mode_to_string(this->rx_worker_mode_));
-  ESP_LOGCONFIG(TAG, "  Chip cores: %u", static_cast<unsigned int>(this->chip_core_count_));
-  ESP_LOGCONFIG(TAG, "  RX worker configured: %s", this->rx_worker_enabled_ ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX worker resolved: %s", this->rx_worker_enabled_ ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX worker active: %s", this->using_rx_worker_ ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX worker startup grace: %lums", static_cast<unsigned long>(kRxWorkerStartupGraceMs));
-  ESP_LOGCONFIG(TAG, "  RX worker stall warning: %lums", static_cast<unsigned long>(kRxWorkerStallWarnMs));
+  ESP_LOGCONFIG(TAG, "  RX mode: synchronous FastGPIO");
+  ESP_LOGCONFIG(TAG, "  Frame start idle: %lums", static_cast<unsigned long>(this->frame_start_idle_ms_));
+  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
-}
-
-void MhiAcCtrl::check_rx_worker_health_() {
-  if (!this->using_rx_worker_) {
-    return;
-  }
-
-  const uint32_t now = millis();
-
-  if (this->last_rx_worker_health_check_ms_ != 0U &&
-      (now - this->last_rx_worker_health_check_ms_) < kRxWorkerHealthCheckIntervalMs) {
-    return;
-  }
-
-  this->last_rx_worker_health_check_ms_ = now;
-
-  const auto stats = this->diagnostics_.stats().snapshot();
-  const bool startup_grace_expired =
-      this->rx_worker_started_ms_ != 0U && (now - this->rx_worker_started_ms_) >= kRxWorkerStartupGraceMs;
-
-  const uint32_t frame_age_ms = stats.last_rx_worker_frame_ms == 0U || now < stats.last_rx_worker_frame_ms
-                                    ? 0U
-                                    : now - stats.last_rx_worker_frame_ms;
-  const uint32_t drain_age_ms =
-      stats.last_rx_worker_drained_frame_ms == 0U || now < stats.last_rx_worker_drained_frame_ms
-          ? 0U
-          : now - stats.last_rx_worker_drained_frame_ms;
-
-  const bool no_frames = startup_grace_expired && stats.rx_worker_frames == 0U;
-  const bool stalled = startup_grace_expired && stats.rx_worker_frames > 0U &&
-                       stats.rx_worker_frames == this->last_rx_worker_health_frames_ &&
-                       frame_age_ms >= kRxWorkerStallWarnMs;
-  const bool not_draining = startup_grace_expired && stats.rx_worker_queue_depth > 0U &&
-                            stats.rx_worker_drained_frames == this->last_rx_worker_health_drained_frames_ &&
-                            drain_age_ms >= kRxWorkerNotDrainingWarnMs;
-  const bool overflow_increased = stats.rx_worker_queue_overflows > this->last_rx_worker_health_overflows_;
-
-  this->diagnostics_.stats().on_rx_worker_health_check(no_frames, stalled, not_draining, now);
-
-  if (no_frames && !this->rx_worker_startup_warning_logged_) {
-    this->rx_worker_startup_warning_logged_ = true;
-    ESP_LOGW(DIAG_TAG, "rx_worker: enabled but no frames after startup grace (%lums)",
-             static_cast<unsigned long>(kRxWorkerStartupGraceMs));
-  }
-
-  if (stalled && !this->rx_worker_stall_warning_logged_) {
-    this->rx_worker_stall_warning_logged_ = true;
-    ESP_LOGW(DIAG_TAG, "rx_worker: stalled, no new frames for %lums frames=%lu drained=%lu",
-             static_cast<unsigned long>(frame_age_ms), static_cast<unsigned long>(stats.rx_worker_frames),
-             static_cast<unsigned long>(stats.rx_worker_drained_frames));
-  }
-
-  if (not_draining && !this->rx_worker_not_draining_warning_logged_) {
-    this->rx_worker_not_draining_warning_logged_ = true;
-    ESP_LOGW(DIAG_TAG, "rx_worker: queue not draining for %lums depth=%lu frames=%lu drained=%lu",
-             static_cast<unsigned long>(drain_age_ms), static_cast<unsigned long>(stats.rx_worker_queue_depth),
-             static_cast<unsigned long>(stats.rx_worker_frames),
-             static_cast<unsigned long>(stats.rx_worker_drained_frames));
-  }
-
-  if (overflow_increased) {
-    ESP_LOGW(DIAG_TAG, "rx_worker: queue overflow count increased total=%lu depth=%lu max_depth=%lu",
-             static_cast<unsigned long>(stats.rx_worker_queue_overflows),
-             static_cast<unsigned long>(stats.rx_worker_queue_depth),
-             static_cast<unsigned long>(stats.rx_worker_queue_max_depth));
-  }
-
-  if (stats.rx_worker_frames > this->last_rx_worker_health_frames_) {
-    this->rx_worker_stall_warning_logged_ = false;
-  }
-
-  if (stats.rx_worker_drained_frames > this->last_rx_worker_health_drained_frames_ ||
-      stats.rx_worker_queue_depth == 0U) {
-    this->rx_worker_not_draining_warning_logged_ = false;
-  }
-
-  this->last_rx_worker_health_frames_ = stats.rx_worker_frames;
-  this->last_rx_worker_health_drained_frames_ = stats.rx_worker_drained_frames;
-  this->last_rx_worker_health_overflows_ = stats.rx_worker_queue_overflows;
 }
 
 void MhiAcCtrl::log_runtime_diagnostics_() {
@@ -375,6 +242,64 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
              static_cast<unsigned long>(delta_sync_losses), static_cast<unsigned long>(delta_dropped_bytes));
   }
 
+  if (delta_checksum_failures > 0U && stats.last_checksum_failure_sample_len > 0U) {
+    ESP_LOGW(DIAG_TAG,
+             "runtime: checksum_sample samples=%lu len=%u b=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x "
+             "%02x %02x expected20=0x%04x actual20=0x%04x expected33=0x%04x actual33=0x%02x",
+             static_cast<unsigned long>(stats.checksum_failure_samples),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample_len),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[0]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[1]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[2]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[3]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[4]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[5]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[6]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[7]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[8]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[9]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[10]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[11]),
+             static_cast<unsigned int>(stats.last_checksum_expected_20),
+             static_cast<unsigned int>(stats.last_checksum_actual_20),
+             static_cast<unsigned int>(stats.last_checksum_expected_33),
+             static_cast<unsigned int>(stats.last_checksum_actual_33));
+
+    ESP_LOGW(DIAG_TAG,
+             "runtime: checksum_detail sig0=%u next_sig=%u cbh=0x%02x cbl=0x%02x db15=0x%02x db16=0x%02x "
+             "db17=0x%02x cbl2=0x%02x",
+             static_cast<unsigned int>(stats.last_checksum_signature_offset),
+             static_cast<unsigned int>(stats.last_checksum_next_signature_offset),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[CBH]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[CBL]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[DB15]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[DB16]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[DB17]),
+             static_cast<unsigned int>(stats.last_checksum_failure_sample[CBL2]));
+  }
+
+  if (delta_signature_misses > 0U && stats.last_signature_miss_sample_len > 0U) {
+    ESP_LOGW(DIAG_TAG,
+             "runtime: signature_sample samples=%lu len=%u b=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x "
+             "%02x %02x",
+             static_cast<unsigned long>(stats.signature_miss_samples),
+             static_cast<unsigned int>(stats.last_signature_miss_sample_len),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[0]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[1]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[2]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[3]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[4]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[5]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[6]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[7]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[8]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[9]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[10]),
+             static_cast<unsigned int>(stats.last_signature_miss_sample[11]));
+    ESP_LOGW(DIAG_TAG, "runtime: signature_detail sig_offset=%u",
+             static_cast<unsigned int>(stats.last_signature_miss_signature_offset));
+  }
+
   this->last_protocol_health_valid_frames_ = stats.valid_frames;
   this->last_protocol_health_invalid_frames_ = stats.invalid_frames;
   this->last_protocol_health_checksum_failures_ = stats.checksum_failures;
@@ -424,54 +349,10 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
       static_cast<unsigned long>(stats.command_housekeeping_last_us),
       static_cast<unsigned long>(stats.command_housekeeping_avg_us),
       static_cast<unsigned long>(stats.command_housekeeping_max_us));
-
-  ESP_LOGI(DIAG_TAG,
-           "runtime: rx_worker samples=%lu frames=%lu drained=%lu queue_depth=%lu queue_max=%lu queue_overflows=%lu "
-           "last_frame_age_ms=%lu last_overflow_age_ms=%lu",
-           static_cast<unsigned long>(stats.rx_worker_samples), static_cast<unsigned long>(stats.rx_worker_frames),
-           static_cast<unsigned long>(stats.rx_worker_drained_frames),
-           static_cast<unsigned long>(stats.rx_worker_queue_depth),
-           static_cast<unsigned long>(stats.rx_worker_queue_max_depth),
-           static_cast<unsigned long>(stats.rx_worker_queue_overflows),
-           static_cast<unsigned long>(diag.last_rx_worker_frame_age_ms),
-           static_cast<unsigned long>(diag.last_rx_worker_queue_overflow_age_ms));
-
-  ESP_LOGI(DIAG_TAG, "runtime: rx_worker_us last=%lu avg=%lu max=%lu",
-           static_cast<unsigned long>(stats.rx_worker_last_us), static_cast<unsigned long>(stats.rx_worker_avg_us),
-           static_cast<unsigned long>(stats.rx_worker_max_us));
-
-  const bool worker_startup_grace_expired = this->using_rx_worker_ && this->rx_worker_started_ms_ != 0U &&
-                                            (now - this->rx_worker_started_ms_) >= kRxWorkerStartupGraceMs;
-  const bool worker_healthy = this->using_rx_worker_ && stats.rx_worker_frames > 0U &&
-                              stats.rx_worker_queue_overflows == 0U &&
-                              diag.last_rx_worker_frame_age_ms < kRxWorkerFrameAgeHealthyMs;
-
-  ESP_LOGI(DIAG_TAG,
-           "runtime: rx_worker_task_health active=%s healthy=%s startup_grace_expired=%s "
-           "health_checks=%lu no_frame_windows=%lu stalls=%lu not_draining=%lu "
-           "last_drain_age_ms=%lu last_stall_age_ms=%lu last_not_draining_age_ms=%lu",
-           this->using_rx_worker_ ? "YES" : "NO", worker_healthy ? "YES" : "NO",
-           worker_startup_grace_expired ? "YES" : "NO", static_cast<unsigned long>(stats.rx_worker_health_checks),
-           static_cast<unsigned long>(stats.rx_worker_no_frame_windows),
-           static_cast<unsigned long>(stats.rx_worker_stalls),
-           static_cast<unsigned long>(stats.rx_worker_not_draining_windows),
-           static_cast<unsigned long>(diag.last_rx_worker_drained_frame_age_ms),
-           static_cast<unsigned long>(diag.last_rx_worker_stall_age_ms),
-           static_cast<unsigned long>(diag.last_rx_worker_not_draining_age_ms));
 }
 
 uint32_t MhiAcCtrl::elapsed_us_(uint32_t start_us) {
   return static_cast<uint32_t>(micros() - start_us);
-}
-
-uint8_t MhiAcCtrl::detect_chip_core_count_() {
-#if defined(USE_ESP32)
-  esp_chip_info_t chip_info{};
-  esp_chip_info(&chip_info);
-  return static_cast<uint8_t>(chip_info.cores);
-#else
-  return 1U;
-#endif
 }
 
 bool MhiAcCtrl::confirmed_extended_louver_matches_horizontal_(uint8_t horizontal_vane) const {
@@ -559,33 +440,6 @@ void MhiAcCtrl::record_tx_build_result_(const MhiTxBuildResult& result, const Mh
     ESP_LOGW(DIAG_TAG, "command: unsupported mask=0x%08lx frame_size=%u; command dropped",
              static_cast<unsigned long>(result.unsupported_command_mask), static_cast<unsigned int>(frame.len));
   }
-}
-
-uint32_t MhiAcCtrl::drain_rx_worker_frames_(bool& state_changed) {
-  uint32_t drained = 0U;
-  MhiFrameBuffer raw_frame{};
-
-  while (drained < kMaxWorkerFramesPerLoop && this->rx_worker_.pop_frame(raw_frame)) {
-    drained++;
-
-    if (raw_frame.len == 0U) {
-      continue;
-    }
-
-    this->frame_sync_.push_bytes(raw_frame.data, raw_frame.len);
-
-    MhiFrameBuffer frame{};
-
-    while (this->frame_sync_.pop_frame(frame)) {
-      this->diagnostics_.stats().on_valid_frame(millis());
-
-      if (this->decode_frame_(frame)) {
-        state_changed = true;
-      }
-    }
-  }
-
-  return drained;
 }
 
 bool MhiAcCtrl::read_and_sync_rx_frame_() {
@@ -874,7 +728,9 @@ bool MhiAcCtrl::is_sane_status_(const MhiDecodedStatus& decoded_status, const Mh
     return false;
   }
 
-  if (decoded_status.mode > 4U || decoded_status.fan > 4U || decoded_status.vertical_vane > 4U) {
+  const bool fan_ok = decoded_status.fan == 0U || decoded_status.fan == 1U || decoded_status.fan == 2U ||
+                      decoded_status.fan == 6U || decoded_status.fan == 7U;
+  if (decoded_status.mode > 4U || !fan_ok || decoded_status.vertical_vane > 4U) {
     ESP_LOGW(DIAG_TAG,
              "decode_reject: field=status_enum mode=%u fan=%u vertical=%u len=%u db0=0x%02x "
              "db1=0x%02x db2=0x%02x db3=0x%02x db6=0x%02x db9=0x%02x",
@@ -904,183 +760,19 @@ bool MhiAcCtrl::is_sane_status_(const MhiDecodedStatus& decoded_status, const Mh
 }
 
 bool MhiAcCtrl::accept_extended_feedback_(const MhiDecodedStatus& decoded_status, const MhiFrameBuffer& frame) {
+  (void)frame;
+
   if (!decoded_status.has_horizontal_vane && !decoded_status.has_3d_auto) {
     this->pending_extended_feedback_candidate_ = false;
     this->pending_extended_feedback_repeat_count_ = 0U;
     return false;
   }
 
-  if (!this->using_rx_worker_) {
-    this->pending_extended_feedback_candidate_ = false;
-    this->pending_extended_feedback_repeat_count_ = 0U;
-    return true;
-  }
-
-  const uint32_t confirmation_pending = this->command_confirmation_.pending_mask() & kNoPendingExtendedFeedbackMask;
-  const uint32_t queued_pending = this->state_.command().pending_command_mask() & kNoPendingExtendedFeedbackMask;
-  const uint32_t pending_mask = confirmation_pending | queued_pending;
-
-  const uint8_t db16 = frame.len > DB16 ? frame.data[DB16] : 0U;
-  const uint8_t db17 = frame.len > DB17 ? frame.data[DB17] : 0U;
-  const uint32_t now = millis();
-
-  if (confirmation_pending != 0U) {
-    const bool matches_pending = this->extended_feedback_matches_pending_(decoded_status);
-    const bool same_candidate = this->pending_extended_feedback_candidate_ &&
-                                this->pending_extended_feedback_swing_ == decoded_status.horizontal_swing &&
-                                this->pending_extended_feedback_vane_ == decoded_status.horizontal_vane &&
-                                this->pending_extended_feedback_3d_auto_ == decoded_status.three_d_auto &&
-                                this->pending_extended_feedback_db16_ == db16 &&
-                                this->pending_extended_feedback_db17_ == db17;
-
-    if (same_candidate) {
-      if (this->pending_extended_feedback_repeat_count_ < 255U) {
-        this->pending_extended_feedback_repeat_count_++;
-      }
-    } else {
-      this->pending_extended_feedback_candidate_ = true;
-      this->pending_extended_feedback_swing_ = decoded_status.horizontal_swing;
-      this->pending_extended_feedback_vane_ = decoded_status.horizontal_vane;
-      this->pending_extended_feedback_3d_auto_ = decoded_status.three_d_auto;
-      this->pending_extended_feedback_db16_ = db16;
-      this->pending_extended_feedback_db17_ = db17;
-      this->pending_extended_feedback_repeat_count_ = 1U;
-    }
-
-    const uint32_t pending_age_ms = this->command_confirmation_.pending_age_ms(now);
-    const bool settle_delay_elapsed = pending_age_ms >= kMhiExtendedLouverSettleDelayMs;
-
-    if (settle_delay_elapsed &&
-        this->pending_extended_feedback_repeat_count_ >= kStableCommandExtendedFeedbackRepeats) {
-      this->settled_extended_confirmation_mask_ |= confirmation_pending;
-
-      ESP_LOGI(DIAG_TAG,
-               "decode_filter: accepted settled worker extended feedback vane=%u swing=%s 3d=%s len=%u "
-               "db9=0x%02x db16=0x%02x db17=0x%02x pending=0x%08lx repeats=%u age_ms=%lu "
-               "matches_pending=%s",
-               static_cast<unsigned int>(decoded_status.horizontal_vane),
-               decoded_status.horizontal_swing ? "YES" : "NO", decoded_status.three_d_auto ? "YES" : "NO",
-               static_cast<unsigned int>(frame.len), frame.data[DB9], db16, db17,
-               static_cast<unsigned long>(pending_mask),
-               static_cast<unsigned int>(this->pending_extended_feedback_repeat_count_),
-               static_cast<unsigned long>(pending_age_ms), matches_pending ? "YES" : "NO");
-
-      this->pending_extended_feedback_candidate_ = false;
-      this->pending_extended_feedback_repeat_count_ = 0U;
-      return true;
-    }
-
-    ESP_LOGD(DIAG_TAG,
-             "decode_filter: held settling worker extended feedback vane=%u swing=%s 3d=%s len=%u "
-             "db9=0x%02x db16=0x%02x db17=0x%02x pending=0x%08lx repeats=%u age_ms=%lu "
-             "settle_elapsed=%s matches_pending=%s",
-             static_cast<unsigned int>(decoded_status.horizontal_vane), decoded_status.horizontal_swing ? "YES" : "NO",
-             decoded_status.three_d_auto ? "YES" : "NO", static_cast<unsigned int>(frame.len), frame.data[DB9], db16,
-             db17, static_cast<unsigned long>(pending_mask),
-             static_cast<unsigned int>(this->pending_extended_feedback_repeat_count_),
-             static_cast<unsigned long>(pending_age_ms), settle_delay_elapsed ? "YES" : "NO",
-             matches_pending ? "YES" : "NO");
-    return false;
-  }
-
-  if (queued_pending != 0U) {
-    this->pending_extended_feedback_candidate_ = true;
-    this->pending_extended_feedback_swing_ = decoded_status.horizontal_swing;
-    this->pending_extended_feedback_vane_ = decoded_status.horizontal_vane;
-    this->pending_extended_feedback_3d_auto_ = decoded_status.three_d_auto;
-    this->pending_extended_feedback_db16_ = db16;
-    this->pending_extended_feedback_db17_ = db17;
-    this->pending_extended_feedback_repeat_count_ = 1U;
-    return false;
-  }
-
-  const bool unchanged = this->state_.status().has_horizontal_vane && this->state_.status().has_3d_auto &&
-                         this->state_.status().horizontal_vane_swing == decoded_status.horizontal_swing &&
-                         this->state_.status().horizontal_vane == decoded_status.horizontal_vane &&
-                         this->state_.status().three_d_auto == decoded_status.three_d_auto;
-
-  if (unchanged && this->extended_louver_bootstrap_complete_) {
-    this->pending_extended_feedback_candidate_ = false;
-    this->pending_extended_feedback_repeat_count_ = 0U;
-    return true;
-  }
-
-  const bool bootstrap_delay_elapsed = this->rx_worker_started_ms_ == 0U || now < this->rx_worker_started_ms_ ||
-                                       (now - this->rx_worker_started_ms_) >= kExtendedLouverBootstrapDelayMs;
-
-  if (!this->extended_louver_bootstrap_complete_) {
-    const bool same_candidate = this->pending_extended_feedback_candidate_ &&
-                                this->pending_extended_feedback_swing_ == decoded_status.horizontal_swing &&
-                                this->pending_extended_feedback_vane_ == decoded_status.horizontal_vane &&
-                                this->pending_extended_feedback_3d_auto_ == decoded_status.three_d_auto &&
-                                this->pending_extended_feedback_db16_ == db16 &&
-                                this->pending_extended_feedback_db17_ == db17;
-
-    if (same_candidate) {
-      if (bootstrap_delay_elapsed && this->pending_extended_feedback_repeat_count_ < 255U) {
-        this->pending_extended_feedback_repeat_count_++;
-      }
-    } else {
-      this->pending_extended_feedback_candidate_ = true;
-      this->pending_extended_feedback_swing_ = decoded_status.horizontal_swing;
-      this->pending_extended_feedback_vane_ = decoded_status.horizontal_vane;
-      this->pending_extended_feedback_3d_auto_ = decoded_status.three_d_auto;
-      this->pending_extended_feedback_db16_ = db16;
-      this->pending_extended_feedback_db17_ = db17;
-      this->pending_extended_feedback_repeat_count_ = bootstrap_delay_elapsed ? 1U : 0U;
-    }
-
-    if (bootstrap_delay_elapsed &&
-        this->pending_extended_feedback_repeat_count_ >= kStableStartupExtendedFeedbackRepeats) {
-      ESP_LOGI(DIAG_TAG,
-               "decode_filter: accepted bootstrap extended feedback vane=%u swing=%s 3d=%s len=%u "
-               "db9=0x%02x db16=0x%02x db17=0x%02x repeats=%u",
-               static_cast<unsigned int>(decoded_status.horizontal_vane),
-               decoded_status.horizontal_swing ? "YES" : "NO", decoded_status.three_d_auto ? "YES" : "NO",
-               static_cast<unsigned int>(frame.len), frame.data[DB9], db16, db17,
-               static_cast<unsigned int>(this->pending_extended_feedback_repeat_count_));
-      this->extended_louver_bootstrap_complete_ = true;
-      this->pending_extended_feedback_candidate_ = false;
-      this->pending_extended_feedback_repeat_count_ = 0U;
-      return true;
-    }
-
-    ESP_LOGD(DIAG_TAG,
-             "decode_filter: held bootstrap worker extended feedback vane=%u swing=%s 3d=%s len=%u "
-             "db9=0x%02x db16=0x%02x db17=0x%02x repeats=%u delay_elapsed=%s",
-             static_cast<unsigned int>(decoded_status.horizontal_vane), decoded_status.horizontal_swing ? "YES" : "NO",
-             decoded_status.three_d_auto ? "YES" : "NO", static_cast<unsigned int>(frame.len), frame.data[DB9], db16,
-             db17, static_cast<unsigned int>(this->pending_extended_feedback_repeat_count_),
-             bootstrap_delay_elapsed ? "YES" : "NO");
-    return false;
-  }
-
-  if (unchanged) {
-    this->pending_extended_feedback_candidate_ = false;
-    this->pending_extended_feedback_repeat_count_ = 0U;
-    return true;
-  }
-
-  // Worker-sourced DB16/DB17 feedback is a composite horizontal/3D state.
-  // After startup it is only authoritative for HA control state while
-  // confirming a matching command; otherwise it is kept diagnostic-only.
-  this->pending_extended_feedback_candidate_ = true;
-  this->pending_extended_feedback_swing_ = decoded_status.horizontal_swing;
-  this->pending_extended_feedback_vane_ = decoded_status.horizontal_vane;
-  this->pending_extended_feedback_3d_auto_ = decoded_status.three_d_auto;
-  this->pending_extended_feedback_db16_ = db16;
-  this->pending_extended_feedback_db17_ = db17;
-  this->pending_extended_feedback_repeat_count_ = 1U;
-
-  ESP_LOGD(DIAG_TAG,
-           "decode_filter: held uncommanded worker extended feedback vane=%u swing=%s 3d=%s len=%u "
-           "db9=0x%02x db16=0x%02x db17=0x%02x pending=0x%08lx",
-           static_cast<unsigned int>(decoded_status.horizontal_vane), decoded_status.horizontal_swing ? "YES" : "NO",
-           decoded_status.three_d_auto ? "YES" : "NO", static_cast<unsigned int>(frame.len), frame.data[DB9], db16,
-           db17, static_cast<unsigned long>(pending_mask));
-  return false;
+  this->pending_extended_feedback_candidate_ = false;
+  this->pending_extended_feedback_repeat_count_ = 0U;
+  this->extended_louver_bootstrap_complete_ = true;
+  return true;
 }
-
 bool MhiAcCtrl::extended_feedback_matches_pending_(const MhiDecodedStatus& decoded_status) const {
   const uint32_t pending_mask = this->command_confirmation_.pending_mask();
   const auto& intent = this->command_confirmation_.pending_intent();
@@ -1130,27 +822,11 @@ bool MhiAcCtrl::extended_feedback_matches_pending_(const MhiDecodedStatus& decod
 
 void MhiAcCtrl::log_suspicious_status_change_(const char* field, int old_value, int new_value,
                                               const MhiFrameBuffer& frame) const {
-  if (!this->using_rx_worker_) {
-    return;
-  }
-
-  const uint32_t pending_mask =
-      this->command_confirmation_.pending_mask() | this->state_.command().pending_command_mask();
-  if ((pending_mask & kNoPendingExtendedFeedbackMask) != 0U) {
-    return;
-  }
-
-  ESP_LOGD(DIAG_TAG,
-           "decode_suspicious: field=%s old=%d new=%d source=worker len=%u db0=0x%02x db1=0x%02x "
-           "db2=0x%02x db6=0x%02x db9=0x%02x db10=0x%02x db11=0x%02x db12=0x%02x "
-           "db16=0x%02x db17=0x%02x pending=0x%08lx",
-           field, old_value, new_value, static_cast<unsigned int>(frame.len), frame.data[DB0], frame.data[DB1],
-           frame.data[DB2], frame.data[DB6], frame.data[DB9], frame.len > DB10 ? frame.data[DB10] : 0U,
-           frame.len > DB11 ? frame.data[DB11] : 0U, frame.len > DB12 ? frame.data[DB12] : 0U,
-           frame.len > DB16 ? frame.data[DB16] : 0U, frame.len > DB17 ? frame.data[DB17] : 0U,
-           static_cast<unsigned long>(pending_mask));
+  (void)field;
+  (void)old_value;
+  (void)new_value;
+  (void)frame;
 }
-
 void MhiAcCtrl::log_rejected_opdata_(const char* field, float value, const MhiFrameBuffer& frame) const {
   ESP_LOGW(DIAG_TAG,
            "decode_reject: field=%s value=%.2f len=%u db6=0x%02x db9=0x%02x db10=0x%02x db11=0x%02x db12=0x%02x", field,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace esphome {
@@ -56,22 +57,6 @@ struct MhiStatsSnapshot {
   uint32_t command_housekeeping_avg_us{0};
   uint32_t command_housekeeping_max_us{0};
 
-  uint32_t rx_worker_samples{0};
-  uint32_t rx_worker_frames{0};
-  uint32_t rx_worker_drained_frames{0};
-  uint32_t rx_worker_queue_overflows{0};
-  uint32_t rx_worker_queue_depth{0};
-  uint32_t rx_worker_queue_max_depth{0};
-
-  uint32_t rx_worker_health_checks{0};
-  uint32_t rx_worker_no_frame_windows{0};
-  uint32_t rx_worker_stalls{0};
-  uint32_t rx_worker_not_draining_windows{0};
-
-  uint32_t rx_worker_last_us{0};
-  uint32_t rx_worker_avg_us{0};
-  uint32_t rx_worker_max_us{0};
-
   uint32_t frame_sync_resets{0};
   uint32_t queue_overflows{0};
 
@@ -83,12 +68,6 @@ struct MhiStatsSnapshot {
   uint32_t last_command_confirmation_ms{0};
   uint32_t last_command_confirmation_timeout_ms{0};
   uint32_t last_loop_over_budget_ms{0};
-  uint32_t last_rx_worker_frame_ms{0};
-  uint32_t last_rx_worker_drained_frame_ms{0};
-  uint32_t last_rx_worker_queue_overflow_ms{0};
-  uint32_t last_rx_worker_no_frame_window_ms{0};
-  uint32_t last_rx_worker_stall_ms{0};
-  uint32_t last_rx_worker_not_draining_ms{0};
 
   uint32_t last_tx_command_mask{0};
   uint32_t last_unsupported_command_mask{0};
@@ -96,6 +75,20 @@ struct MhiStatsSnapshot {
   uint32_t last_command_confirmation_timeout_mask{0};
 
   uint8_t last_error_code{0};
+
+  uint32_t checksum_failure_samples{0};
+  uint32_t signature_miss_samples{0};
+  uint8_t last_checksum_failure_sample_len{0};
+  uint8_t last_checksum_failure_sample[33]{};
+  uint16_t last_checksum_expected_20{0};
+  uint16_t last_checksum_actual_20{0};
+  uint16_t last_checksum_expected_33{0};
+  uint8_t last_checksum_actual_33{0};
+  uint8_t last_checksum_signature_offset{255};
+  uint8_t last_checksum_next_signature_offset{255};
+  uint8_t last_signature_miss_sample_len{0};
+  uint8_t last_signature_miss_sample[12]{};
+  uint8_t last_signature_miss_signature_offset{255};
 };
 
 class MhiStats {
@@ -113,6 +106,9 @@ class MhiStats {
   void on_signature_miss();
   void on_sync_loss();
   void on_dropped_bytes(uint32_t count);
+  void on_checksum_failure_sample(const uint8_t* data, std::size_t len, uint16_t expected_20, uint16_t actual_20,
+                                  uint16_t expected_33, uint8_t actual_33);
+  void on_signature_miss_sample(const uint8_t* data, std::size_t len);
 
   void on_tx_frame(uint32_t now_ms);
   void on_tx_failure();
@@ -126,12 +122,6 @@ class MhiStats {
 
   void on_loop_timing(uint32_t loop_us, uint32_t transport_loop_us, uint32_t tx_stage_us, uint32_t rx_read_sync_us,
                       uint32_t publish_us, uint32_t command_housekeeping_us, uint32_t budget_us, uint32_t now_ms);
-
-  void on_rx_worker_timing(uint32_t sample_us, uint32_t now_ms);
-  void on_rx_worker_frame_queued(uint32_t queue_depth, uint32_t now_ms);
-  void on_rx_worker_frame_drained(uint32_t queue_depth, uint32_t now_ms);
-  void on_rx_worker_queue_overflow(uint32_t queue_depth, uint32_t now_ms);
-  void on_rx_worker_health_check(bool no_frames, bool stalled, bool not_draining, uint32_t now_ms);
 
   void on_frame_sync_reset();
   void on_queue_overflow();

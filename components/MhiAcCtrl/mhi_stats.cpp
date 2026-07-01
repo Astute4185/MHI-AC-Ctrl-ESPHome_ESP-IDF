@@ -1,7 +1,33 @@
 #include "mhi_stats.h"
 
+#include <algorithm>
+#include <cstring>
+
+#include "mhi_defs.h"
+
 namespace esphome {
 namespace mhi_ac_ctrl {
+
+namespace {
+
+constexpr uint8_t kNoSignatureOffset = 255U;
+
+uint8_t find_mosi_signature_offset(const uint8_t* data, std::size_t len, std::size_t start_index = 0U) {
+  if (data == nullptr || len < 3U || start_index >= len) {
+    return kNoSignatureOffset;
+  }
+
+  for (std::size_t i = start_index; (i + 2U) < len; i++) {
+    const bool sb0_ok = data[i + SB0] == kMhiMosiSignature0Default || data[i + SB0] == kMhiMosiSignature0Alt;
+    if (sb0_ok && data[i + SB1] == kMhiMosiSignature1 && data[i + SB2] == kMhiMosiSignature2) {
+      return static_cast<uint8_t>(i);
+    }
+  }
+
+  return kNoSignatureOffset;
+}
+
+}  // namespace
 
 void MhiStats::reset() {
   stats_ = {};
@@ -44,6 +70,38 @@ void MhiStats::on_sync_loss() {
 
 void MhiStats::on_dropped_bytes(uint32_t count) {
   stats_.dropped_bytes += count;
+}
+
+void MhiStats::on_checksum_failure_sample(const uint8_t* data, std::size_t len, uint16_t expected_20,
+                                          uint16_t actual_20, uint16_t expected_33, uint8_t actual_33) {
+  stats_.checksum_failure_samples++;
+  const std::size_t copy_len = std::min<std::size_t>(len, sizeof(stats_.last_checksum_failure_sample));
+  stats_.last_checksum_failure_sample_len = static_cast<uint8_t>(copy_len);
+  std::memset(stats_.last_checksum_failure_sample, 0, sizeof(stats_.last_checksum_failure_sample));
+
+  if (data != nullptr && copy_len > 0U) {
+    std::memcpy(stats_.last_checksum_failure_sample, data, copy_len);
+  }
+
+  stats_.last_checksum_expected_20 = expected_20;
+  stats_.last_checksum_actual_20 = actual_20;
+  stats_.last_checksum_expected_33 = expected_33;
+  stats_.last_checksum_actual_33 = actual_33;
+  stats_.last_checksum_signature_offset = find_mosi_signature_offset(data, len, 0U);
+  stats_.last_checksum_next_signature_offset = find_mosi_signature_offset(data, len, 1U);
+}
+
+void MhiStats::on_signature_miss_sample(const uint8_t* data, std::size_t len) {
+  stats_.signature_miss_samples++;
+  const std::size_t copy_len = std::min<std::size_t>(len, sizeof(stats_.last_signature_miss_sample));
+  stats_.last_signature_miss_sample_len = static_cast<uint8_t>(copy_len);
+  std::memset(stats_.last_signature_miss_sample, 0, sizeof(stats_.last_signature_miss_sample));
+
+  if (data != nullptr && copy_len > 0U) {
+    std::memcpy(stats_.last_signature_miss_sample, data, copy_len);
+  }
+
+  stats_.last_signature_miss_signature_offset = find_mosi_signature_offset(data, len, 0U);
 }
 
 void MhiStats::on_tx_frame(uint32_t now_ms) {
@@ -107,60 +165,6 @@ void MhiStats::on_loop_timing(uint32_t loop_us, uint32_t transport_loop_us, uint
   if (budget_us > 0U && loop_us > budget_us) {
     stats_.loop_over_budget++;
     stats_.last_loop_over_budget_ms = now_ms;
-  }
-}
-
-void MhiStats::on_rx_worker_timing(uint32_t sample_us, uint32_t now_ms) {
-  (void)now_ms;
-
-  stats_.rx_worker_samples++;
-  update_timing_sample(sample_us, stats_.rx_worker_samples, stats_.rx_worker_last_us, stats_.rx_worker_avg_us,
-                       stats_.rx_worker_max_us);
-}
-
-void MhiStats::on_rx_worker_frame_queued(uint32_t queue_depth, uint32_t now_ms) {
-  stats_.rx_worker_frames++;
-  stats_.rx_worker_queue_depth = queue_depth;
-  stats_.last_rx_worker_frame_ms = now_ms;
-
-  if (queue_depth > stats_.rx_worker_queue_max_depth) {
-    stats_.rx_worker_queue_max_depth = queue_depth;
-  }
-}
-
-void MhiStats::on_rx_worker_frame_drained(uint32_t queue_depth, uint32_t now_ms) {
-  stats_.rx_worker_drained_frames++;
-  stats_.rx_worker_queue_depth = queue_depth;
-  stats_.last_rx_worker_drained_frame_ms = now_ms;
-}
-
-void MhiStats::on_rx_worker_queue_overflow(uint32_t queue_depth, uint32_t now_ms) {
-  stats_.rx_worker_queue_overflows++;
-  stats_.queue_overflows++;
-  stats_.rx_worker_queue_depth = queue_depth;
-  stats_.last_rx_worker_queue_overflow_ms = now_ms;
-
-  if (queue_depth > stats_.rx_worker_queue_max_depth) {
-    stats_.rx_worker_queue_max_depth = queue_depth;
-  }
-}
-
-void MhiStats::on_rx_worker_health_check(bool no_frames, bool stalled, bool not_draining, uint32_t now_ms) {
-  stats_.rx_worker_health_checks++;
-
-  if (no_frames) {
-    stats_.rx_worker_no_frame_windows++;
-    stats_.last_rx_worker_no_frame_window_ms = now_ms;
-  }
-
-  if (stalled) {
-    stats_.rx_worker_stalls++;
-    stats_.last_rx_worker_stall_ms = now_ms;
-  }
-
-  if (not_draining) {
-    stats_.rx_worker_not_draining_windows++;
-    stats_.last_rx_worker_not_draining_ms = now_ms;
   }
 }
 

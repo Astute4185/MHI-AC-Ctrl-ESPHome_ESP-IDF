@@ -26,7 +26,7 @@ void tx_builder_applies_pending_commands_once() {
   command.target_temp_set = true;
   command.target_temp_c = 22.0f;
   command.fan_set = true;
-  command.fan = 3;
+  command.fan = 2;
   command.vertical_vane_set = true;
   command.vertical_vane = 4;
 
@@ -45,7 +45,7 @@ void tx_builder_applies_pending_commands_once() {
   EXPECT_EQ(static_cast<uint8_t>((out.data[DB0] & 0x1CU) >> 2U), 2);
 
   EXPECT_EQ(out.data[DB2], static_cast<uint8_t>(0x80U | 44U));
-  EXPECT_EQ(out.data[DB1] & 0x0FU, 0x0BU);
+  EXPECT_EQ(out.data[DB1] & 0x0FU, 0x0AU);
   EXPECT_TRUE((out.data[DB1] & 0x80U) != 0U);
 
   EXPECT_FALSE(command.has_pending_command());
@@ -116,7 +116,7 @@ void tx_builder_reports_encoded_command_mask() {
 void tx_builder_keeps_double_frame_commands_pending_until_command_frame() {
   MhiCommandState command{};
   command.fan_set = true;
-  command.fan = 4;
+  command.fan = 6;
 
   MhiTxRuntime runtime{};
   runtime.double_frame = true;  // The next build toggles to the non-command half-frame.
