@@ -103,8 +103,7 @@ The current bus has no chip-select line, so normal ESP-IDF SPI slave assumptions
 | Backend | RX quality | TX / commands | Loop budget |
 | --- | --- | --- | --- |
 | FastGPIO RX/TX | 100% valid in clean runs | Working | Poor under ESPHome scheduling, around 49 ms average loop in observed runs |
-| External-clock RX + no TX | Around 99%+ valid, with clean windows during tuning | RX-only validation | Excellent, around 23 us average loop in observed runs |
-| External-clock RX + FastGPIO TX | Under validation | Expected command path, pending soak | Expected to remain much better than synchronous FastGPIO RX |
+| External-clock RX + FastGPIO TX | Around 99%+ valid, with clean windows during tuning | RX-only validation | Excellent, around 23 us average loop in observed runs |
 
 External-clock RX is an ISR/software-shifter prototype. It samples MOSI from the external SCK edge, anchors frames on the MHI signature, emits complete frame chunks, and hands those chunks to the existing decoder path. This keeps the protocol, state, publishing, and command-confirmation layers unchanged.
 
@@ -244,7 +243,6 @@ select:
 Supported fan options:
 
 - Auto
-- Quiet
 - Low
 - Medium
 - High
@@ -564,15 +562,12 @@ scripts/lint.sh
 
 Near term:
 
-- Soak `external_clock_rx` with `tx_driver: none` to validate RX-only stability.
 - Soak `external_clock_rx` with `tx_driver: fast_gpio` to check whether TX timing affects RX capture.
-- Confirm command paths still behave correctly in hybrid mode.
 - Keep FastGPIO RX/TX as the default until hybrid mode has longer clean logs.
 
 Later:
 
 - Treat ESP32-C3/single-core support as experimental until validated on real hardware with clean soak logs.
-- Use the external-clock ISR sampler as the proof-of-concept for a future LCD-CAM/I2S-style DMA receive backend.
 - Keep TX on the stable FastGPIO path unless a clear reason appears to change it.
 
 ## Credits
