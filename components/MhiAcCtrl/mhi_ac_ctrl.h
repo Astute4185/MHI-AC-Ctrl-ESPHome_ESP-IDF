@@ -64,6 +64,39 @@ class MhiAcCtrl : public Component {
     }
   }
 
+  void set_external_clock_byte_gap_us(int gap_us) {
+    if (gap_us > 0) {
+      this->external_clock_byte_gap_us_ = static_cast<uint32_t>(gap_us);
+    }
+  }
+
+  void set_external_clock_frame_gap_us(int gap_us) {
+    if (gap_us > 0) {
+      this->external_clock_frame_gap_us_ = static_cast<uint32_t>(gap_us);
+    }
+  }
+
+  void set_external_clock_min_edge_gap_us(int gap_us) {
+    if (gap_us > 0) {
+      this->external_clock_min_edge_gap_us_ = static_cast<uint32_t>(gap_us);
+    }
+  }
+
+  void set_external_clock_edge(const std::string& edge) {
+    if (edge == "rising") {
+      this->external_clock_edge_ = "rising";
+      return;
+    }
+
+    this->external_clock_edge_ = "falling";
+  }
+
+  void set_external_clock_sample_delay_nops(int delay_nops) {
+    if (delay_nops >= 0) {
+      this->external_clock_sample_delay_nops_ = static_cast<uint32_t>(delay_nops);
+    }
+  }
+
   // Compatibility with current __init__.py plumbing.
   void set_room_temp_api_timeout(int timeout_s) {
     this->room_temp_api_timeout_s_ = timeout_s;
@@ -315,6 +348,11 @@ class MhiAcCtrl : public Component {
   MhiCommandConfirmation command_confirmation_{};
 
   uint32_t frame_start_idle_ms_{10U};
+  uint32_t external_clock_byte_gap_us_{80U};
+  uint32_t external_clock_frame_gap_us_{5000U};
+  uint32_t external_clock_min_edge_gap_us_{4U};
+  std::string external_clock_edge_{"falling"};
+  uint32_t external_clock_sample_delay_nops_{0U};
   bool rx_byte_critical_sections_enabled_{true};
   bool publish_requested_{false};
 

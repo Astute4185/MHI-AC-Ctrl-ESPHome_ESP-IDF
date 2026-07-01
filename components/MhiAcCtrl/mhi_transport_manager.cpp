@@ -3,37 +3,91 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+// ESPHome external component builds do not always discover newly-added helper
+// .cpp files. Compile the S3-only experimental driver implementations through
+// this known translation unit so experimental S3 drivers link deterministically.
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#define MHI_COMPILE_EXPERIMENTAL_DRIVER_IMPL 1
+#include "mhi_external_clock_rx_driver.cpp"
+#include "mhi_fast_gpio_tx_driver.cpp"
+#include "mhi_native_spi_rx_driver.cpp"
+#include "mhi_null_tx_driver.cpp"
+#endif
+
 namespace esphome {
 namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_transport";
 
 void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver,
-                                    const std::string& tx_driver, uint8_t frame_size_hint,
-                                    uint32_t frame_start_idle_ms) {
+                                    const std::string& tx_driver, uint8_t frame_size_hint, uint32_t frame_start_idle_ms,
+                                    uint32_t external_clock_byte_gap_us, uint32_t external_clock_frame_gap_us,
+                                    uint32_t external_clock_min_edge_gap_us, const std::string& external_clock_edge,
+                                    uint32_t external_clock_sample_delay_nops) {
   pins_.sck = sck_pin;
   pins_.mosi = mosi_pin;
   pins_.miso = miso_pin;
 
   rx_driver_name_ = rx_driver.empty() || rx_driver == "none" ? "fast_gpio" : rx_driver;
-  tx_driver_name_ = tx_driver.empty() || tx_driver == "none" ? "fast_gpio" : tx_driver;
+  tx_driver_name_ = tx_driver.empty() ? "fast_gpio" : tx_driver;
 
   MhiFastGpioConfig fast_gpio_config{};
   fast_gpio_config.frame_size_hint = frame_size_hint;
   fast_gpio_config.frame_start_idle_ms = frame_start_idle_ms;
   fast_gpio_.set_config(fast_gpio_config);
 
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+  MhiFastGpioTxConfig fast_gpio_tx_config{};
+  fast_gpio_tx_config.frame_size_hint = frame_size_hint;
+  fast_gpio_tx_config.frame_start_idle_ms = frame_start_idle_ms;
+  fast_gpio_tx_.set_config(fast_gpio_tx_config);
+
+  MhiNativeSpiRxConfig native_spi_rx_config{};
+  native_spi_rx_config.frame_size_hint = frame_size_hint;
+  native_spi_rx_.set_config(native_spi_rx_config);
+
+  MhiExternalClockRxConfig external_clock_rx_config{};
+  external_clock_rx_config.frame_size_hint = frame_size_hint;
+  external_clock_rx_config.byte_gap_reset_us = external_clock_byte_gap_us;
+  external_clock_rx_config.frame_gap_reset_us = external_clock_frame_gap_us;
+  external_clock_rx_config.min_edge_gap_us = external_clock_min_edge_gap_us;
+  external_clock_rx_config.sample_edge =
+      external_clock_edge == "falling" ? MhiExternalClockSampleEdge::FALLING : MhiExternalClockSampleEdge::RISING;
+  external_clock_rx_config.sample_delay_nops = external_clock_sample_delay_nops;
+  external_clock_rx_.set_config(external_clock_rx_config);
+#endif
+
   this->resolve_drivers();
 }
 
 void MhiTransportManager::resolve_drivers() {
-  // Step 8 tangible baseline:
-  // FastGPIO implements both RX and TX because MHI is externally clocked by the AC.
   if (rx_driver_name_ == "fast_gpio" && tx_driver_name_ == "fast_gpio") {
     rx_ = &fast_gpio_;
     tx_ = &fast_gpio_;
     return;
   }
+
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+  if (rx_driver_name_ == "native_spi_rx" && tx_driver_name_ == "fast_gpio") {
+    rx_ = &native_spi_rx_;
+    tx_ = &fast_gpio_tx_;
+    return;
+  }
+
+  if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "none") {
+    rx_ = &external_clock_rx_;
+    tx_ = &null_tx_;
+    return;
+  }
+
+  if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "fast_gpio") {
+    ESP_LOGW(TAG, "external_clock_rx + fast_gpio TX is intentionally blocked; use tx_driver: none for RX validation");
+  }
+#else
+  if (rx_driver_name_ == "native_spi_rx" || rx_driver_name_ == "external_clock_rx") {
+    ESP_LOGW(TAG, "%s is only built for ESP32-S3; falling back to fast_gpio", rx_driver_name_.c_str());
+  }
+#endif
 
   ESP_LOGW(TAG, "Unsupported driver combination RX=%s TX=%s; falling back to fast_gpio", rx_driver_name_.c_str(),
            tx_driver_name_.c_str());
@@ -48,10 +102,32 @@ void MhiTransportManager::resolve_drivers() {
 bool MhiTransportManager::setup() {
   ESP_LOGCONFIG(TAG, "Transport setup: requested RX=%s TX=%s", rx_driver_name_.c_str(), tx_driver_name_.c_str());
 
-  // Only FastGPIO exists at this stage, and it backs both RX and TX.
-  // Setup once to avoid duplicate GPIO reset/config work.
-  rx_ready_ = fast_gpio_.setup(pins_);
-  tx_ready_ = rx_ready_;
+  if (rx_ == &fast_gpio_ && tx_ == &fast_gpio_) {
+    // FastGPIO backs both RX and TX. Setup once to avoid duplicate GPIO reset/config work.
+    rx_ready_ = fast_gpio_.setup(pins_);
+    tx_ready_ = rx_ready_;
+  } else {
+    // Hybrid experimental path. Setup TX first so it can prepare MISO, or no-op cleanly in RX probe mode.
+    tx_ready_ = tx_ != nullptr && tx_->setup(pins_);
+
+    if (tx_ready_) {
+      rx_ready_ = rx_ != nullptr && rx_->setup(pins_);
+    } else {
+      rx_ready_ = false;
+    }
+
+    if (!rx_ready_ || !tx_ready_) {
+      ESP_LOGW(TAG, "Experimental transport RX=%s TX=%s failed to start; falling back to fast_gpio",
+               rx_driver_name_.c_str(), tx_driver_name_.c_str());
+
+      rx_driver_name_ = "fast_gpio";
+      tx_driver_name_ = "fast_gpio";
+      rx_ = &fast_gpio_;
+      tx_ = &fast_gpio_;
+      rx_ready_ = fast_gpio_.setup(pins_);
+      tx_ready_ = rx_ready_;
+    }
+  }
 
   if (diagnostics_ != nullptr) {
     diagnostics_->set_rx_driver_name(this->rx_name());
@@ -105,7 +181,13 @@ bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
 
   const bool ok = tx_->send(data, len);
 
-  if (diagnostics_ != nullptr) {
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+  const bool tx_disabled = tx_ == &null_tx_;
+#else
+  const bool tx_disabled = false;
+#endif
+
+  if (diagnostics_ != nullptr && !tx_disabled) {
     if (ok) {
       diagnostics_->stats().on_tx_frame(millis());
     } else {
@@ -118,6 +200,10 @@ bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
 
 void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
   fast_gpio_.set_rx_byte_critical_sections(enabled);
+
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+  fast_gpio_tx_.set_byte_critical_sections(enabled);
+#endif
 }
 
 bool MhiTransportManager::rx_byte_critical_sections() const {

@@ -15,6 +15,11 @@ CONF_MISO_PIN = "miso_pin"
 CONF_RX_DRIVER = "rx_driver"
 CONF_TX_DRIVER = "tx_driver"
 CONF_FRAME_START_IDLE_MS = "frame_start_idle_ms"
+CONF_EXTERNAL_CLOCK_BYTE_GAP_US = "external_clock_byte_gap_us"
+CONF_EXTERNAL_CLOCK_FRAME_GAP_US = "external_clock_frame_gap_us"
+CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US = "external_clock_min_edge_gap_us"
+CONF_EXTERNAL_CLOCK_EDGE = "external_clock_edge"
+CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS = "external_clock_sample_delay_nops"
 
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
@@ -42,9 +47,16 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SCK_PIN): cv.int_,
         cv.Optional(CONF_MOSI_PIN): cv.int_,
         cv.Optional(CONF_MISO_PIN): cv.int_,
-        cv.Optional(CONF_RX_DRIVER, default="fast_gpio"): cv.one_of("fast_gpio", lower=True),
-        cv.Optional(CONF_TX_DRIVER, default="fast_gpio"): cv.one_of("fast_gpio", lower=True),
+        cv.Optional(CONF_RX_DRIVER, default="fast_gpio"): cv.one_of(
+            "fast_gpio", "native_spi_rx", "external_clock_rx", lower=True
+        ),
+        cv.Optional(CONF_TX_DRIVER, default="fast_gpio"): cv.one_of("fast_gpio", "none", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
+        cv.Optional(CONF_EXTERNAL_CLOCK_BYTE_GAP_US): cv.int_range(min=20, max=1000),
+        cv.Optional(CONF_EXTERNAL_CLOCK_FRAME_GAP_US): cv.int_range(min=1000, max=50000),
+        cv.Optional(CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US): cv.int_range(min=1, max=50),
+        cv.Optional(CONF_EXTERNAL_CLOCK_EDGE): cv.one_of("rising", "falling", lower=True),
+        cv.Optional(CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS): cv.int_range(min=0, max=32),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -58,6 +70,16 @@ async def to_code(config):
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
     cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
+    if CONF_EXTERNAL_CLOCK_BYTE_GAP_US in config:
+        cg.add(var.set_external_clock_byte_gap_us(config[CONF_EXTERNAL_CLOCK_BYTE_GAP_US]))
+    if CONF_EXTERNAL_CLOCK_FRAME_GAP_US in config:
+        cg.add(var.set_external_clock_frame_gap_us(config[CONF_EXTERNAL_CLOCK_FRAME_GAP_US]))
+    if CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US in config:
+        cg.add(var.set_external_clock_min_edge_gap_us(config[CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US]))
+    if CONF_EXTERNAL_CLOCK_EDGE in config:
+        cg.add(var.set_external_clock_edge(config[CONF_EXTERNAL_CLOCK_EDGE]))
+    if CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS in config:
+        cg.add(var.set_external_clock_sample_delay_nops(config[CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS]))
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))

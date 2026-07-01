@@ -10,13 +10,33 @@
 #include "mhi_transport_pins.h"
 #include "mhi_tx_driver.h"
 
+#ifdef USE_ESP_IDF
+#include <sdkconfig.h>
+#endif
+
+#if defined(USE_ESP_IDF) && defined(CONFIG_IDF_TARGET_ESP32S3)
+#define MHI_ENABLE_EXPERIMENTAL_S3_DRIVER 1
+#include "mhi_external_clock_rx_driver.h"
+#include "mhi_fast_gpio_tx_driver.h"
+#include "mhi_native_spi_rx_driver.h"
+#include "mhi_null_tx_driver.h"
+#else
+#define MHI_ENABLE_EXPERIMENTAL_S3_DRIVER 0
+#endif
+
+#define MHI_ENABLE_NATIVE_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+
 namespace esphome {
 namespace mhi_ac_ctrl {
 
 class MhiTransportManager {
  public:
   void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
-                 uint8_t frame_size_hint = 20U, uint32_t frame_start_idle_ms = 10U);
+                 uint8_t frame_size_hint = 20U, uint32_t frame_start_idle_ms = 10U,
+                 uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
+                 uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
+                 uint32_t external_clock_sample_delay_nops = 0U);
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -49,6 +69,12 @@ class MhiTransportManager {
   std::string tx_driver_name_{"fast_gpio"};
 
   MhiFastGpioDriver fast_gpio_{};
+#if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+  MhiFastGpioTxDriver fast_gpio_tx_{};
+  MhiNativeSpiRxDriver native_spi_rx_{};
+  MhiExternalClockRxDriver external_clock_rx_{};
+  MhiNullTxDriver null_tx_{};
+#endif
 
   IMhiRxDriver* rx_{&fast_gpio_};
   IMhiTxDriver* tx_{&fast_gpio_};

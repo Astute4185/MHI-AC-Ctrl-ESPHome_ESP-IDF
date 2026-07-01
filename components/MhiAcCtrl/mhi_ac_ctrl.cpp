@@ -121,14 +121,18 @@ void MhiAcCtrl::setup() {
   this->transport_.set_diagnostics(&this->diagnostics_);
 
   this->transport_.configure(this->pins_.sck, this->pins_.mosi, this->pins_.miso, this->rx_driver_, this->tx_driver_,
-                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_);
+                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_,
+                             this->external_clock_byte_gap_us_, this->external_clock_frame_gap_us_,
+                             this->external_clock_min_edge_gap_us_, this->external_clock_edge_,
+                             this->external_clock_sample_delay_nops_);
 
   this->rx_byte_critical_sections_enabled_ = true;
   this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);
 
   this->transport_.setup();
 
-  ESP_LOGCONFIG(TAG, "RX mode: synchronous FastGPIO sampling");
+  ESP_LOGCONFIG(TAG, "RX mode active: %s", this->transport_.rx_name());
+  ESP_LOGCONFIG(TAG, "TX mode active: %s", this->transport_.tx_name());
 }
 
 void MhiAcCtrl::loop() {
@@ -180,8 +184,16 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
   ESP_LOGCONFIG(TAG, "  RX ready: %s", diag.rx_driver_ready ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  TX ready: %s", diag.tx_driver_ready ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX mode: synchronous FastGPIO");
+  ESP_LOGCONFIG(TAG, "  RX mode: %s", diag.rx_driver_name);
   ESP_LOGCONFIG(TAG, "  Frame start idle: %lums", static_cast<unsigned long>(this->frame_start_idle_ms_));
+  ESP_LOGCONFIG(TAG, "  External clock byte gap: %luus", static_cast<unsigned long>(this->external_clock_byte_gap_us_));
+  ESP_LOGCONFIG(TAG, "  External clock frame gap: %luus",
+                static_cast<unsigned long>(this->external_clock_frame_gap_us_));
+  ESP_LOGCONFIG(TAG, "  External clock min edge gap: %luus",
+                static_cast<unsigned long>(this->external_clock_min_edge_gap_us_));
+  ESP_LOGCONFIG(TAG, "  External clock edge: %s", this->external_clock_edge_.c_str());
+  ESP_LOGCONFIG(TAG, "  External clock sample delay: %lu NOPs",
+                static_cast<unsigned long>(this->external_clock_sample_delay_nops_));
   ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
 }
