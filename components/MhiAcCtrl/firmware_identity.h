@@ -1,4 +1,5 @@
-#pragma once
+#ifndef MHI_AC_CTRL_FIRMWARE_IDENTITY_H
+#define MHI_AC_CTRL_FIRMWARE_IDENTITY_H
 
 #include <string>
 
@@ -45,3 +46,5 @@ inline std::string firmware_running_partition() {
   return std::string("not-esp-idf");
 #endif
 }
+
+#endif  // MHI_AC_CTRL_FIRMWARE_IDENTITY_H

@@ -77,9 +77,13 @@ void MhiTransportManager::resolve_drivers() {
     return;
   }
 
+#if MHI_ENABLE_SPLIT_TX_DRIVER
   if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "fast_gpio") {
-    ESP_LOGW(TAG, "external_clock_rx + fast_gpio TX is intentionally blocked; use tx_driver: none for RX validation");
+    rx_ = &external_clock_rx_;
+    tx_ = &fast_gpio_tx_;
+    return;
   }
+#endif
 #else
   if (rx_driver_name_ == "external_clock_rx") {
     ESP_LOGW(TAG, "external_clock_rx is only built for ESP32 and ESP32-S3; falling back to fast_gpio");
