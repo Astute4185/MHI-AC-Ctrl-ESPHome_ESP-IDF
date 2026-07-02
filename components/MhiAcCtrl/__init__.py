@@ -21,6 +21,9 @@ CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US = "external_clock_min_edge_gap_us"
 CONF_EXTERNAL_CLOCK_EDGE = "external_clock_edge"
 CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS = "external_clock_sample_delay_nops"
 CONF_TX_BACKGROUND_INTERVAL_MS = "tx_background_interval_ms"
+CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS = "tx_bus_window_min_rx_age_ms"
+CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS = "tx_bus_window_max_rx_age_ms"
+CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS = "tx_background_failure_backoff_ms"
 
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
@@ -48,10 +51,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SCK_PIN): cv.int_,
         cv.Optional(CONF_MOSI_PIN): cv.int_,
         cv.Optional(CONF_MISO_PIN): cv.int_,
-        cv.Optional(CONF_RX_DRIVER, default="fast_gpio"): cv.one_of(
-            "fast_gpio", "native_spi_rx", "external_clock_rx", lower=True
-        ),
-        cv.Optional(CONF_TX_DRIVER, default="fast_gpio"): cv.one_of("fast_gpio", "none", lower=True),
+        cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of("fast_gpio_rx", "external_clock_rx", lower=True),
+        cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
         cv.Optional(CONF_EXTERNAL_CLOCK_BYTE_GAP_US): cv.int_range(min=20, max=1000),
         cv.Optional(CONF_EXTERNAL_CLOCK_FRAME_GAP_US): cv.int_range(min=1000, max=50000),
@@ -59,6 +60,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_EXTERNAL_CLOCK_EDGE): cv.one_of("rising", "falling", lower=True),
         cv.Optional(CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS): cv.int_range(min=0, max=32),
         cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=5000),
+        cv.Optional(CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS): cv.int_range(min=0, max=200),
+        cv.Optional(CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS): cv.int_range(min=0, max=500),
+        cv.Optional(CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS): cv.int_range(min=0, max=10000),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -84,6 +88,12 @@ async def to_code(config):
         cg.add(var.set_external_clock_sample_delay_nops(config[CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS]))
     if CONF_TX_BACKGROUND_INTERVAL_MS in config:
         cg.add(var.set_tx_background_interval_ms(config[CONF_TX_BACKGROUND_INTERVAL_MS]))
+    if CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS in config:
+        cg.add(var.set_tx_bus_window_min_rx_age_ms(config[CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS]))
+    if CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS in config:
+        cg.add(var.set_tx_bus_window_max_rx_age_ms(config[CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS]))
+    if CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS in config:
+        cg.add(var.set_tx_background_failure_backoff_ms(config[CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS]))
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))

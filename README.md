@@ -13,9 +13,8 @@ The current validated target is **ESP32-S3 with ESP-IDF**.
 Implemented and runtime-tested:
 
 - 20-byte and 33-byte MHI frame handling.
-- FastGPIO RX/TX transport.
-- Experimental external-clock RX transport on ESP32-S3.
-- Hybrid transport mode using external-clock RX with FastGPIO TX.
+- Split FastGPIO RX/TX transport.
+- Experimental external-clock RX with FastGPIO TX on ESP32 and ESP32-S3.
 - Climate control with confirmed-state updates.
 - Fan speed select.
 - Vertical vane select.
@@ -25,17 +24,10 @@ Implemented and runtime-tested:
 - Command confirmation and duplicate command suppression.
 - Runtime diagnostics for RX, TX, commands, loop budget, and protocol health.
 
-Stable/default path:
+Still intentionally conservative:
 
-- `rx_driver: fast_gpio`
-- `tx_driver: fast_gpio`
-
-Experimental path:
-
-- `rx_driver: external_clock_rx`
-- `tx_driver: fast_gpio` or `tx_driver: none` for RX-only validation
-
-FastGPIO remains the safest fully working transport because RX and TX/commands are both validated. External-clock RX is currently the best CPU/scheduling improvement path. It has shown clean RX windows and a large reduction in ESPHome loop time, but should remain opt-in until longer hybrid RX/TX soak testing is complete.
+- FastGPIO remains the stable/default transport path.
+- `external_clock_rx` remains experimental and should be validated with soak logs before being treated as supported.
 
 ## Hardware assumptions
 
@@ -54,6 +46,11 @@ Known-good current development target:
 - ESP-IDF framework
 - 33-byte frame mode
 - FastGPIO RX/TX
+
+Experimental transport targets:
+
+- ESP32 / ESP32-S3 with `rx_driver: external_clock_rx` and `tx_driver: fast_gpio_tx`
+- ESP32-C3 compile coverage only; runtime behaviour is not validated
 
 ## ESP32-C3 status
 
@@ -85,46 +82,52 @@ dropped_bytes = 0
 commands confirm
 ```
 
-## Transport backends
+## Transport drivers
 
-Examples deliberately set the transport backends explicitly:
+Examples deliberately set the RX and TX drivers with concrete 1:1 driver names:
 
 ```yaml
-rx_driver: fast_gpio
-tx_driver: fast_gpio
+rx_driver: fast_gpio_rx
+tx_driver: fast_gpio_tx
 ```
 
-FastGPIO is the stable baseline. It is synchronous and timing-sensitive, but it has validated RX and TX behaviour. Naming it in YAML is intentional because the transport layer is modular: receive and transmit paths can be tested independently without changing the climate, sensor, select, switch, command, or publish logic.
+There are no legacy aliases in the schema. `fast_gpio_rx` is an RX driver and `fast_gpio_tx` is a TX driver.
 
-The current bus has no chip-select line, so normal ESP-IDF SPI slave assumptions do not fit this hardware cleanly. The component therefore supports explicit transport selection and reports both configured and active drivers at boot.
+The transport layer now treats RX and TX as separate drivers:
 
-### CPU / scheduling comparison
+```text
+mhi_fast_gpio_rx_driver
+mhi_fast_gpio_tx_driver
+mhi_external_clock_rx_driver
+mhi_null_tx_driver
+```
 
-| Backend | RX quality | TX / commands | Loop budget |
-| --- | --- | --- | --- |
-| FastGPIO RX/TX | 100% valid in clean runs | Working | Poor under ESPHome scheduling, around 49 ms average loop in observed runs |
-| External-clock RX + FastGPIO TX | Around 99%+ valid, with clean windows during tuning | RX-only validation | Excellent, around 23 us average loop in observed runs |
+The stable/default path is:
 
-External-clock RX is an ISR/software-shifter prototype. It samples MOSI from the external SCK edge, anchors frames on the MHI signature, emits complete frame chunks, and hands those chunks to the existing decoder path. This keeps the protocol, state, publishing, and command-confirmation layers unchanged.
+```yaml
+rx_driver: fast_gpio_rx
+tx_driver: fast_gpio_tx
+```
 
-Current best RX-only tuning on the tested ESP32-S3 unit:
+This uses the split FastGPIO RX and FastGPIO TX drivers. RX captures MOSI/SCK and publishes a frame-end bus marker. TX queues frames and only attempts to drive MISO after a new RX bus marker is observed.
+
+The experimental external-clock path is:
+
+```yaml
+rx_driver: external_clock_rx
+tx_driver: fast_gpio_tx
+```
+
+`external_clock_rx` samples MOSI from the external SCK edge and emits signature-anchored frame chunks. It also publishes the same frame-end bus marker used by FastGPIO RX, so FastGPIO TX can respond from the RX-observed bus timing instead of blindly polling for a transmit window.
+
+RX-only validation is still available:
 
 ```yaml
 rx_driver: external_clock_rx
 tx_driver: none
-external_clock_edge: falling
 ```
 
-The following external-clock settings are embedded defaults and normally do not need to be set:
-
-```yaml
-external_clock_sample_delay_nops: 0
-external_clock_byte_gap_us: 80
-external_clock_frame_gap_us: 5000
-external_clock_min_edge_gap_us: 4
-```
-
-Only override these options while tuning a specific unit or debugging capture quality.
+The current bus has no chip-select line, so normal ESP-IDF SPI slave assumptions do not fit this hardware cleanly. FastGPIO remains the stable baseline while hardware-assisted receive work, such as LCD-CAM/I2S-style external-clock capture, remains experimental.
 
 ## Installation
 
@@ -141,8 +144,6 @@ external_components:
 
 ## Minimal component configuration
 
-Stable FastGPIO configuration:
-
 ```yaml
 MhiAcCtrl:
   id: mhi_ac
@@ -150,59 +151,12 @@ MhiAcCtrl:
   sck_pin: 8
   mosi_pin: 38
   miso_pin: 39
-  rx_driver: fast_gpio
-  tx_driver: fast_gpio
+  rx_driver: fast_gpio_rx
+  tx_driver: fast_gpio_tx
   room_temp_timeout: 60
 ```
 
-
-## Experimental external-clock RX
-
-External-clock RX is opt-in and currently intended for ESP32-S3 testing only.
-
-RX-only validation mode:
-
-```yaml
-MhiAcCtrl:
-  id: mhi_ac
-  frame_size: 33
-  sck_pin: 8
-  mosi_pin: 38
-  miso_pin: 39
-  rx_driver: external_clock_rx
-  tx_driver: none
-  room_temp_timeout: 60
-```
-
-Hybrid validation mode with the existing TX path:
-
-```yaml
-MhiAcCtrl:
-  id: mhi_ac
-  frame_size: 33
-  sck_pin: 8
-  mosi_pin: 38
-  miso_pin: 39
-  rx_driver: external_clock_rx
-  tx_driver: fast_gpio
-  room_temp_timeout: 60
-```
-
-Recommended external-clock defaults are embedded in the component. In normal testing, only select the backend and leave the timing options unset.
-
-Optional tuning values:
-
-```yaml
-MhiAcCtrl:
-  # ... normal config ...
-  external_clock_edge: falling
-  external_clock_sample_delay_nops: 0
-  external_clock_byte_gap_us: 80
-  external_clock_frame_gap_us: 5000
-  external_clock_min_edge_gap_us: 4
-```
-
-Use the tuning values only when comparing capture behaviour. The current best tested setting is `external_clock_edge: falling` with `external_clock_sample_delay_nops: 0`.
+There is no `rx_worker` option in this branch. Transport selection is explicit through `rx_driver` and `tx_driver`.
 
 ## Frame size
 
@@ -428,19 +382,6 @@ Important counters:
 - `command_confirmation_timeouts`
 - `loop_us avg`
 
-External-clock RX also reports probe counters such as:
-
-- `edge`
-- `delay`
-- `frame_chunks`
-- `signature_starts`
-- `discarded_presync_bytes`
-- `discarded_partial_frames`
-- `dropped_frame_chunks`
-- `dropped`
-- `ring_capacity`
-- `peak_buffered`
-
 Healthy target:
 
 ```text
@@ -490,8 +431,6 @@ Home Assistant state settles to confirmed AC feedback
 
 Synchronous FastGPIO RX can block the ESPHome loop while waiting for the external MHI frame cadence. This can produce long-operation warnings even when RX is reliable. Treat clean protocol counters as the source of truth.
 
-External-clock RX was added to reduce this scheduling pressure. In RX-only validation it has shown much lower loop time because the receive path no longer waits synchronously for a complete frame in the main ESPHome loop.
-
 ### Sensor remains unavailable
 
 Many opdata fields are model-dependent. A configured sensor only publishes after the AC returns a valid response for that field.
@@ -517,7 +456,10 @@ mhi_tx_builder.*
 mhi_command_confirmation.*
 mhi_publish_bridge.*
 mhi_transport_manager.*
-mhi_fast_gpio_driver.*
+mhi_fast_gpio_rx_driver.*
+mhi_fast_gpio_tx_driver.*
+mhi_external_clock_rx_driver.*
+mhi_null_tx_driver.*
 mhi_diag.*
 mhi_stats.*
 ```
@@ -552,22 +494,23 @@ scripts/lint.sh
 
 - Keep sensor/opdata fields validity-gated.
 - Keep confirmed decoded state authoritative.
-- Keep FastGPIO RX/TX as the stable baseline.
-- Keep external-clock RX opt-in until hybrid RX/TX soak testing is clean.
-- Keep transport backend selection explicit in examples.
-- Keep external-clock timing options embedded as defaults, with YAML overrides only for tuning/debugging.
+- Keep FastGPIO as the supported/default transport path.
+- Keep RX/TX driver selection explicit in examples.
+- Drive split FastGPIO TX from RX frame-end bus markers, not blind polling.
 - Do not combine transport experiments with sensor parity changes.
 
 ## Roadmap
 
 Near term:
 
-- Soak `external_clock_rx` with `tx_driver: fast_gpio` to check whether TX timing affects RX capture.
-- Keep FastGPIO RX/TX as the default until hybrid mode has longer clean logs.
+- Finish fan/control validation on the stable FastGPIO path.
+- Soak-test marker-driven `external_clock_rx` + `fast_gpio_tx` TX on ESP32 and ESP32-S3.
+- Continue sensor parity and command confirmation hardening.
 
 Later:
 
 - Treat ESP32-C3/single-core support as experimental until validated on real hardware with clean soak logs.
+- Re-investigate LCD-CAM/I2S-style external-clock RX capture for a future hardware-assisted backend.
 - Keep TX on the stable FastGPIO path unless a clear reason appears to change it.
 
 ## Credits

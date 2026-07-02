@@ -75,6 +75,9 @@ bool MhiExternalClockRxDriver::setup(const MhiTransportPins& pins) {
   portENTER_CRITICAL(&mux_);
   ring_head_ = 0U;
   ring_tail_ = 0U;
+  marker_sequence_ = 0U;
+  marker_frame_end_us_ = 0U;
+  marker_frame_len_ = 0U;
   current_frame_len_ = 0U;
   signature_window_ = {};
   signature_window_len_ = 0U;
@@ -151,6 +154,23 @@ std::size_t MhiExternalClockRxDriver::read(uint8_t* dst, std::size_t max_len) {
   portEXIT_CRITICAL(&mux_);
 
   return copied;
+#endif
+}
+
+MhiBusMarker MhiExternalClockRxDriver::bus_marker() const {
+#ifndef USE_ESP_IDF
+  return {};
+#else
+  MhiBusMarker marker{};
+
+  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&mux_));
+  marker.valid = marker_sequence_ != 0U;
+  marker.sequence = marker_sequence_;
+  marker.frame_end_us = marker_frame_end_us_;
+  marker.frame_len = marker_frame_len_;
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&mux_));
+
+  return marker;
 #endif
 }
 
@@ -295,6 +315,9 @@ void IRAM_ATTR MhiExternalClockRxDriver::push_current_frame_from_isr_() {
   }
 
   emitted_frame_chunks_++;
+  marker_sequence_++;
+  marker_frame_end_us_ = static_cast<uint32_t>(last_edge_us_);
+  marker_frame_len_ = frame_len;
   current_frame_len_ = 0U;
 }
 

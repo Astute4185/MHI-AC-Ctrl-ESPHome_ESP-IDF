@@ -41,6 +41,7 @@ class MhiExternalClockRxDriver final : public IMhiRxDriver {
   bool setup(const MhiTransportPins& pins) override;
   void loop() override;
   std::size_t read(uint8_t* dst, std::size_t max_len) override;
+  MhiBusMarker bus_marker() const override;
 
   const char* name() const override {
     return "external_clock_rx";
@@ -128,6 +129,9 @@ class MhiExternalClockRxDriver final : public IMhiRxDriver {
   volatile uint8_t current_byte_{0};
   volatile uint8_t bit_index_{0};
   volatile int64_t last_edge_us_{0};
+  volatile uint32_t marker_sequence_{0};
+  volatile uint32_t marker_frame_end_us_{0};
+  volatile std::size_t marker_frame_len_{0};
 #endif
 };
 

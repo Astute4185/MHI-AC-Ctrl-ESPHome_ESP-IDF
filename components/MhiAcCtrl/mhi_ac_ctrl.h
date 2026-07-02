@@ -103,6 +103,24 @@ class MhiAcCtrl : public Component {
     }
   }
 
+  void set_tx_bus_window_min_rx_age_ms(int age_ms) {
+    if (age_ms >= 0) {
+      this->tx_bus_window_min_rx_age_ms_ = static_cast<uint32_t>(age_ms);
+    }
+  }
+
+  void set_tx_bus_window_max_rx_age_ms(int age_ms) {
+    if (age_ms >= 0) {
+      this->tx_bus_window_max_rx_age_ms_ = static_cast<uint32_t>(age_ms);
+    }
+  }
+
+  void set_tx_background_failure_backoff_ms(int backoff_ms) {
+    if (backoff_ms >= 0) {
+      this->tx_background_failure_backoff_ms_ = static_cast<uint32_t>(backoff_ms);
+    }
+  }
+
   // Compatibility with current __init__.py plumbing.
   void set_room_temp_api_timeout(int timeout_s) {
     this->room_temp_api_timeout_s_ = timeout_s;
@@ -323,6 +341,8 @@ class MhiAcCtrl : public Component {
   void check_command_confirmation_timeout_();
   void suppress_duplicate_pending_commands_();
   bool background_tx_due_(uint32_t now_ms) const;
+  bool background_tx_failure_backoff_active_(uint32_t now_ms) const;
+  bool tx_bus_window_ready_(uint32_t now_ms) const;
 
   static uint32_t elapsed_us_(uint32_t start_us);
   static uint8_t detect_chip_core_count_();
@@ -335,8 +355,8 @@ class MhiAcCtrl : public Component {
 
   MhiPins pins_{};
 
-  std::string rx_driver_{"fast_gpio"};
-  std::string tx_driver_{"fast_gpio"};
+  std::string rx_driver_{"fast_gpio_rx"};
+  std::string tx_driver_{"fast_gpio_tx"};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
 
@@ -361,7 +381,11 @@ class MhiAcCtrl : public Component {
   std::string external_clock_edge_{"falling"};
   uint32_t external_clock_sample_delay_nops_{0U};
   uint32_t tx_background_interval_ms_{250U};
+  uint32_t tx_bus_window_min_rx_age_ms_{25U};
+  uint32_t tx_bus_window_max_rx_age_ms_{48U};
+  uint32_t tx_background_failure_backoff_ms_{1000U};
   uint32_t last_background_tx_ms_{0U};
+  uint32_t last_background_tx_failure_ms_{0U};
   bool rx_byte_critical_sections_enabled_{true};
   bool publish_requested_{false};
 

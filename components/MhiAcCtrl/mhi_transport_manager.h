@@ -1,11 +1,13 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
+#include "mhi_defs.h"
 #include "mhi_diag.h"
-#include "mhi_fast_gpio_driver.h"
+#include "mhi_fast_gpio_rx_driver.h"
 #include "mhi_rx_driver.h"
 #include "mhi_transport_pins.h"
 #include "mhi_tx_driver.h"
@@ -59,6 +61,10 @@ class MhiTransportManager {
   bool send_tx(const uint8_t* data, std::size_t len);
   void set_rx_byte_critical_sections(bool enabled);
   bool rx_byte_critical_sections() const;
+  bool tx_uses_bus_marker() const;
+  bool tx_uses_bus_window() const {
+    return this->tx_uses_bus_marker();
+  }
 
   const char* rx_name() const;
   const char* tx_name() const;
@@ -72,13 +78,17 @@ class MhiTransportManager {
 
  private:
   void resolve_drivers();
+  void queue_pending_tx_(const uint8_t* data, std::size_t len);
+  bool pending_tx_available_() const;
+  void clear_pending_tx_();
+  void flush_pending_tx_on_bus_marker_();
 
   MhiTransportPins pins_{};
 
-  std::string rx_driver_name_{"fast_gpio"};
-  std::string tx_driver_name_{"fast_gpio"};
+  std::string rx_driver_name_{"fast_gpio_rx"};
+  std::string tx_driver_name_{"fast_gpio_tx"};
 
-  MhiFastGpioDriver fast_gpio_{};
+  MhiFastGpioRxDriver fast_gpio_rx_{};
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   MhiFastGpioTxDriver fast_gpio_tx_{};
   MhiNullTxDriver null_tx_{};
@@ -90,11 +100,21 @@ class MhiTransportManager {
   MhiExternalClockRxDriver external_clock_rx_{};
 #endif
 
-  IMhiRxDriver* rx_{&fast_gpio_};
-  IMhiTxDriver* tx_{&fast_gpio_};
+  IMhiRxDriver* rx_{&fast_gpio_rx_};
+#if MHI_ENABLE_SPLIT_TX_DRIVER
+  IMhiTxDriver* tx_{&fast_gpio_tx_};
+#else
+  IMhiTxDriver* tx_{nullptr};
+#endif
 
   bool rx_ready_{false};
   bool tx_ready_{false};
+
+  std::array<uint8_t, kMhiMaxFrameBytes> pending_tx_frame_{};
+  std::size_t pending_tx_len_{0U};
+  bool pending_tx_{false};
+  uint32_t pending_tx_queued_after_marker_sequence_{0U};
+  uint32_t last_consumed_bus_marker_sequence_{0U};
 
   MhiDiagnostics* diagnostics_{nullptr};
 };

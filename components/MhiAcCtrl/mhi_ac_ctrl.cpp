@@ -196,6 +196,7 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  External clock sample delay: %lu NOPs",
                 static_cast<unsigned long>(this->external_clock_sample_delay_nops_));
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
+  ESP_LOGCONFIG(TAG, "  TX bus marker scheduling: %s", this->transport_.tx_uses_bus_marker() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
 }
@@ -423,6 +424,36 @@ bool MhiAcCtrl::background_tx_due_(uint32_t now_ms) const {
   return (now_ms - this->last_background_tx_ms_) >= this->tx_background_interval_ms_;
 }
 
+bool MhiAcCtrl::background_tx_failure_backoff_active_(uint32_t now_ms) const {
+  if (this->tx_background_failure_backoff_ms_ == 0U || this->last_background_tx_failure_ms_ == 0U) {
+    return false;
+  }
+
+  return (now_ms - this->last_background_tx_failure_ms_) < this->tx_background_failure_backoff_ms_;
+}
+
+bool MhiAcCtrl::tx_bus_window_ready_(uint32_t now_ms) const {
+  if (!this->transport_.tx_uses_bus_window()) {
+    return true;
+  }
+
+  const auto stats = this->diagnostics_.stats().snapshot();
+  if (stats.last_rx_byte_ms == 0U) {
+    return false;
+  }
+
+  const uint32_t rx_age_ms = now_ms - stats.last_rx_byte_ms;
+  if (rx_age_ms < this->tx_bus_window_min_rx_age_ms_) {
+    return false;
+  }
+
+  if (this->tx_bus_window_max_rx_age_ms_ == 0U) {
+    return true;
+  }
+
+  return rx_age_ms <= this->tx_bus_window_max_rx_age_ms_;
+}
+
 void MhiAcCtrl::build_and_stage_tx_frame_() {
   this->suppress_duplicate_pending_commands_();
 
@@ -445,13 +476,15 @@ void MhiAcCtrl::build_and_stage_tx_frame_() {
     return;
   }
 
-  const bool sent = this->transport_.send_tx(tx_frame.bytes(), tx_frame.len);
+  // send_tx() queues the frame. Split FastGPIO TX consumes it only after the
+  // RX driver publishes the next frame-end bus marker.
+  const bool queued = this->transport_.send_tx(tx_frame.bytes(), tx_frame.len);
 
   if (!has_pending_command) {
     this->last_background_tx_ms_ = now;
   }
 
-  this->record_tx_build_result_(build_result, tx_frame, sent);
+  this->record_tx_build_result_(build_result, tx_frame, queued);
 }
 
 void MhiAcCtrl::record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent) {
