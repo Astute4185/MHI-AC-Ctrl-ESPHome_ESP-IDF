@@ -109,6 +109,7 @@ void MhiAcCtrl::setup() {
   this->last_protocol_health_signature_misses_ = 0U;
   this->last_protocol_health_sync_losses_ = 0U;
   this->last_protocol_health_dropped_bytes_ = 0U;
+  this->last_background_tx_ms_ = 0U;
 
   this->tx_config_.frame_size = this->frame_size_ == 33 ? kMhiFrame33Bytes : kMhiFrame20Bytes;
 
@@ -194,6 +195,7 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  External clock edge: %s", this->external_clock_edge_.c_str());
   ESP_LOGCONFIG(TAG, "  External clock sample delay: %lu NOPs",
                 static_cast<unsigned long>(this->external_clock_sample_delay_nops_));
+  ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
   ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
 }
@@ -409,8 +411,28 @@ void MhiAcCtrl::refresh_extended_louver_tx_context_() {
   this->tx_config_.extended_louver_three_d_auto = status.three_d_auto;
 }
 
+bool MhiAcCtrl::background_tx_due_(uint32_t now_ms) const {
+  if (this->tx_background_interval_ms_ == 0U) {
+    return false;
+  }
+
+  if (this->last_background_tx_ms_ == 0U) {
+    return true;
+  }
+
+  return (now_ms - this->last_background_tx_ms_) >= this->tx_background_interval_ms_;
+}
+
 void MhiAcCtrl::build_and_stage_tx_frame_() {
   this->suppress_duplicate_pending_commands_();
+
+  const bool has_pending_command = this->state_.command().has_pending_command();
+  const uint32_t now = millis();
+
+  if (!has_pending_command && !this->background_tx_due_(now)) {
+    return;
+  }
+
   this->refresh_extended_louver_tx_context_();
 
   MhiFrameBuffer tx_frame{};
@@ -424,6 +446,11 @@ void MhiAcCtrl::build_and_stage_tx_frame_() {
   }
 
   const bool sent = this->transport_.send_tx(tx_frame.bytes(), tx_frame.len);
+
+  if (!has_pending_command) {
+    this->last_background_tx_ms_ = now;
+  }
+
   this->record_tx_build_result_(build_result, tx_frame, sent);
 }
 

@@ -97,6 +97,12 @@ class MhiAcCtrl : public Component {
     }
   }
 
+  void set_tx_background_interval_ms(int interval_ms) {
+    if (interval_ms >= 0) {
+      this->tx_background_interval_ms_ = static_cast<uint32_t>(interval_ms);
+    }
+  }
+
   // Compatibility with current __init__.py plumbing.
   void set_room_temp_api_timeout(int timeout_s) {
     this->room_temp_api_timeout_s_ = timeout_s;
@@ -316,6 +322,7 @@ class MhiAcCtrl : public Component {
   void update_command_confirmation_(const MhiStatusState& status);
   void check_command_confirmation_timeout_();
   void suppress_duplicate_pending_commands_();
+  bool background_tx_due_(uint32_t now_ms) const;
 
   static uint32_t elapsed_us_(uint32_t start_us);
   static uint8_t detect_chip_core_count_();
@@ -353,6 +360,8 @@ class MhiAcCtrl : public Component {
   uint32_t external_clock_min_edge_gap_us_{4U};
   std::string external_clock_edge_{"falling"};
   uint32_t external_clock_sample_delay_nops_{0U};
+  uint32_t tx_background_interval_ms_{250U};
+  uint32_t last_background_tx_ms_{0U};
   bool rx_byte_critical_sections_enabled_{true};
   bool publish_requested_{false};
 
