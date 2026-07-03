@@ -15,6 +15,11 @@ int main() {
   frame_sync_records_checksum_failure_stats();
   frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise();
 
+  frame_classifier_classifies_status_opdata_and_extended_status();
+  frame_catalog_overwrites_repeated_status_with_latest();
+  frame_catalog_keeps_opdata_slots_separate_by_key();
+  frame_catalog_reports_unknown_frames();
+
   status_decoder_decodes_core_fields();
   status_decoder_decodes_33_byte_vane_feedback();
   status_decoder_ignores_unknown_horizontal_vane_feedback();

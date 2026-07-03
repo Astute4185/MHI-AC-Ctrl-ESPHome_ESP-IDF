@@ -1,5 +1,8 @@
 #pragma once
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -14,6 +17,7 @@
 #include "mhi_command_confirmation.h"
 #include "mhi_defs.h"
 #include "mhi_diag.h"
+#include "mhi_frame_catalog.h"
 #include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
 #include "mhi_publish_bridge.h"
@@ -64,60 +68,65 @@ class MhiAcCtrl : public Component {
     }
   }
 
-  void set_external_clock_byte_gap_us(int gap_us) {
-    if (gap_us > 0) {
-      this->external_clock_byte_gap_us_ = static_cast<uint32_t>(gap_us);
-    }
-  }
-
-  void set_external_clock_frame_gap_us(int gap_us) {
-    if (gap_us > 0) {
-      this->external_clock_frame_gap_us_ = static_cast<uint32_t>(gap_us);
-    }
-  }
-
-  void set_external_clock_min_edge_gap_us(int gap_us) {
-    if (gap_us > 0) {
-      this->external_clock_min_edge_gap_us_ = static_cast<uint32_t>(gap_us);
-    }
-  }
-
-  void set_external_clock_edge(const std::string& edge) {
-    if (edge == "rising") {
-      this->external_clock_edge_ = "rising";
-      return;
-    }
-
-    this->external_clock_edge_ = "falling";
-  }
-
-  void set_external_clock_sample_delay_nops(int delay_nops) {
-    if (delay_nops >= 0) {
-      this->external_clock_sample_delay_nops_ = static_cast<uint32_t>(delay_nops);
-    }
-  }
-
   void set_tx_background_interval_ms(int interval_ms) {
     if (interval_ms >= 0) {
       this->tx_background_interval_ms_ = static_cast<uint32_t>(interval_ms);
     }
   }
 
-  void set_tx_bus_window_min_rx_age_ms(int age_ms) {
-    if (age_ms >= 0) {
-      this->tx_bus_window_min_rx_age_ms_ = static_cast<uint32_t>(age_ms);
+  void set_rx_worker(bool enabled) {
+    this->rx_worker_enabled_ = enabled;
+  }
+
+  void set_rx_worker_start_delay_ms(int delay_ms) {
+    if (delay_ms >= 0) {
+      this->rx_worker_start_delay_ms_ = static_cast<uint32_t>(delay_ms);
     }
   }
 
-  void set_tx_bus_window_max_rx_age_ms(int age_ms) {
-    if (age_ms >= 0) {
-      this->tx_bus_window_max_rx_age_ms_ = static_cast<uint32_t>(age_ms);
+  void set_rx_worker_stack_size(int stack_size) {
+    if (stack_size >= 4096) {
+      this->rx_worker_stack_size_ = static_cast<uint32_t>(stack_size);
     }
   }
 
-  void set_tx_background_failure_backoff_ms(int backoff_ms) {
-    if (backoff_ms >= 0) {
-      this->tx_background_failure_backoff_ms_ = static_cast<uint32_t>(backoff_ms);
+  void set_rx_worker_priority(int priority) {
+    if (priority > 0) {
+      this->rx_worker_priority_ = static_cast<uint32_t>(priority);
+    }
+  }
+
+  void set_rx_worker_core_id(int core_id) {
+    if (core_id >= -1) {
+      this->rx_worker_core_id_ = core_id;
+    }
+  }
+
+  void set_tx_worker(bool enabled) {
+    this->tx_worker_enabled_ = enabled;
+  }
+
+  void set_tx_worker_start_delay_ms(int delay_ms) {
+    if (delay_ms >= 0) {
+      this->tx_worker_start_delay_ms_ = static_cast<uint32_t>(delay_ms);
+    }
+  }
+
+  void set_tx_worker_stack_size(int stack_size) {
+    if (stack_size >= 4096) {
+      this->tx_worker_stack_size_ = static_cast<uint32_t>(stack_size);
+    }
+  }
+
+  void set_tx_worker_priority(int priority) {
+    if (priority > 0) {
+      this->tx_worker_priority_ = static_cast<uint32_t>(priority);
+    }
+  }
+
+  void set_tx_worker_core_id(int core_id) {
+    if (core_id >= -1) {
+      this->tx_worker_core_id_ = core_id;
     }
   }
 
@@ -324,6 +333,22 @@ class MhiAcCtrl : public Component {
   void build_and_stage_tx_frame_();
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
   bool read_and_sync_rx_frame_();
+  bool ingest_rx_frame_(const MhiFrameBuffer& frame);
+  bool decode_cataloged_frames_();
+  bool decode_cataloged_frame_(const MhiCatalogedFrame& cataloged_frame);
+  bool take_latest_extended_status_(MhiCatalogedFrame& out);
+  bool take_latest_status_(MhiCatalogedFrame& out);
+  bool take_next_opdata_(MhiCatalogedFrame& out);
+  bool take_latest_unknown_(MhiCatalogedFrame& out);
+  MhiCatalogStats catalog_stats_snapshot_();
+  void start_rx_worker_();
+  void stop_rx_worker_();
+  static void rx_worker_task_entry_(void* arg);
+  void rx_worker_task_loop_();
+  void start_tx_worker_();
+  void stop_tx_worker_();
+  static void tx_worker_task_entry_(void* arg);
+  void tx_worker_task_loop_();
   bool decode_frame_(const MhiFrameBuffer& frame);
   bool apply_status_update_(const MhiDecodedStatus& decoded_status, const MhiFrameBuffer& frame);
   bool apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, const MhiFrameBuffer& frame);
@@ -341,8 +366,8 @@ class MhiAcCtrl : public Component {
   void check_command_confirmation_timeout_();
   void suppress_duplicate_pending_commands_();
   bool background_tx_due_(uint32_t now_ms) const;
-  bool background_tx_failure_backoff_active_(uint32_t now_ms) const;
-  bool tx_bus_window_ready_(uint32_t now_ms) const;
+  bool command_confirmation_pending_() const;
+  bool background_tx_allowed_(uint32_t now_ms);
 
   static uint32_t elapsed_us_(uint32_t start_us);
   static uint8_t detect_chip_core_count_();
@@ -355,8 +380,8 @@ class MhiAcCtrl : public Component {
 
   MhiPins pins_{};
 
-  std::string rx_driver_{"fast_gpio_rx"};
-  std::string tx_driver_{"fast_gpio_tx"};
+  std::string rx_driver_{"fast_gpio"};
+  std::string tx_driver_{"fast_gpio"};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
 
@@ -364,6 +389,9 @@ class MhiAcCtrl : public Component {
 
   MhiStateStore state_{};
   MhiFrameSync frame_sync_{};
+  MhiFrameSync rx_worker_frame_sync_{};
+  MhiFrameCatalog frame_catalog_{};
+  portMUX_TYPE frame_catalog_mux_ = portMUX_INITIALIZER_UNLOCKED;
   MhiTransportManager transport_{};
   MhiDiagnostics diagnostics_{};
 
@@ -375,19 +403,43 @@ class MhiAcCtrl : public Component {
   MhiCommandConfirmation command_confirmation_{};
 
   uint32_t frame_start_idle_ms_{10U};
-  uint32_t external_clock_byte_gap_us_{80U};
-  uint32_t external_clock_frame_gap_us_{5000U};
-  uint32_t external_clock_min_edge_gap_us_{4U};
-  std::string external_clock_edge_{"falling"};
-  uint32_t external_clock_sample_delay_nops_{0U};
   uint32_t tx_background_interval_ms_{250U};
-  uint32_t tx_bus_window_min_rx_age_ms_{25U};
-  uint32_t tx_bus_window_max_rx_age_ms_{48U};
-  uint32_t tx_background_failure_backoff_ms_{1000U};
   uint32_t last_background_tx_ms_{0U};
-  uint32_t last_background_tx_failure_ms_{0U};
+  uint32_t tx_background_interval_deferrals_{0U};
+  uint32_t tx_background_confirmation_deferrals_{0U};
+  uint32_t tx_background_attempts_{0U};
+  uint32_t tx_background_failures_{0U};
+  uint32_t tx_command_priority_attempts_{0U};
   bool rx_byte_critical_sections_enabled_{true};
   bool publish_requested_{false};
+  uint32_t frame_catalog_sequence_{0U};
+
+  bool rx_worker_enabled_{false};
+  volatile bool rx_worker_running_{false};
+  volatile bool rx_worker_stop_requested_{false};
+  volatile bool rx_worker_started_{false};
+  void* rx_worker_task_{nullptr};
+  uint32_t rx_worker_start_delay_ms_{5000U};
+  uint32_t rx_worker_stack_size_{6144U};
+  uint32_t rx_worker_priority_{4U};
+  int rx_worker_core_id_{0};
+  volatile uint32_t rx_worker_loops_{0U};
+  volatile uint32_t rx_worker_idle_yields_{0U};
+  volatile uint32_t rx_worker_ingested_frames_{0U};
+
+  bool tx_worker_enabled_{false};
+  volatile bool tx_worker_running_{false};
+  volatile bool tx_worker_stop_requested_{false};
+  volatile bool tx_worker_started_{false};
+  void* tx_worker_task_{nullptr};
+  uint32_t tx_worker_start_delay_ms_{5000U};
+  uint32_t tx_worker_stack_size_{6144U};
+  uint32_t tx_worker_priority_{4U};
+  int tx_worker_core_id_{1};
+  volatile uint32_t tx_worker_loops_{0U};
+  volatile uint32_t tx_worker_idle_yields_{0U};
+  volatile uint32_t tx_worker_flush_attempts_{0U};
+  volatile uint32_t tx_worker_flush_successes_{0U};
 
   bool pending_extended_feedback_candidate_{false};
   bool pending_extended_feedback_swing_{false};

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -58,7 +61,21 @@ class MhiTransportManager {
   void loop();
 
   std::size_t read_rx(uint8_t* dst, std::size_t max_len);
+  std::size_t read_rx_for_worker(uint8_t* dst, std::size_t max_len);
+
+  // Queueing and flushing are split so future TX ownership can move out of
+  // the main loop without changing TX frame construction. send_tx() remains a
+  // compatibility wrapper for queue + optional auto-flush.
+  bool queue_tx(const uint8_t* data, std::size_t len);
   bool send_tx(const uint8_t* data, std::size_t len);
+  bool flush_tx_on_bus_marker();
+  void set_auto_tx_flush(bool enabled) {
+    auto_tx_flush_ = enabled;
+  }
+  bool auto_tx_flush() const {
+    return auto_tx_flush_;
+  }
+
   void set_rx_byte_critical_sections(bool enabled);
   bool rx_byte_critical_sections() const;
   bool tx_uses_bus_marker() const;
@@ -78,10 +95,11 @@ class MhiTransportManager {
 
  private:
   void resolve_drivers();
+  std::size_t read_rx_raw_(uint8_t* dst, std::size_t max_len);
   void queue_pending_tx_(const uint8_t* data, std::size_t len);
   bool pending_tx_available_() const;
   void clear_pending_tx_();
-  void flush_pending_tx_on_bus_marker_();
+  bool flush_pending_tx_on_bus_marker_();
 
   MhiTransportPins pins_{};
 
@@ -109,12 +127,25 @@ class MhiTransportManager {
 
   bool rx_ready_{false};
   bool tx_ready_{false};
+  bool auto_tx_flush_{true};
 
+  portMUX_TYPE tx_mux_ = portMUX_INITIALIZER_UNLOCKED;
   std::array<uint8_t, kMhiMaxFrameBytes> pending_tx_frame_{};
   std::size_t pending_tx_len_{0U};
   bool pending_tx_{false};
+  bool tx_in_progress_{false};
+  uint32_t pending_tx_generation_{0U};
   uint32_t pending_tx_queued_after_marker_sequence_{0U};
   uint32_t last_consumed_bus_marker_sequence_{0U};
+  uint32_t last_stale_bus_marker_sequence_{0U};
+  uint32_t tx_backoff_until_ms_{0U};
+
+  // Arm TX from a new RX frame-end marker, then make one blocking TX attempt
+  // against the real next SCK burst. This avoids age-window retry storms while
+  // still giving the AC-owned clock enough time to arrive.
+  uint32_t tx_marker_arm_max_age_us_{3000U};
+  uint32_t tx_marker_timeout_ms_{60U};
+  uint32_t tx_failure_backoff_ms_{250U};
 
   MhiDiagnostics* diagnostics_{nullptr};
 };

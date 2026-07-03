@@ -21,6 +21,7 @@ CXX="${CXX:-g++}"
   tests/unit/mhi_unit_test_main.cpp \
   tests/unit/test_checksum.cpp \
   tests/unit/test_frame_sync.cpp \
+  tests/unit/test_frame_catalog.cpp \
   tests/unit/test_status_decoder.cpp \
   tests/unit/test_opdata_decoder.cpp \
   tests/unit/test_publish_bridge.cpp \
@@ -33,6 +34,8 @@ CXX="${CXX:-g++}"
   components/MhiAcCtrl/mhi_command.cpp \
   components/MhiAcCtrl/mhi_command_confirmation.cpp \
   components/MhiAcCtrl/mhi_frame_sync.cpp \
+  components/MhiAcCtrl/mhi_frame_catalog.cpp \
+  components/MhiAcCtrl/mhi_frame_classifier.cpp \
   components/MhiAcCtrl/mhi_opdata_decoder.cpp \
   components/MhiAcCtrl/mhi_publish_bridge.cpp \
   components/MhiAcCtrl/mhi_status_decoder.cpp \

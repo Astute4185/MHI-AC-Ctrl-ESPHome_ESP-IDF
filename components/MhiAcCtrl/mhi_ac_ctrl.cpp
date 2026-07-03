@@ -1,5 +1,8 @@
 #include "mhi_ac_ctrl.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -110,30 +113,59 @@ void MhiAcCtrl::setup() {
   this->last_protocol_health_sync_losses_ = 0U;
   this->last_protocol_health_dropped_bytes_ = 0U;
   this->last_background_tx_ms_ = 0U;
+  this->tx_background_interval_deferrals_ = 0U;
+  this->tx_background_confirmation_deferrals_ = 0U;
+  this->tx_background_attempts_ = 0U;
+  this->tx_background_failures_ = 0U;
+  this->tx_command_priority_attempts_ = 0U;
+  this->rx_worker_running_ = false;
+  this->rx_worker_stop_requested_ = false;
+  this->rx_worker_started_ = false;
+  this->rx_worker_task_ = nullptr;
+  this->rx_worker_loops_ = 0U;
+  this->rx_worker_idle_yields_ = 0U;
+  this->rx_worker_ingested_frames_ = 0U;
+  this->tx_worker_running_ = false;
+  this->tx_worker_stop_requested_ = false;
+  this->tx_worker_started_ = false;
+  this->tx_worker_task_ = nullptr;
+  this->tx_worker_loops_ = 0U;
+  this->tx_worker_idle_yields_ = 0U;
+  this->tx_worker_flush_attempts_ = 0U;
+  this->tx_worker_flush_successes_ = 0U;
 
   this->tx_config_.frame_size = this->frame_size_ == 33 ? kMhiFrame33Bytes : kMhiFrame20Bytes;
 
   this->tx_config_.enabled_opdata_mask = this->opdata_mask_;
 
   this->frame_sync_.reset();
+  this->rx_worker_frame_sync_.reset();
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  this->frame_catalog_.reset();
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  this->frame_catalog_sequence_ = 0U;
   this->frame_sync_.set_mode(MhiFrameSyncMode::MOSI_ONLY);
   this->frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
+  this->rx_worker_frame_sync_.set_mode(MhiFrameSyncMode::MOSI_ONLY);
+  this->rx_worker_frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
 
   this->transport_.set_diagnostics(&this->diagnostics_);
 
   this->transport_.configure(this->pins_.sck, this->pins_.mosi, this->pins_.miso, this->rx_driver_, this->tx_driver_,
-                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_,
-                             this->external_clock_byte_gap_us_, this->external_clock_frame_gap_us_,
-                             this->external_clock_min_edge_gap_us_, this->external_clock_edge_,
-                             this->external_clock_sample_delay_nops_);
+                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_);
 
   this->rx_byte_critical_sections_enabled_ = true;
   this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);
+  this->transport_.set_auto_tx_flush(!this->tx_worker_enabled_);
 
   this->transport_.setup();
 
-  ESP_LOGCONFIG(TAG, "RX mode active: %s", this->transport_.rx_name());
-  ESP_LOGCONFIG(TAG, "TX mode active: %s", this->transport_.tx_name());
+  this->start_rx_worker_();
+  this->start_tx_worker_();
+
+  ESP_LOGCONFIG(TAG, "RX mode: %s",
+                this->rx_worker_enabled_ ? "RX worker catalog writer" : "synchronous main-loop sampling");
+  ESP_LOGCONFIG(TAG, "TX mode: %s", this->tx_worker_enabled_ ? "worker bus-marker flusher" : "main-loop auto flush");
 }
 
 void MhiAcCtrl::loop() {
@@ -185,20 +217,25 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
   ESP_LOGCONFIG(TAG, "  RX ready: %s", diag.rx_driver_ready ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  TX ready: %s", diag.tx_driver_ready ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX mode: %s", diag.rx_driver_name);
+  ESP_LOGCONFIG(TAG, "  RX mode: %s", this->rx_worker_enabled_ ? "worker catalog writer" : "main-loop sampling");
+  ESP_LOGCONFIG(TAG, "  RX worker: enabled=%s running=%s core=%d priority=%lu stack=%lu start_delay=%lums",
+                this->rx_worker_enabled_ ? "YES" : "NO", this->rx_worker_running_ ? "YES" : "NO",
+                this->rx_worker_core_id_, static_cast<unsigned long>(this->rx_worker_priority_),
+                static_cast<unsigned long>(this->rx_worker_stack_size_),
+                static_cast<unsigned long>(this->rx_worker_start_delay_ms_));
   ESP_LOGCONFIG(TAG, "  Frame start idle: %lums", static_cast<unsigned long>(this->frame_start_idle_ms_));
-  ESP_LOGCONFIG(TAG, "  External clock byte gap: %luus", static_cast<unsigned long>(this->external_clock_byte_gap_us_));
-  ESP_LOGCONFIG(TAG, "  External clock frame gap: %luus",
-                static_cast<unsigned long>(this->external_clock_frame_gap_us_));
-  ESP_LOGCONFIG(TAG, "  External clock min edge gap: %luus",
-                static_cast<unsigned long>(this->external_clock_min_edge_gap_us_));
-  ESP_LOGCONFIG(TAG, "  External clock edge: %s", this->external_clock_edge_.c_str());
-  ESP_LOGCONFIG(TAG, "  External clock sample delay: %lu NOPs",
-                static_cast<unsigned long>(this->external_clock_sample_delay_nops_));
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
-  ESP_LOGCONFIG(TAG, "  TX bus marker scheduling: %s", this->transport_.tx_uses_bus_marker() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  TX priority: commands bypass interval, background waits for no pending confirmation");
+  ESP_LOGCONFIG(TAG, "  TX ownership: queue/flush split, auto_flush=%s",
+                this->transport_.auto_tx_flush() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  TX worker: enabled=%s running=%s core=%d priority=%lu stack=%lu start_delay=%lums",
+                this->tx_worker_enabled_ ? "YES" : "NO", this->tx_worker_running_ ? "YES" : "NO",
+                this->tx_worker_core_id_, static_cast<unsigned long>(this->tx_worker_priority_),
+                static_cast<unsigned long>(this->tx_worker_stack_size_),
+                static_cast<unsigned long>(this->tx_worker_start_delay_ms_));
   ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
+  ESP_LOGCONFIG(TAG, "  Frame catalog: enabled latest-slot decode");
 }
 
 void MhiAcCtrl::log_runtime_diagnostics_() {
@@ -345,6 +382,41 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(diag.last_command_confirmation_age_ms),
            static_cast<unsigned long>(diag.last_command_confirmation_timeout_age_ms));
 
+  const MhiCatalogStats catalog_stats = this->catalog_stats_snapshot_();
+  ESP_LOGI(DIAG_TAG,
+           "runtime: catalog ingested=%lu status=%lu extended=%lu opdata=%lu unknown=%lu overwritten=%lu "
+           "opdata_slots_full=%lu",
+           static_cast<unsigned long>(catalog_stats.ingested_frames),
+           static_cast<unsigned long>(catalog_stats.status_frames),
+           static_cast<unsigned long>(catalog_stats.extended_status_frames),
+           static_cast<unsigned long>(catalog_stats.opdata_frames),
+           static_cast<unsigned long>(catalog_stats.unknown_frames),
+           static_cast<unsigned long>(catalog_stats.overwritten_frames),
+           static_cast<unsigned long>(catalog_stats.dropped_opdata_slots_full));
+
+  ESP_LOGI(DIAG_TAG,
+           "runtime: tx_priority command_attempts=%lu background_attempts=%lu background_failures=%lu "
+           "interval_deferrals=%lu confirmation_deferrals=%lu",
+           static_cast<unsigned long>(this->tx_command_priority_attempts_),
+           static_cast<unsigned long>(this->tx_background_attempts_),
+           static_cast<unsigned long>(this->tx_background_failures_),
+           static_cast<unsigned long>(this->tx_background_interval_deferrals_),
+           static_cast<unsigned long>(this->tx_background_confirmation_deferrals_));
+
+  ESP_LOGI(DIAG_TAG, "runtime: rx_worker enabled=%s running=%s loops=%lu ingested=%lu idle_yields=%lu",
+           this->rx_worker_enabled_ ? "YES" : "NO", this->rx_worker_running_ ? "YES" : "NO",
+           static_cast<unsigned long>(this->rx_worker_loops_),
+           static_cast<unsigned long>(this->rx_worker_ingested_frames_),
+           static_cast<unsigned long>(this->rx_worker_idle_yields_));
+
+  ESP_LOGI(DIAG_TAG,
+           "runtime: tx_worker enabled=%s running=%s loops=%lu flush_attempts=%lu flush_successes=%lu idle_yields=%lu",
+           this->tx_worker_enabled_ ? "YES" : "NO", this->tx_worker_running_ ? "YES" : "NO",
+           static_cast<unsigned long>(this->tx_worker_loops_),
+           static_cast<unsigned long>(this->tx_worker_flush_attempts_),
+           static_cast<unsigned long>(this->tx_worker_flush_successes_),
+           static_cast<unsigned long>(this->tx_worker_idle_yields_));
+
   ESP_LOGI(DIAG_TAG, "runtime: loop_us last=%lu avg=%lu max=%lu over_budget=%lu budget=%lu last_over_budget_age_ms=%lu",
            static_cast<unsigned long>(stats.loop_last_us), static_cast<unsigned long>(stats.loop_avg_us),
            static_cast<unsigned long>(stats.loop_max_us), static_cast<unsigned long>(stats.loop_over_budget),
@@ -412,46 +484,216 @@ void MhiAcCtrl::refresh_extended_louver_tx_context_() {
   this->tx_config_.extended_louver_three_d_auto = status.three_d_auto;
 }
 
+void MhiAcCtrl::start_rx_worker_() {
+  if (!this->rx_worker_enabled_) {
+    return;
+  }
+
+  if (this->rx_worker_started_) {
+    return;
+  }
+
+  this->rx_worker_stop_requested_ = false;
+  this->rx_worker_running_ = false;
+
+  TaskHandle_t task_handle = nullptr;
+  const BaseType_t priority = static_cast<BaseType_t>(this->rx_worker_priority_);
+  const uint32_t stack_size = this->rx_worker_stack_size_;
+
+  BaseType_t created = pdFALSE;
+  if (this->rx_worker_core_id_ >= 0) {
+    created = xTaskCreatePinnedToCore(&MhiAcCtrl::rx_worker_task_entry_, "mhi_rx_worker", stack_size, this, priority,
+                                      &task_handle, static_cast<BaseType_t>(this->rx_worker_core_id_));
+  } else {
+    created = xTaskCreate(&MhiAcCtrl::rx_worker_task_entry_, "mhi_rx_worker", stack_size, this, priority, &task_handle);
+  }
+
+  if (created != pdPASS || task_handle == nullptr) {
+    ESP_LOGE(TAG, "RX worker start failed: stack=%lu priority=%lu core=%d", static_cast<unsigned long>(stack_size),
+             static_cast<unsigned long>(this->rx_worker_priority_), this->rx_worker_core_id_);
+    this->rx_worker_enabled_ = false;
+    this->rx_worker_task_ = nullptr;
+    return;
+  }
+
+  this->rx_worker_task_ = task_handle;
+  this->rx_worker_started_ = true;
+  ESP_LOGCONFIG(TAG, "RX worker started: stack=%lu priority=%lu core=%d start_delay=%lums",
+                static_cast<unsigned long>(stack_size), static_cast<unsigned long>(this->rx_worker_priority_),
+                this->rx_worker_core_id_, static_cast<unsigned long>(this->rx_worker_start_delay_ms_));
+}
+
+void MhiAcCtrl::stop_rx_worker_() {
+  if (!this->rx_worker_started_) {
+    return;
+  }
+
+  this->rx_worker_stop_requested_ = true;
+}
+
+void MhiAcCtrl::rx_worker_task_entry_(void* arg) {
+  auto* self = static_cast<MhiAcCtrl*>(arg);
+  if (self == nullptr) {
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  self->rx_worker_task_loop_();
+  vTaskDelete(nullptr);
+}
+
+void MhiAcCtrl::rx_worker_task_loop_() {
+  this->rx_worker_running_ = true;
+
+  if (this->rx_worker_start_delay_ms_ > 0U) {
+    vTaskDelay(pdMS_TO_TICKS(this->rx_worker_start_delay_ms_));
+  }
+
+  uint8_t buffer[kMhiMaxFrameBytes]{};
+  MhiFrameBuffer frame{};
+
+  while (!this->rx_worker_stop_requested_) {
+    this->rx_worker_loops_++;
+
+    const std::size_t len = this->transport_.read_rx_for_worker(buffer, sizeof(buffer));
+    if (len == 0U) {
+      this->rx_worker_idle_yields_++;
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
+    this->rx_worker_frame_sync_.push_bytes(buffer, len);
+
+    bool ingested_any = false;
+    while (this->rx_worker_frame_sync_.pop_frame(frame)) {
+      this->diagnostics_.stats().on_valid_frame(millis());
+      if (this->ingest_rx_frame_(frame)) {
+        this->rx_worker_ingested_frames_++;
+        ingested_any = true;
+      }
+    }
+
+    if (ingested_any) {
+      taskYIELD();
+    }
+  }
+
+  this->rx_worker_running_ = false;
+  this->rx_worker_started_ = false;
+  this->rx_worker_task_ = nullptr;
+}
+
+void MhiAcCtrl::start_tx_worker_() {
+  if (!this->tx_worker_enabled_) {
+    return;
+  }
+
+  if (this->tx_worker_started_) {
+    return;
+  }
+
+  this->tx_worker_stop_requested_ = false;
+  this->tx_worker_running_ = false;
+
+  TaskHandle_t task_handle = nullptr;
+  const BaseType_t priority = static_cast<BaseType_t>(this->tx_worker_priority_);
+  const uint32_t stack_size = this->tx_worker_stack_size_;
+
+  BaseType_t created = pdFALSE;
+  if (this->tx_worker_core_id_ >= 0) {
+    created = xTaskCreatePinnedToCore(&MhiAcCtrl::tx_worker_task_entry_, "mhi_tx_worker", stack_size, this, priority,
+                                      &task_handle, static_cast<BaseType_t>(this->tx_worker_core_id_));
+  } else {
+    created = xTaskCreate(&MhiAcCtrl::tx_worker_task_entry_, "mhi_tx_worker", stack_size, this, priority, &task_handle);
+  }
+
+  if (created != pdPASS || task_handle == nullptr) {
+    ESP_LOGE(TAG, "TX worker start failed: stack=%lu priority=%lu core=%d", static_cast<unsigned long>(stack_size),
+             static_cast<unsigned long>(this->tx_worker_priority_), this->tx_worker_core_id_);
+    this->tx_worker_enabled_ = false;
+    this->transport_.set_auto_tx_flush(true);
+    this->tx_worker_task_ = nullptr;
+    return;
+  }
+
+  this->tx_worker_task_ = task_handle;
+  this->tx_worker_started_ = true;
+  ESP_LOGCONFIG(TAG, "TX worker started: stack=%lu priority=%lu core=%d start_delay=%lums",
+                static_cast<unsigned long>(stack_size), static_cast<unsigned long>(this->tx_worker_priority_),
+                this->tx_worker_core_id_, static_cast<unsigned long>(this->tx_worker_start_delay_ms_));
+}
+
+void MhiAcCtrl::stop_tx_worker_() {
+  if (!this->tx_worker_started_) {
+    return;
+  }
+
+  this->tx_worker_stop_requested_ = true;
+}
+
+void MhiAcCtrl::tx_worker_task_entry_(void* arg) {
+  auto* self = static_cast<MhiAcCtrl*>(arg);
+  if (self == nullptr) {
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  self->tx_worker_task_loop_();
+  vTaskDelete(nullptr);
+}
+
+void MhiAcCtrl::tx_worker_task_loop_() {
+  this->tx_worker_running_ = true;
+
+  if (this->tx_worker_start_delay_ms_ > 0U) {
+    vTaskDelay(pdMS_TO_TICKS(this->tx_worker_start_delay_ms_));
+  }
+
+  while (!this->tx_worker_stop_requested_) {
+    this->tx_worker_loops_++;
+    this->tx_worker_flush_attempts_++;
+
+    if (this->transport_.flush_tx_on_bus_marker()) {
+      this->tx_worker_flush_successes_++;
+      taskYIELD();
+      continue;
+    }
+
+    this->tx_worker_idle_yields_++;
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+
+  this->tx_worker_running_ = false;
+  this->tx_worker_started_ = false;
+  this->tx_worker_task_ = nullptr;
+}
+
 bool MhiAcCtrl::background_tx_due_(uint32_t now_ms) const {
   if (this->tx_background_interval_ms_ == 0U) {
     return false;
   }
-
   if (this->last_background_tx_ms_ == 0U) {
     return true;
   }
-
   return (now_ms - this->last_background_tx_ms_) >= this->tx_background_interval_ms_;
 }
 
-bool MhiAcCtrl::background_tx_failure_backoff_active_(uint32_t now_ms) const {
-  if (this->tx_background_failure_backoff_ms_ == 0U || this->last_background_tx_failure_ms_ == 0U) {
-    return false;
-  }
-
-  return (now_ms - this->last_background_tx_failure_ms_) < this->tx_background_failure_backoff_ms_;
+bool MhiAcCtrl::command_confirmation_pending_() const {
+  return this->command_confirmation_.pending_mask() != 0U;
 }
 
-bool MhiAcCtrl::tx_bus_window_ready_(uint32_t now_ms) const {
-  if (!this->transport_.tx_uses_bus_window()) {
-    return true;
-  }
-
-  const auto stats = this->diagnostics_.stats().snapshot();
-  if (stats.last_rx_byte_ms == 0U) {
+bool MhiAcCtrl::background_tx_allowed_(uint32_t now_ms) {
+  if (!this->background_tx_due_(now_ms)) {
+    this->tx_background_interval_deferrals_++;
     return false;
   }
 
-  const uint32_t rx_age_ms = now_ms - stats.last_rx_byte_ms;
-  if (rx_age_ms < this->tx_bus_window_min_rx_age_ms_) {
+  if (this->command_confirmation_pending_()) {
+    this->tx_background_confirmation_deferrals_++;
     return false;
   }
 
-  if (this->tx_bus_window_max_rx_age_ms_ == 0U) {
-    return true;
-  }
-
-  return rx_age_ms <= this->tx_bus_window_max_rx_age_ms_;
+  return true;
 }
 
 void MhiAcCtrl::build_and_stage_tx_frame_() {
@@ -460,7 +702,7 @@ void MhiAcCtrl::build_and_stage_tx_frame_() {
   const bool has_pending_command = this->state_.command().has_pending_command();
   const uint32_t now = millis();
 
-  if (!has_pending_command && !this->background_tx_due_(now)) {
+  if (!has_pending_command && !this->background_tx_allowed_(now)) {
     return;
   }
 
@@ -476,12 +718,22 @@ void MhiAcCtrl::build_and_stage_tx_frame_() {
     return;
   }
 
-  // send_tx() queues the frame. Split FastGPIO TX consumes it only after the
-  // RX driver publishes the next frame-end bus marker.
-  const bool queued = this->transport_.send_tx(tx_frame.bytes(), tx_frame.len);
+  const bool command_frame = build_result.has_encoded_commands();
+  const bool background_frame = !has_pending_command && !command_frame;
 
-  if (!has_pending_command) {
+  if (has_pending_command) {
+    this->tx_command_priority_attempts_++;
+  } else {
+    this->tx_background_attempts_++;
+  }
+
+  const bool queued = this->transport_.queue_tx(tx_frame.bytes(), tx_frame.len);
+
+  if (background_frame) {
     this->last_background_tx_ms_ = now;
+    if (!queued) {
+      this->tx_background_failures_++;
+    }
   }
 
   this->record_tx_build_result_(build_result, tx_frame, queued);
@@ -515,7 +767,9 @@ void MhiAcCtrl::record_tx_build_result_(const MhiTxBuildResult& result, const Mh
 }
 
 bool MhiAcCtrl::read_and_sync_rx_frame_() {
-  bool state_changed = false;
+  if (this->rx_worker_enabled_) {
+    return this->decode_cataloged_frames_();
+  }
 
   uint8_t buffer[kMhiMaxFrameBytes]{};
 
@@ -529,13 +783,101 @@ bool MhiAcCtrl::read_and_sync_rx_frame_() {
 
   while (this->frame_sync_.pop_frame(frame)) {
     this->diagnostics_.stats().on_valid_frame(millis());
+    this->ingest_rx_frame_(frame);
+  }
 
-    if (this->decode_frame_(frame)) {
-      state_changed = true;
+  return this->decode_cataloged_frames_();
+}
+
+bool MhiAcCtrl::ingest_rx_frame_(const MhiFrameBuffer& frame) {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const MhiCatalogIngestResult result =
+      this->frame_catalog_.ingest_mosi_frame(frame.view(), ++this->frame_catalog_sequence_, millis());
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+
+  if (!result.stored) {
+    ESP_LOGVV(DIAG_TAG, "catalog: dropped kind=%s key=0x%04x len=%u", mhi_frame_kind_to_string(result.kind),
+              static_cast<unsigned int>(result.opdata_key), static_cast<unsigned int>(frame.len));
+    return false;
+  }
+
+  if (result.overwritten) {
+    ESP_LOGVV(DIAG_TAG, "catalog: overwritten kind=%s key=0x%04x sequence=%lu", mhi_frame_kind_to_string(result.kind),
+              static_cast<unsigned int>(result.opdata_key), static_cast<unsigned long>(this->frame_catalog_sequence_));
+  }
+
+  return true;
+}
+
+bool MhiAcCtrl::take_latest_extended_status_(MhiCatalogedFrame& out) {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const bool taken = this->frame_catalog_.take_latest_extended_status(out);
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  return taken;
+}
+
+bool MhiAcCtrl::take_latest_status_(MhiCatalogedFrame& out) {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const bool taken = this->frame_catalog_.take_latest_status(out);
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  return taken;
+}
+
+bool MhiAcCtrl::take_next_opdata_(MhiCatalogedFrame& out) {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const bool taken = this->frame_catalog_.take_next_opdata(out);
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  return taken;
+}
+
+bool MhiAcCtrl::take_latest_unknown_(MhiCatalogedFrame& out) {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const bool taken = this->frame_catalog_.take_latest_unknown(out);
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  return taken;
+}
+
+MhiCatalogStats MhiAcCtrl::catalog_stats_snapshot_() {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const MhiCatalogStats stats = this->frame_catalog_.stats();
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  return stats;
+}
+
+bool MhiAcCtrl::decode_cataloged_frames_() {
+  bool decoded_anything = false;
+  MhiCatalogedFrame cataloged{};
+
+  // Command/extended feedback can affect pending command confirmation, so drain it first.
+  if (this->take_latest_extended_status_(cataloged)) {
+    if (this->decode_cataloged_frame_(cataloged)) {
+      decoded_anything = true;
     }
   }
 
-  return state_changed;
+  if (this->take_latest_status_(cataloged)) {
+    if (this->decode_cataloged_frame_(cataloged)) {
+      decoded_anything = true;
+    }
+  }
+
+  while (this->take_next_opdata_(cataloged)) {
+    if (this->decode_cataloged_frame_(cataloged)) {
+      decoded_anything = true;
+    }
+  }
+
+  // Keep the unknown slot from becoming permanently valid. Unknowns are still counted in catalog diagnostics.
+  if (this->take_latest_unknown_(cataloged)) {
+    ESP_LOGVV(DIAG_TAG, "catalog: ignored unknown sequence=%lu len=%u", static_cast<unsigned long>(cataloged.sequence),
+              static_cast<unsigned int>(cataloged.frame.len));
+  }
+
+  return decoded_anything;
+}
+
+bool MhiAcCtrl::decode_cataloged_frame_(const MhiCatalogedFrame& cataloged_frame) {
+  return this->decode_frame_(cataloged_frame.frame);
 }
 
 bool MhiAcCtrl::decode_frame_(const MhiFrameBuffer& frame) {

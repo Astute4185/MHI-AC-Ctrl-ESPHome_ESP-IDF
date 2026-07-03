@@ -15,6 +15,8 @@
 #include "mhi_defs.h"
 #include "mhi_diag.h"
 #include "mhi_frame.h"
+#include "mhi_frame_catalog.h"
+#include "mhi_frame_classifier.h"
 #include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
 #include "mhi_publish_bridge.h"
@@ -189,6 +191,11 @@ void frame_sync_waits_for_partial_frame();
 void frame_sync_records_resync_stats();
 void frame_sync_records_checksum_failure_stats();
 void frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise();
+
+void frame_classifier_classifies_status_opdata_and_extended_status();
+void frame_catalog_overwrites_repeated_status_with_latest();
+void frame_catalog_keeps_opdata_slots_separate_by_key();
+void frame_catalog_reports_unknown_frames();
 
 void status_decoder_decodes_core_fields();
 void status_decoder_decodes_33_byte_vane_feedback();

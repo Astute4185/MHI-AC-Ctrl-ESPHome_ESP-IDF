@@ -15,15 +15,17 @@ CONF_MISO_PIN = "miso_pin"
 CONF_RX_DRIVER = "rx_driver"
 CONF_TX_DRIVER = "tx_driver"
 CONF_FRAME_START_IDLE_MS = "frame_start_idle_ms"
-CONF_EXTERNAL_CLOCK_BYTE_GAP_US = "external_clock_byte_gap_us"
-CONF_EXTERNAL_CLOCK_FRAME_GAP_US = "external_clock_frame_gap_us"
-CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US = "external_clock_min_edge_gap_us"
-CONF_EXTERNAL_CLOCK_EDGE = "external_clock_edge"
-CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS = "external_clock_sample_delay_nops"
 CONF_TX_BACKGROUND_INTERVAL_MS = "tx_background_interval_ms"
-CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS = "tx_bus_window_min_rx_age_ms"
-CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS = "tx_bus_window_max_rx_age_ms"
-CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS = "tx_background_failure_backoff_ms"
+CONF_RX_WORKER = "rx_worker"
+CONF_RX_WORKER_START_DELAY_MS = "rx_worker_start_delay_ms"
+CONF_RX_WORKER_STACK_SIZE = "rx_worker_stack_size"
+CONF_RX_WORKER_PRIORITY = "rx_worker_priority"
+CONF_RX_WORKER_CORE_ID = "rx_worker_core_id"
+CONF_TX_WORKER = "tx_worker"
+CONF_TX_WORKER_START_DELAY_MS = "tx_worker_start_delay_ms"
+CONF_TX_WORKER_STACK_SIZE = "tx_worker_stack_size"
+CONF_TX_WORKER_PRIORITY = "tx_worker_priority"
+CONF_TX_WORKER_CORE_ID = "tx_worker_core_id"
 
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
@@ -54,15 +56,17 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of("fast_gpio_rx", "external_clock_rx", lower=True),
         cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
-        cv.Optional(CONF_EXTERNAL_CLOCK_BYTE_GAP_US): cv.int_range(min=20, max=1000),
-        cv.Optional(CONF_EXTERNAL_CLOCK_FRAME_GAP_US): cv.int_range(min=1000, max=50000),
-        cv.Optional(CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US): cv.int_range(min=1, max=50),
-        cv.Optional(CONF_EXTERNAL_CLOCK_EDGE): cv.one_of("rising", "falling", lower=True),
-        cv.Optional(CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS): cv.int_range(min=0, max=32),
-        cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=5000),
-        cv.Optional(CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS): cv.int_range(min=0, max=200),
-        cv.Optional(CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS): cv.int_range(min=0, max=500),
-        cv.Optional(CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS): cv.int_range(min=0, max=10000),
+        cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS, default=250): cv.int_range(min=0, max=60000),
+        cv.Optional(CONF_RX_WORKER, default=False): cv.boolean,
+        cv.Optional(CONF_RX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
+        cv.Optional(CONF_RX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
+        cv.Optional(CONF_RX_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
+        cv.Optional(CONF_RX_WORKER_CORE_ID, default=0): cv.int_range(min=-1, max=1),
+        cv.Optional(CONF_TX_WORKER, default=False): cv.boolean,
+        cv.Optional(CONF_TX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
+        cv.Optional(CONF_TX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
+        cv.Optional(CONF_TX_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
+        cv.Optional(CONF_TX_WORKER_CORE_ID, default=1): cv.int_range(min=-1, max=1),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -76,24 +80,17 @@ async def to_code(config):
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
     cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
-    if CONF_EXTERNAL_CLOCK_BYTE_GAP_US in config:
-        cg.add(var.set_external_clock_byte_gap_us(config[CONF_EXTERNAL_CLOCK_BYTE_GAP_US]))
-    if CONF_EXTERNAL_CLOCK_FRAME_GAP_US in config:
-        cg.add(var.set_external_clock_frame_gap_us(config[CONF_EXTERNAL_CLOCK_FRAME_GAP_US]))
-    if CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US in config:
-        cg.add(var.set_external_clock_min_edge_gap_us(config[CONF_EXTERNAL_CLOCK_MIN_EDGE_GAP_US]))
-    if CONF_EXTERNAL_CLOCK_EDGE in config:
-        cg.add(var.set_external_clock_edge(config[CONF_EXTERNAL_CLOCK_EDGE]))
-    if CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS in config:
-        cg.add(var.set_external_clock_sample_delay_nops(config[CONF_EXTERNAL_CLOCK_SAMPLE_DELAY_NOPS]))
-    if CONF_TX_BACKGROUND_INTERVAL_MS in config:
-        cg.add(var.set_tx_background_interval_ms(config[CONF_TX_BACKGROUND_INTERVAL_MS]))
-    if CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS in config:
-        cg.add(var.set_tx_bus_window_min_rx_age_ms(config[CONF_TX_BUS_WINDOW_MIN_RX_AGE_MS]))
-    if CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS in config:
-        cg.add(var.set_tx_bus_window_max_rx_age_ms(config[CONF_TX_BUS_WINDOW_MAX_RX_AGE_MS]))
-    if CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS in config:
-        cg.add(var.set_tx_background_failure_backoff_ms(config[CONF_TX_BACKGROUND_FAILURE_BACKOFF_MS]))
+    cg.add(var.set_tx_background_interval_ms(config[CONF_TX_BACKGROUND_INTERVAL_MS]))
+    cg.add(var.set_rx_worker(config[CONF_RX_WORKER]))
+    cg.add(var.set_rx_worker_start_delay_ms(config[CONF_RX_WORKER_START_DELAY_MS]))
+    cg.add(var.set_rx_worker_stack_size(config[CONF_RX_WORKER_STACK_SIZE]))
+    cg.add(var.set_rx_worker_priority(config[CONF_RX_WORKER_PRIORITY]))
+    cg.add(var.set_rx_worker_core_id(config[CONF_RX_WORKER_CORE_ID]))
+    cg.add(var.set_tx_worker(config[CONF_TX_WORKER]))
+    cg.add(var.set_tx_worker_start_delay_ms(config[CONF_TX_WORKER_START_DELAY_MS]))
+    cg.add(var.set_tx_worker_stack_size(config[CONF_TX_WORKER_STACK_SIZE]))
+    cg.add(var.set_tx_worker_priority(config[CONF_TX_WORKER_PRIORITY]))
+    cg.add(var.set_tx_worker_core_id(config[CONF_TX_WORKER_CORE_ID]))
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))
