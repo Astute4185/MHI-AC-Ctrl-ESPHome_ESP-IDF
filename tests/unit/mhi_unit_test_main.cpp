@@ -18,6 +18,7 @@ int main() {
   frame_classifier_classifies_status_opdata_and_extended_status();
   frame_catalog_overwrites_repeated_status_with_latest();
   frame_catalog_keeps_opdata_slots_separate_by_key();
+  frame_catalog_keeps_command_candidate_side_slot_latest_only();
   frame_catalog_reports_unknown_frames();
 
   status_decoder_decodes_core_fields();
@@ -40,6 +41,7 @@ int main() {
   publish_bridge_publishes_sensor_parity_slice1_on_first_opdata_publish();
   publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();
   publish_bridge_maps_unknown_protection_state();
+  publish_bridge_maps_mhi_auto_to_heat_cool_for_ha_setpoint_ui();
   publish_bridge_publishes_sensor_parity_slice3_vane_feedback();
   publish_bridge_suppresses_unchanged_sensor_republishes();
   publish_bridge_suppresses_alternating_climate_current_temperature_chatter();

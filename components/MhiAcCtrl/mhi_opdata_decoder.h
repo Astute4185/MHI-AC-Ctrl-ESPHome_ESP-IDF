@@ -77,8 +77,6 @@ struct MhiDecodedOpData {
 class MhiOpDataDecoder {
  public:
   static bool decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& out);
-
- private:
   static bool is_opdata_response(const MhiFrameView& mosi);
 };
 

@@ -48,11 +48,21 @@ bool MhiOpDataDecoder::is_opdata_response(const MhiFrameView& mosi) {
     return false;
   }
 
-  // Normal opdata responses carry the 0x10 type marker in DB10[5:4].
-  // Keep accepting the current synthetic/unit-test style frames where DB6 bit 7
-  // is set so existing decoder coverage remains valid while legacy opdata IDs
-  // are brought back slice by slice.
-  return opdata_type(mosi) || (mosi[DB6] & 0x80U) != 0U;
+  // DB6[7] is not enough to identify opdata; normal status/command feedback can
+  // also carry it. Real opdata responses need a response marker in DB10.
+  //
+  // Common responses use DB10[5:4] == 0x10. Some high-bank temperature values
+  // use DB10[5:4] == 0x20. A few legacy/error-history style values use DB10 in
+  // the 0x30 range while DB6[7] is set.
+  if (opdata_type(mosi) || opdata_type_0x20(mosi)) {
+    return true;
+  }
+
+  if (high_group(mosi) && (mosi[DB10] & 0xF0U) == 0x30U) {
+    return true;
+  }
+
+  return false;
 }
 
 bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& out) {

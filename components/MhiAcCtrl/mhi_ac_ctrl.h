@@ -338,6 +338,8 @@ class MhiAcCtrl : public Component {
   bool decode_cataloged_frame_(const MhiCatalogedFrame& cataloged_frame);
   bool take_latest_extended_status_(MhiCatalogedFrame& out);
   bool take_latest_status_(MhiCatalogedFrame& out);
+  bool take_latest_command_candidate_(MhiCatalogedFrame& out);
+  void clear_command_candidate_();
   bool take_next_opdata_(MhiCatalogedFrame& out);
   bool take_latest_unknown_(MhiCatalogedFrame& out);
   MhiCatalogStats catalog_stats_snapshot_();

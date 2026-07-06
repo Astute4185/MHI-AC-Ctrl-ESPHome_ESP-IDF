@@ -245,7 +245,9 @@ climate::ClimateMode MhiPublishBridge::map_climate_mode(bool power, uint8_t mode
 
   switch (mode) {
     case 0:
-      return climate::CLIMATE_MODE_AUTO;
+      // MHI auto is exposed as HEAT_COOL in Home Assistant so the frontend
+      // keeps temperature control available. HA AUTO is not advertised.
+      return climate::CLIMATE_MODE_HEAT_COOL;
 
     case 1:
       return climate::CLIMATE_MODE_DRY;
@@ -260,7 +262,7 @@ climate::ClimateMode MhiPublishBridge::map_climate_mode(bool power, uint8_t mode
       return climate::CLIMATE_MODE_HEAT;
 
     default:
-      return climate::CLIMATE_MODE_AUTO;
+      return climate::CLIMATE_MODE_HEAT_COOL;
   }
 }
 

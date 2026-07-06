@@ -27,6 +27,9 @@ CONF_TX_WORKER_STACK_SIZE = "tx_worker_stack_size"
 CONF_TX_WORKER_PRIORITY = "tx_worker_priority"
 CONF_TX_WORKER_CORE_ID = "tx_worker_core_id"
 
+DEFAULT_TX_BACKGROUND_INTERVAL_MS = 250
+DEFAULT_WORKER_TX_BACKGROUND_INTERVAL_MS = 1000
+
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
 CONF_EXTERNAL_TEMPERATURE_SENSOR = "external_temperature_sensor"
@@ -56,7 +59,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of("fast_gpio_rx", "external_clock_rx", lower=True),
         cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
-        cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS, default=250): cv.int_range(min=0, max=60000),
+        cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
         cv.Optional(CONF_RX_WORKER, default=False): cv.boolean,
         cv.Optional(CONF_RX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
         cv.Optional(CONF_RX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
@@ -71,6 +74,16 @@ CONFIG_SCHEMA = cv.Schema(
 ).extend(cv.COMPONENT_SCHEMA)
 
 
+def _default_tx_background_interval_ms(config):
+    if CONF_TX_BACKGROUND_INTERVAL_MS in config:
+        return config[CONF_TX_BACKGROUND_INTERVAL_MS]
+
+    if config[CONF_RX_WORKER] or config[CONF_TX_WORKER]:
+        return DEFAULT_WORKER_TX_BACKGROUND_INTERVAL_MS
+
+    return DEFAULT_TX_BACKGROUND_INTERVAL_MS
+
+
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -80,7 +93,7 @@ async def to_code(config):
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
     cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
-    cg.add(var.set_tx_background_interval_ms(config[CONF_TX_BACKGROUND_INTERVAL_MS]))
+    cg.add(var.set_tx_background_interval_ms(_default_tx_background_interval_ms(config)))
     cg.add(var.set_rx_worker(config[CONF_RX_WORKER]))
     cg.add(var.set_rx_worker_start_delay_ms(config[CONF_RX_WORKER_START_DELAY_MS]))
     cg.add(var.set_rx_worker_stack_size(config[CONF_RX_WORKER_STACK_SIZE]))

@@ -19,6 +19,7 @@ struct MhiCatalogStats {
   uint32_t unknown_frames{0};
   uint32_t overwritten_frames{0};
   uint32_t dropped_opdata_slots_full{0};
+  uint32_t command_candidate_frames{0};
 };
 
 struct MhiCatalogSlot {
@@ -51,10 +52,13 @@ class MhiFrameCatalog {
  public:
   void reset();
 
-  MhiCatalogIngestResult ingest_mosi_frame(const MhiFrameView& frame, uint32_t sequence, uint32_t now_ms);
+  MhiCatalogIngestResult ingest_mosi_frame(const MhiFrameView& frame, uint32_t sequence, uint32_t now_ms,
+                                           bool store_command_candidate = false);
 
   bool take_latest_status(MhiCatalogedFrame& out);
   bool take_latest_extended_status(MhiCatalogedFrame& out);
+  bool take_latest_command_candidate(MhiCatalogedFrame& out);
+  void clear_command_candidate();
   bool take_next_opdata(MhiCatalogedFrame& out);
   bool take_latest_opdata(uint16_t opdata_key, MhiCatalogedFrame& out);
   bool take_latest_unknown(MhiCatalogedFrame& out);
@@ -77,11 +81,15 @@ class MhiFrameCatalog {
 
   MhiCatalogSlot* find_or_allocate_opdata_slot_(uint16_t opdata_key);
   MhiCatalogIngestResult write_slot_(MhiCatalogSlot& slot, const MhiFrameView& frame, MhiFrameKind kind,
-                                     uint16_t opdata_key, uint32_t sequence, uint32_t now_ms);
+                                     uint16_t opdata_key, uint32_t sequence, uint32_t now_ms,
+                                     bool count_overwrite = true);
+  void maybe_write_command_candidate_(const MhiFrameView& frame, MhiFrameKind kind, uint16_t opdata_key,
+                                      uint32_t sequence, uint32_t now_ms, bool store_command_candidate);
 
   MhiCatalogStats stats_{};
   MhiCatalogSlot latest_status_{};
   MhiCatalogSlot latest_extended_status_{};
+  MhiCatalogSlot latest_command_candidate_{};
   MhiCatalogSlot opdata_slots_[kMhiCatalogOpDataSlots]{};
   MhiCatalogSlot latest_unknown_{};
 };

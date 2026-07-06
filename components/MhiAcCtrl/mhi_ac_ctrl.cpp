@@ -385,14 +385,15 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
   const MhiCatalogStats catalog_stats = this->catalog_stats_snapshot_();
   ESP_LOGI(DIAG_TAG,
            "runtime: catalog ingested=%lu status=%lu extended=%lu opdata=%lu unknown=%lu overwritten=%lu "
-           "opdata_slots_full=%lu",
+           "opdata_slots_full=%lu command_candidates=%lu",
            static_cast<unsigned long>(catalog_stats.ingested_frames),
            static_cast<unsigned long>(catalog_stats.status_frames),
            static_cast<unsigned long>(catalog_stats.extended_status_frames),
            static_cast<unsigned long>(catalog_stats.opdata_frames),
            static_cast<unsigned long>(catalog_stats.unknown_frames),
            static_cast<unsigned long>(catalog_stats.overwritten_frames),
-           static_cast<unsigned long>(catalog_stats.dropped_opdata_slots_full));
+           static_cast<unsigned long>(catalog_stats.dropped_opdata_slots_full),
+           static_cast<unsigned long>(catalog_stats.command_candidate_frames));
 
   ESP_LOGI(DIAG_TAG,
            "runtime: tx_priority command_attempts=%lu background_attempts=%lu background_failures=%lu "
@@ -746,6 +747,9 @@ void MhiAcCtrl::record_tx_build_result_(const MhiTxBuildResult& result, const Mh
     if (sent) {
       this->diagnostics_.stats().on_tx_command_frame(result.encoded_command_mask, now);
       this->command_confirmation_.stage(result.intent, result.encoded_command_mask, now);
+      if (this->command_confirmation_.pending_mask() != 0U) {
+        this->clear_command_candidate_();
+      }
     } else {
       this->diagnostics_.stats().on_tx_command_failure(result.encoded_command_mask, now);
     }
@@ -791,8 +795,9 @@ bool MhiAcCtrl::read_and_sync_rx_frame_() {
 
 bool MhiAcCtrl::ingest_rx_frame_(const MhiFrameBuffer& frame) {
   portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const MhiCatalogIngestResult result =
-      this->frame_catalog_.ingest_mosi_frame(frame.view(), ++this->frame_catalog_sequence_, millis());
+  const bool store_command_candidate = this->command_confirmation_pending_();
+  const MhiCatalogIngestResult result = this->frame_catalog_.ingest_mosi_frame(
+      frame.view(), ++this->frame_catalog_sequence_, millis(), store_command_candidate);
   portEXIT_CRITICAL(&this->frame_catalog_mux_);
 
   if (!result.stored) {
@@ -823,6 +828,19 @@ bool MhiAcCtrl::take_latest_status_(MhiCatalogedFrame& out) {
   return taken;
 }
 
+bool MhiAcCtrl::take_latest_command_candidate_(MhiCatalogedFrame& out) {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  const bool taken = this->frame_catalog_.take_latest_command_candidate(out);
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  return taken;
+}
+
+void MhiAcCtrl::clear_command_candidate_() {
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  this->frame_catalog_.clear_command_candidate();
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+}
+
 bool MhiAcCtrl::take_next_opdata_(MhiCatalogedFrame& out) {
   portENTER_CRITICAL(&this->frame_catalog_mux_);
   const bool taken = this->frame_catalog_.take_next_opdata(out);
@@ -847,6 +865,14 @@ MhiCatalogStats MhiAcCtrl::catalog_stats_snapshot_() {
 bool MhiAcCtrl::decode_cataloged_frames_() {
   bool decoded_anything = false;
   MhiCatalogedFrame cataloged{};
+
+  // While a command is pending, preserve the latest status/extended feedback in a side slot so
+  // the RX worker cannot overwrite a short-lived confirmation candidate before the main loop decodes it.
+  if (this->command_confirmation_pending_() && this->take_latest_command_candidate_(cataloged)) {
+    if (this->decode_cataloged_frame_(cataloged)) {
+      decoded_anything = true;
+    }
+  }
 
   // Command/extended feedback can affect pending command confirmation, so drain it first.
   if (this->take_latest_extended_status_(cataloged)) {
@@ -1264,6 +1290,10 @@ void MhiAcCtrl::update_command_confirmation_(const MhiStatusState& status) {
   const uint32_t now = millis();
   this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now);
 
+  if (this->command_confirmation_.pending_mask() == 0U) {
+    this->clear_command_candidate_();
+  }
+
   if ((confirmed_mask & kNoPendingExtendedFeedbackMask) != 0U) {
     this->extended_louver_bootstrap_complete_ = true;
     this->pending_extended_feedback_candidate_ = false;
@@ -1283,6 +1313,7 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
   }
 
   this->diagnostics_.stats().on_command_confirmation_timeout(timeout_mask, now);
+  this->clear_command_candidate_();
 
   ESP_LOGW(DIAG_TAG, "command: confirmation timeout mask=0x%08lx", static_cast<unsigned long>(timeout_mask));
 }

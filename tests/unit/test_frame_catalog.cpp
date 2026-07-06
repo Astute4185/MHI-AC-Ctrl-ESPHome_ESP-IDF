@@ -1,6 +1,11 @@
 #include "mhi_test_common.h"
 
+#include "mhi_frame_catalog.h"
+#include "mhi_frame_classifier.h"
+
 namespace mhi_unit_tests {
+
+using namespace esphome::mhi_ac_ctrl;
 
 void frame_classifier_classifies_status_opdata_and_extended_status() {
   const MhiFrameBuffer status = make_mosi_status_frame();
@@ -17,6 +22,33 @@ void frame_classifier_classifies_status_opdata_and_extended_status() {
   const MhiFrameClassification extended_classification = classify_mhi_mosi_frame(extended.view());
   EXPECT_EQ(static_cast<int>(extended_classification.kind), static_cast<int>(MhiFrameKind::EXTENDED_STATUS));
   EXPECT_EQ(extended_classification.opdata_key, kMhiInvalidOpDataKey);
+
+  MhiFrameBuffer high_db6_status = make_mosi_status_frame();
+  high_db6_status.data[DB6] = 0x80U;
+  high_db6_status.data[DB9] = 0x81U;
+  high_db6_status.data[DB10] = 0x01U;
+  high_db6_status.data[DB11] = 0x00U;
+  const uint16_t high_db6_status_checksum = mhi_calc_checksum(high_db6_status.data);
+  high_db6_status.data[CBH] = static_cast<uint8_t>((high_db6_status_checksum >> 8U) & 0xFFU);
+  high_db6_status.data[CBL] = static_cast<uint8_t>(high_db6_status_checksum & 0xFFU);
+
+  const MhiFrameClassification high_db6_status_classification = classify_mhi_mosi_frame(high_db6_status.view());
+  EXPECT_EQ(static_cast<int>(high_db6_status_classification.kind), static_cast<int>(MhiFrameKind::STATUS));
+  EXPECT_EQ(high_db6_status_classification.opdata_key, kMhiInvalidOpDataKey);
+
+  MhiFrameBuffer high_db6_response_marker = make_mosi_status_frame();
+  high_db6_response_marker.data[DB6] = 0x80U;
+  high_db6_response_marker.data[DB9] = 0x1EU;
+  high_db6_response_marker.data[DB10] = 0x10U;
+  high_db6_response_marker.data[DB11] = 0x0CU;
+  const uint16_t high_db6_response_marker_checksum = mhi_calc_checksum(high_db6_response_marker.data);
+  high_db6_response_marker.data[CBH] = static_cast<uint8_t>((high_db6_response_marker_checksum >> 8U) & 0xFFU);
+  high_db6_response_marker.data[CBL] = static_cast<uint8_t>(high_db6_response_marker_checksum & 0xFFU);
+
+  const MhiFrameClassification high_db6_response_marker_classification =
+      classify_mhi_mosi_frame(high_db6_response_marker.view());
+  EXPECT_EQ(static_cast<int>(high_db6_response_marker_classification.kind), static_cast<int>(MhiFrameKind::OPDATA));
+  EXPECT_EQ(high_db6_response_marker_classification.opdata_key, 0x9E10U);
 }
 
 void frame_catalog_overwrites_repeated_status_with_latest() {
@@ -50,6 +82,35 @@ void frame_catalog_overwrites_repeated_status_with_latest() {
   EXPECT_EQ(latest.last_update_ms, 1010U);
   EXPECT_EQ(latest.frame.data[DB3], 120U);
   EXPECT_FALSE(catalog.take_latest_status(latest));
+}
+
+
+void frame_catalog_keeps_command_candidate_side_slot_latest_only() {
+  MhiFrameCatalog catalog{};
+
+  MhiFrameBuffer before_command = make_mosi_status_frame_33(1U, false, false);
+  MhiFrameBuffer first_candidate = make_mosi_status_frame_33(2U, false, false);
+  MhiFrameBuffer second_candidate = make_mosi_status_frame_33(3U, false, false);
+
+  const auto before = catalog.ingest_mosi_frame(before_command.view(), 1U, 1000U, false);
+  const auto first = catalog.ingest_mosi_frame(first_candidate.view(), 2U, 1010U, true);
+  const auto second = catalog.ingest_mosi_frame(second_candidate.view(), 3U, 1020U, true);
+
+  EXPECT_TRUE(before.stored);
+  EXPECT_TRUE(first.stored);
+  EXPECT_TRUE(second.stored);
+  EXPECT_EQ(catalog.stats().extended_status_frames, 3U);
+  EXPECT_EQ(catalog.stats().command_candidate_frames, 2U);
+
+  MhiCatalogedFrame command_candidate{};
+  EXPECT_TRUE(catalog.take_latest_command_candidate(command_candidate));
+  EXPECT_EQ(command_candidate.sequence, 3U);
+  EXPECT_EQ(command_candidate.frame.data[DB16], second_candidate.data[DB16]);
+  EXPECT_FALSE(catalog.take_latest_command_candidate(command_candidate));
+
+  MhiCatalogedFrame latest_extended{};
+  EXPECT_TRUE(catalog.take_latest_extended_status(latest_extended));
+  EXPECT_EQ(latest_extended.sequence, 3U);
 }
 
 void frame_catalog_keeps_opdata_slots_separate_by_key() {

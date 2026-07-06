@@ -2,40 +2,56 @@
 
 ESPHome external component for controlling Mitsubishi Heavy Industries air conditioners over the MHI SPI-style bus using ESP32-class hardware.
 
-This Redux version is an ESP-IDF-focused rewrite/refactor of the existing MHI-AC-Ctrl ESPHome work. It keeps the ESPHome/Home Assistant integration model, but splits the protocol, transport, state, publishing, diagnostics, and command confirmation paths so changes can be made in smaller, safer pieces.
+This Redux version is an ESP-IDF-focused rewrite/refactor of the existing MHI-AC-Ctrl ESPHome work. It keeps the ESPHome/Home Assistant integration model, but splits the protocol, transport, state, publishing, diagnostics, command confirmation, and transport-driver paths so changes can be made in smaller, safer pieces.
 
 This is not a clean-room protocol project. It builds on the original community MHI-AC-Ctrl work, upstream ESPHome component behaviour, and public MHI trace/capture knowledge.
 
 ## Current status
 
-The primary validated target remains **ESP32-S3 with ESP-IDF**.
+The current validated target remains **ESP32-S3 with ESP-IDF**.
 
-The current development branch also has a runtime-validated experimental Atom/classic ESP32 path using `external_clock_rx`, `fast_gpio_tx`, latest-slot frame cataloging, and optional RX/TX workers. This path is promising, but should still be soak-tested before being treated as fully supported.
+Recommended/default path:
+
+```yaml
+rx_driver: fast_gpio_rx
+tx_driver: fast_gpio_tx
+rx_worker: false
+tx_worker: false
+```
+
+Experimental path:
+
+```yaml
+rx_driver: external_clock_rx
+tx_driver: fast_gpio_tx
+```
+
+Worker mode is currently recommended only for **external-clock RX experiments**. Do not enable workers on the normal FastGPIO backend unless you are actively debugging the worker path.
 
 Implemented and runtime-tested:
 
 - 20-byte and 33-byte MHI frame handling.
-- Split FastGPIO RX/TX transport.
+- Split RX/TX transport selection.
+- FastGPIO RX and FastGPIO TX transport.
 - Experimental external-clock RX with FastGPIO TX on ESP32 and ESP32-S3.
 - Latest-slot frame cataloging for status, extended status, opdata, and unknown frames.
-- Optional RX worker that captures, syncs, classifies, and catalogs frames.
-- Optional TX worker that owns bus-marker TX flushing.
-- Queue/flush split for TX so the main loop can queue frames without blocking on FastGPIO TX.
+- Command confirmation and duplicate command suppression.
 - Climate control with confirmed-state updates.
 - Fan speed select.
 - Vertical vane select.
 - Horizontal vane select from 33-byte feedback.
 - 3D Auto switch and read-only 3D Auto feedback sensor.
 - Sensor parity for common status and opdata telemetry.
-- Command confirmation and duplicate command suppression.
 - Runtime diagnostics for RX, TX, workers, frame cataloging, commands, loop budget, and protocol health.
 
 Still intentionally conservative:
 
 - FastGPIO RX/TX remains the stable/default transport path.
 - `external_clock_rx` remains experimental and should be validated with soak logs before being treated as supported.
-- RX/TX workers are optional and disabled by default.
-- Worker mode should be treated as opt-in until longer soak testing is complete.
+- `rx_worker` and `tx_worker` are optional, experimental, and disabled by default.
+- Workers are not currently recommended for `fast_gpio_rx`.
+
+For detailed test findings and transport trade-offs, see [`FINDINGS.md`](FINDINGS.md).
 
 ## Hardware assumptions
 
@@ -53,12 +69,14 @@ Known-good current development target:
 - ESP32-S3
 - ESP-IDF framework
 - 33-byte frame mode
-- FastGPIO RX/TX
+- `rx_driver: fast_gpio_rx`
+- `tx_driver: fast_gpio_tx`
+- workers disabled
 
 Experimental transport targets:
 
 - ESP32 / ESP32-S3 with `rx_driver: external_clock_rx` and `tx_driver: fast_gpio_tx`
-- Atom/classic ESP32 with optional RX/TX workers enabled
+- ESP32 / ESP32-S3 with `external_clock_rx` and optional workers
 - ESP32-C3 compile coverage only; runtime behaviour is not validated
 
 ## ESP32-C3 status
@@ -75,7 +93,7 @@ Current status:
 Important limitations:
 
 - ESP32-C3 is single-core.
-- The supported RX path is synchronous FastGPIO, which is timing-sensitive.
+- FastGPIO capture is timing-sensitive and software-heavy.
 - Passing compile tests does not prove the C3 can reliably capture the MHI bus under Wi-Fi, logging, API, and Home Assistant load.
 - ESP32-S3 remains the validated and recommended target.
 
@@ -89,6 +107,7 @@ signature_misses = 0
 sync_losses = 0
 dropped_bytes = 0
 commands confirm
+opdata continues to publish when requested
 ```
 
 ## Transport drivers
@@ -102,7 +121,7 @@ tx_driver: fast_gpio_tx
 
 There are no legacy aliases in the schema. `fast_gpio_rx` is an RX driver and `fast_gpio_tx` is a TX driver.
 
-The transport layer now treats RX and TX as separate drivers:
+The transport layer treats RX and TX as separate responsibilities:
 
 ```text
 mhi_fast_gpio_rx_driver
@@ -116,9 +135,11 @@ The stable/default path is:
 ```yaml
 rx_driver: fast_gpio_rx
 tx_driver: fast_gpio_tx
+rx_worker: false
+tx_worker: false
 ```
 
-This uses the split FastGPIO RX and FastGPIO TX drivers. RX captures MOSI/SCK and publishes a frame-end bus marker. TX queues frames and only attempts to drive MISO after a new RX bus marker is observed.
+This uses the split FastGPIO RX and FastGPIO TX drivers. RX captures MOSI/SCK and publishes a frame-end bus marker. TX queues frames and attempts to drive MISO after a new RX bus marker is observed.
 
 The experimental external-clock path is:
 
@@ -127,9 +148,9 @@ rx_driver: external_clock_rx
 tx_driver: fast_gpio_tx
 ```
 
-`external_clock_rx` samples MOSI from the external SCK edge and emits signature-anchored frame chunks. It also publishes the same frame-end bus marker used by FastGPIO RX, so FastGPIO TX can respond from the RX-observed bus timing instead of blindly polling for a transmit window.
+`external_clock_rx` samples MOSI from the external SCK edge and emits signature-anchored frame chunks. It also publishes the same frame-end bus marker used by FastGPIO RX, so FastGPIO TX can respond from RX-observed bus timing instead of blindly polling for a transmit window.
 
-RX-only validation is still available:
+RX-only validation is also available:
 
 ```yaml
 rx_driver: external_clock_rx
@@ -153,6 +174,8 @@ external_components:
 
 ## Minimal component configuration
 
+Recommended FastGPIO configuration:
+
 ```yaml
 MhiAcCtrl:
   id: mhi_ac
@@ -162,76 +185,142 @@ MhiAcCtrl:
   miso_pin: 39
   rx_driver: fast_gpio_rx
   tx_driver: fast_gpio_tx
+  rx_worker: false
+  tx_worker: false
   room_temp_timeout: 60
 ```
 
-Worker options are available but disabled by default. Transport selection remains explicit through `rx_driver` and `tx_driver`.
+Required component-level fields:
 
-## Optional workers
-
-Worker mode is optional. The default path keeps both workers disabled:
-
-```yaml
-MhiAcCtrl:
-  id: mhi_ac
-  rx_worker: false
-  tx_worker: false
+```text
+id
+frame_size
+sck_pin
+mosi_pin
+miso_pin
+rx_driver
+tx_driver
 ```
 
-The RX worker is a catalog writer only. It reads RX bytes, performs frame sync, classifies frames, and writes the latest frame into the frame catalog. It does not publish ESPHome entities and it must not send TX.
+Optional fields:
 
-The TX worker owns bus-marker TX flushing when enabled. The main loop queues TX frames only, while the TX worker performs the blocking FastGPIO TX wait/send path outside the ESPHome component loop.
+```text
+rx_worker
+tx_worker
+rx_worker_start_delay_ms
+rx_worker_stack_size
+rx_worker_priority
+rx_worker_core_id
+tx_worker_start_delay_ms
+tx_worker_stack_size
+tx_worker_priority
+tx_worker_core_id
+tx_background_interval_ms
+room_temp_timeout
+external_temperature_sensor
+```
 
-Example dual-worker configuration for dual-core ESP32-class devices:
+## Worker mode
+
+Worker mode is experimental and disabled by default.
+
+Current recommendation:
+
+```text
+FastGPIO RX/TX:
+  keep workers disabled
+
+External-clock RX experiments:
+  workers may be enabled for testing
+```
+
+The worker path is currently intended for external-clock RX testing only:
 
 ```yaml
 MhiAcCtrl:
   id: mhi_ac
+
+  # Required bus/frame config.
   frame_size: 33
-  sck_pin: 33
-  mosi_pin: 25
-  miso_pin: 21
+  sck_pin: 8
+  mosi_pin: 38
+  miso_pin: 39
+
+  # Experimental transport selection.
   rx_driver: external_clock_rx
   tx_driver: fast_gpio_tx
 
+  # Optional worker mode.
   rx_worker: true
+  tx_worker: true
+
+  # Optional worker tuning.
   rx_worker_start_delay_ms: 5000
   rx_worker_stack_size: 6144
   rx_worker_priority: 4
   rx_worker_core_id: 0
 
-  tx_worker: true
   tx_worker_start_delay_ms: 5000
   tx_worker_stack_size: 6144
   tx_worker_priority: 4
   tx_worker_core_id: 1
 
+  # Optional. Recommended for worker testing to reduce background TX pressure.
   tx_background_interval_ms: 1000
 ```
 
-Recommended worker layout on dual-core ESP32-class hardware:
+Worker responsibilities:
 
 ```text
-core 0: RX worker capture/sync/catalog
-core 1: TX worker bus-marker flush/send
-main loop: decode, publish, command handling, and TX queueing
+rx_worker:
+  capture/sync/classify/catalog RX frames only
+
+ tx_worker:
+  flush queued TX frames against RX bus markers
+
+main loop:
+  decode cataloged frames
+  publish ESPHome entities
+  manage command confirmation
+  queue TX frames
 ```
 
-When `tx_worker: true`, TX auto-flush is disabled in the main loop and TX flushing moves to the TX worker. Healthy boot logs should show:
+Do not assume workers improve stability simply because the board is dual-core. On the FastGPIO backend, worker mode can improve loop timing counters while degrading real behaviour such as command confirmation or opdata flow.
+
+A worker test should only be considered healthy if all of these remain true:
 
 ```text
-TX ownership: queue/flush split, auto_flush=NO
-TX worker: enabled=YES running=YES core=1 priority=4 stack=6144 start_delay=5000ms
+valid_frames increases
+checksum_failures stays at 0
+signature_misses stays at 0
+tx_failures stays low
+command_confirmations increases when commands are sent
+command_confirmation_timeouts stays at 0
+opdata frames continue to appear when requested
+Home Assistant state matches the physical AC state
 ```
 
-When `rx_worker: true`, healthy boot logs should show:
+### Worker queue policy
+
+Do not use a general FIFO queue for status or extended-status frames. A bounded FIFO was considered during RX-worker testing, but rejected because it reintroduces queue/timing pressure and works against the latest-state design.
+
+Preferred worker/catalog shape:
 
 ```text
-RX mode: worker catalog writer
-RX worker: enabled=YES running=YES core=0 priority=4 stack=6144 start_delay=5000ms
+status:
+  latest slot only
+
+extended status:
+  latest slot only
+
+opdata:
+  keyed latest slots
+
+command feedback:
+  optional latest command-candidate side slot
 ```
 
-For Atom/classic ESP32 testing, keep `tx_background_interval_ms: 1000` to reduce background TX pressure.
+The intent is to keep worker mode from building a backlog. Repeated steady-state frames should collapse to the latest value. Transient command feedback may have a dedicated latest side slot, but should not become a FIFO backlog.
 
 ## Frame size
 
@@ -272,10 +361,11 @@ select:
 Supported fan options:
 
 - Auto
-- Quiet
 - Low
 - Medium
 - High
+
+Quiet mode is not currently exposed as a normal fan speed. Some ACs appear to have a separate quiet/silent mode, but it should not be assumed to be part of the internal fan-speed enum unless the feedback code is clearly identified.
 
 Supported vertical vane options:
 
@@ -430,7 +520,7 @@ on_...:
 
 ## Runtime diagnostics
 
-The component logs runtime diagnostics for transport, protocol health, command confirmation, and loop budget.
+The component logs runtime diagnostics for transport, protocol health, frame cataloging, worker state, command confirmation, and loop budget.
 
 Healthy runtime should look like:
 
@@ -448,6 +538,7 @@ Recommended use:
 
 - Use detailed diagnostics while bringing up hardware or soak testing.
 - Reduce log level once the device is stable.
+- For worker testing, validate command confirmation and opdata flow, not just RX frame health.
 
 Important counters:
 
@@ -459,7 +550,9 @@ Important counters:
 - `dropped_bytes`
 - `tx_failures`
 - `command_confirmation_timeouts`
-- `catalog overwritten`
+- `catalog status`
+- `catalog extended`
+- `catalog opdata`
 - `opdata_slots_full`
 - `rx_worker running`
 - `tx_worker running`
@@ -475,30 +568,11 @@ valid_frames climbs
 invalid_frames = 0
 checksum_failures = 0
 sync_losses = 0
-opdata_slots_full = 0
-tx_failures = 0
-command_confirmation_timeouts = 0
+tx_failures stays low
+commands confirm
+opdata continues to appear when requested
 loop_us avg < 30000us
 over_budget does not climb during normal operation
-```
-
-Latest Atom/classic ESP32 worker validation using `external_clock_rx`, `fast_gpio_tx`, `rx_worker: true`, `tx_worker: true`, and `tx_background_interval_ms: 1000` showed:
-
-```text
-valid_frames=1679
-invalid_frames=0
-checksum_failures=0
-signature_misses=0
-sync_losses=0
-dropped_bytes=0
-tx_frames=89
-tx_failures=0
-tx_command_frames=3
-tx_command_failures=0
-command_confirmations=3
-command_confirmation_timeouts=0
-loop_us max=22236
-over_budget=0
 ```
 
 ## Command confirmation and duplicate suppression
@@ -518,9 +592,9 @@ This prevents rapid Home Assistant/UI input changes from repeatedly restaging th
 Before submitting a merge request:
 
 ```bash
-bash scripts/test.sh
-scripts/compile-tests.sh
-scripts/lint.sh
+./scripts/lint.sh fix
+./scripts/test.sh
+./scripts/compile-tests.sh
 ```
 
 For hardware validation:
@@ -531,26 +605,41 @@ invalid_frames = 0
 checksum_failures = 0
 sync_losses = 0
 commands confirm
+opdata sensors continue to publish when requested
 Home Assistant state settles to confirmed AC feedback
+```
+
+For worker validation, also check:
+
+```text
+rx_worker/tx_worker state is what the YAML intended
+command_confirmation_timeouts = 0
+opdata does not stop flowing
+loop_us and over_budget improve without breaking functional behaviour
 ```
 
 ## Troubleshooting
 
 ### Long ESPHome loop warnings
 
-Synchronous FastGPIO RX/TX can block the ESPHome loop while waiting for the external MHI frame cadence. This can produce long-operation warnings even when RX is reliable. Treat clean protocol counters as the source of truth.
+Synchronous FastGPIO RX/TX can block the ESPHome loop while waiting for the external MHI frame cadence. This can produce long-operation warnings even when RX is reliable.
 
-If using `external_clock_rx` with `fast_gpio_tx` on a dual-core ESP32-class device, enable the optional workers to move RX capture and TX flushing out of the ESPHome component loop:
+Treat clean protocol counters as necessary but not sufficient. If opdata stops flowing or commands stop confirming, the run is not healthy even if `valid_frames` looks good.
+
+### Worker mode looks faster but behaviour regresses
+
+Workers can improve loop timing counters while still breaking command confirmation or opdata flow.
+
+For normal FastGPIO operation, disable workers:
 
 ```yaml
-rx_worker: true
-rx_worker_core_id: 0
-tx_worker: true
-tx_worker_core_id: 1
-tx_background_interval_ms: 1000
+rx_driver: fast_gpio_rx
+tx_driver: fast_gpio_tx
+rx_worker: false
+tx_worker: false
 ```
 
-With `tx_worker: true`, the boot log should show `auto_flush=NO`. If it still shows `auto_flush=YES`, TX flushing is still happening in the main loop.
+Use workers only for external-clock RX experiments unless actively debugging worker internals.
 
 ### Sensor remains unavailable
 
@@ -571,12 +660,12 @@ The code is split into protocol, transport, state, publish, diagnostics, and pla
 ```text
 mhi_checksum.*
 mhi_frame_sync.*
+mhi_frame_classifier.*
+mhi_frame_catalog.*
 mhi_status_decoder.*
 mhi_opdata_decoder.*
 mhi_tx_builder.*
 mhi_command_confirmation.*
-mhi_frame_classifier.*
-mhi_frame_catalog.*
 mhi_publish_bridge.*
 mhi_transport_manager.*
 mhi_fast_gpio_rx_driver.*
@@ -598,19 +687,19 @@ tests/components/
 Run host tests:
 
 ```bash
-bash scripts/test.sh
+./scripts/test.sh
 ```
 
 Run ESPHome compile tests:
 
 ```bash
-scripts/compile-tests.sh
+./scripts/compile-tests.sh
 ```
 
 Run lint:
 
 ```bash
-scripts/lint.sh
+./scripts/lint.sh fix
 ```
 
 ## Current design rules
@@ -620,18 +709,22 @@ scripts/lint.sh
 - Keep FastGPIO as the supported/default transport path.
 - Keep RX/TX driver selection explicit in examples.
 - Drive split FastGPIO TX from RX frame-end bus markers, not blind polling.
-- Keep RX worker side-effect free: capture, sync, classify, and catalog only.
-- Keep TX worker responsible for TX flushing only.
-- Keep ESPHome publishing and entity updates in the main loop.
+- Keep workers opt-in and experimental.
+- Recommend workers only for `external_clock_rx` testing.
+- Do not recommend workers for `fast_gpio_rx` normal use.
+- Do not add general status/extended-status FIFO queues; use latest slots to avoid queue/timing pressure.
+- Use a dedicated latest command-candidate side slot only when transient command feedback needs protection from normal latest-slot overwrites.
 - Do not combine transport experiments with sensor parity changes.
 
 ## Roadmap
 
 Near term:
 
-- Soak-test optional RX/TX worker mode with `external_clock_rx` + `fast_gpio_tx` on Atom/classic ESP32 and ESP32-S3.
+- Keep the default path conservative: `fast_gpio_rx` + `fast_gpio_tx`, workers disabled.
+- Document `external_clock_rx` as the main experimental worker path.
+- Continue soaking external-clock RX against FastGPIO TX.
+- Continue fan/control validation on the stable FastGPIO path.
 - Continue command confirmation hardening around rapid UI changes.
-- Keep checking catalog counters during soak testing, especially `overwritten` and `opdata_slots_full`.
 
 Later:
 

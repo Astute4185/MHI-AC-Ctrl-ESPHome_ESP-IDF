@@ -226,6 +226,32 @@ void publish_bridge_maps_unknown_protection_state() {
 
 namespace mhi_unit_tests {
 
+
+void publish_bridge_maps_mhi_auto_to_heat_cool_for_ha_setpoint_ui() {
+  MhiStateStore state{};
+
+  auto& status = state.status();
+  status.valid = true;
+  status.power = true;
+  status.mode = 0U;
+  status.fan = 7U;
+  status.target_temp_c = 21.0f;
+  status.room_temp_c = 20.0f;
+
+  esphome::climate::Climate climate{};
+
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+  bridge.publish(state);
+
+  EXPECT_EQ(climate.publish_count, 1U);
+  EXPECT_EQ(climate.mode, esphome::climate::CLIMATE_MODE_HEAT_COOL);
+  expect_near(climate.target_temperature, 21.0f);
+}
+
 void publish_bridge_publishes_sensor_parity_slice3_vane_feedback() {
   MhiStateStore state{};
 

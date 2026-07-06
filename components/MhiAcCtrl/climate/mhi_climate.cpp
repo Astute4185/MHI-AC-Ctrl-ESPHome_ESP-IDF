@@ -139,9 +139,6 @@ uint8_t MhiClimate::mode_to_mhi_(climate::ClimateMode mode) const {
       return 4U;
 
     case climate::CLIMATE_MODE_HEAT_COOL:
-#if ESPHOME_VERSION_CODE >= VERSION_CODE(2024, 1, 0)
-    case climate::CLIMATE_MODE_AUTO:
-#endif
     default:
       return 0U;
   }

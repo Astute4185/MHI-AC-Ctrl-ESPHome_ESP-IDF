@@ -8,14 +8,15 @@ void MhiFrameCatalog::reset() {
   latest_status_ = {};
   latest_extended_status_ = {};
   latest_unknown_ = {};
+  latest_command_candidate_ = {};
 
   for (auto& slot : opdata_slots_) {
     slot = {};
   }
 }
 
-MhiCatalogIngestResult MhiFrameCatalog::ingest_mosi_frame(const MhiFrameView& frame, uint32_t sequence,
-                                                          uint32_t now_ms) {
+MhiCatalogIngestResult MhiFrameCatalog::ingest_mosi_frame(const MhiFrameView& frame, uint32_t sequence, uint32_t now_ms,
+                                                          bool store_command_candidate) {
   const MhiFrameClassification classification = classify_mhi_mosi_frame(frame);
 
   stats_.ingested_frames++;
@@ -23,10 +24,14 @@ MhiCatalogIngestResult MhiFrameCatalog::ingest_mosi_frame(const MhiFrameView& fr
   switch (classification.kind) {
     case MhiFrameKind::STATUS:
       stats_.status_frames++;
+      maybe_write_command_candidate_(frame, classification.kind, classification.opdata_key, sequence, now_ms,
+                                     store_command_candidate);
       return write_slot_(latest_status_, frame, classification.kind, classification.opdata_key, sequence, now_ms);
 
     case MhiFrameKind::EXTENDED_STATUS:
       stats_.extended_status_frames++;
+      maybe_write_command_candidate_(frame, classification.kind, classification.opdata_key, sequence, now_ms,
+                                     store_command_candidate);
       return write_slot_(latest_extended_status_, frame, classification.kind, classification.opdata_key, sequence,
                          now_ms);
 
@@ -65,6 +70,20 @@ bool MhiFrameCatalog::take_latest_extended_status(MhiCatalogedFrame& out) {
   copy_slot_(latest_extended_status_, out);
   latest_extended_status_.valid = false;
   return true;
+}
+
+bool MhiFrameCatalog::take_latest_command_candidate(MhiCatalogedFrame& out) {
+  if (!latest_command_candidate_.valid) {
+    return false;
+  }
+
+  copy_slot_(latest_command_candidate_, out);
+  latest_command_candidate_.valid = false;
+  return true;
+}
+
+void MhiFrameCatalog::clear_command_candidate() {
+  latest_command_candidate_.valid = false;
 }
 
 bool MhiFrameCatalog::take_next_opdata(MhiCatalogedFrame& out) {
@@ -154,7 +173,8 @@ MhiCatalogSlot* MhiFrameCatalog::find_or_allocate_opdata_slot_(uint16_t opdata_k
 }
 
 MhiCatalogIngestResult MhiFrameCatalog::write_slot_(MhiCatalogSlot& slot, const MhiFrameView& frame, MhiFrameKind kind,
-                                                    uint16_t opdata_key, uint32_t sequence, uint32_t now_ms) {
+                                                    uint16_t opdata_key, uint32_t sequence, uint32_t now_ms,
+                                                    bool count_overwrite) {
   const bool overwritten = slot.valid;
 
   if (!copy_frame_(frame, slot.frame)) {
@@ -163,7 +183,9 @@ MhiCatalogIngestResult MhiFrameCatalog::write_slot_(MhiCatalogSlot& slot, const 
 
   if (overwritten) {
     slot.overwritten_count++;
-    stats_.overwritten_frames++;
+    if (count_overwrite) {
+      stats_.overwritten_frames++;
+    }
   }
 
   slot.valid = true;
@@ -174,6 +196,22 @@ MhiCatalogIngestResult MhiFrameCatalog::write_slot_(MhiCatalogSlot& slot, const 
   slot.writes++;
 
   return MhiCatalogIngestResult{kind, opdata_key, true, overwritten};
+}
+
+void MhiFrameCatalog::maybe_write_command_candidate_(const MhiFrameView& frame, MhiFrameKind kind, uint16_t opdata_key,
+                                                     uint32_t sequence, uint32_t now_ms, bool store_command_candidate) {
+  if (!store_command_candidate) {
+    return;
+  }
+
+  if (kind != MhiFrameKind::STATUS && kind != MhiFrameKind::EXTENDED_STATUS) {
+    return;
+  }
+
+  const auto result = write_slot_(latest_command_candidate_, frame, kind, opdata_key, sequence, now_ms, false);
+  if (result.stored) {
+    stats_.command_candidate_frames++;
+  }
 }
 
 }  // namespace mhi_ac_ctrl

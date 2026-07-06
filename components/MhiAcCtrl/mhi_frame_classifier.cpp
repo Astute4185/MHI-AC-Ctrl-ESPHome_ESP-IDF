@@ -1,6 +1,7 @@
 #include "mhi_frame_classifier.h"
 
 #include "mhi_defs.h"
+#include "mhi_opdata_decoder.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -15,14 +16,6 @@ bool mosi_signature_matches(const MhiFrameView& frame) {
   return sig0 && frame[SB1] == kMhiMosiSignature1 && frame[SB2] == kMhiMosiSignature2;
 }
 
-bool opdata_type_0x10(const MhiFrameView& frame) {
-  return (frame[DB10] & 0x30U) == 0x10U;
-}
-
-bool opdata_type_0x20(const MhiFrameView& frame) {
-  return (frame[DB10] & 0x30U) == 0x20U;
-}
-
 bool opdata_marker_present(const MhiFrameView& frame) {
   const uint8_t group = frame[DB9];
 
@@ -30,11 +23,13 @@ bool opdata_marker_present(const MhiFrameView& frame) {
     return false;
   }
 
-  // Match the currently accepted opdata decoder shape:
-  // - normal observed opdata has DB10[5:4] == 0x10
-  // - some high-bank values currently use DB6 bit 7 and DB10[5:4] == 0x20
-  // - legacy/synthetic unit coverage also accepts DB6 bit 7.
-  return opdata_type_0x10(frame) || opdata_type_0x20(frame) || (frame[DB6] & 0x80U) != 0U;
+  // Use the same opdata response gate as the decoder. Do not use DB6[7] by
+  // itself: normal status/command feedback can carry that bit and would fill the
+  // opdata catalog with status frames. Also do not require the decoder to expose
+  // a publishable field here; the catalog only needs to preserve real opdata
+  // response frames so unsupported/new fields can be diagnosed instead of being
+  // collapsed into the latest status slot.
+  return MhiOpDataDecoder::is_opdata_response(frame);
 }
 
 uint16_t opdata_key(const MhiFrameView& frame) {
