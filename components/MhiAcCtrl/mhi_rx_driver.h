@@ -19,6 +19,7 @@ class IMhiRxDriver {
  public:
   virtual bool setup(const MhiTransportPins& pins) = 0;
   virtual void loop() = 0;
+  virtual void shutdown() {}
 
   // Reads received MOSI bytes into dst.
   virtual std::size_t read(uint8_t* dst, std::size_t max_len) = 0;

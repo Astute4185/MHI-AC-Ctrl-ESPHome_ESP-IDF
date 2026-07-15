@@ -13,6 +13,7 @@ static const char* const TAG = "mhi_ac_ctrl";
 static const char* const DIAG_TAG = "mhi.diag";
 static constexpr uint32_t kDiagLogIntervalMs = 30000U;
 static constexpr uint32_t kLoopBudgetUs = 30000U;
+static constexpr std::size_t kMaxRxChunksPerLoop = 4U;
 static constexpr uint32_t kNoPendingExtendedFeedbackMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 namespace {
@@ -150,6 +151,7 @@ void MhiAcCtrl::setup() {
   this->rx_worker_frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
 
   this->transport_.set_diagnostics(&this->diagnostics_);
+  this->transport_.set_rmt_spi_frame_gap_us(this->rmt_spi_frame_gap_us_);
 
   this->transport_.configure(this->pins_.sck, this->pins_.mosi, this->pins_.miso, this->rx_driver_, this->tx_driver_,
                              static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_);
@@ -224,6 +226,7 @@ void MhiAcCtrl::dump_config() {
                 static_cast<unsigned long>(this->rx_worker_stack_size_),
                 static_cast<unsigned long>(this->rx_worker_start_delay_ms_));
   ESP_LOGCONFIG(TAG, "  Frame start idle: %lums", static_cast<unsigned long>(this->frame_start_idle_ms_));
+  ESP_LOGCONFIG(TAG, "  RMT/SPI frame gap: %luus", static_cast<unsigned long>(this->rmt_spi_frame_gap_us_));
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
   ESP_LOGCONFIG(TAG, "  TX priority: commands bypass interval, background waits for no pending confirmation");
   ESP_LOGCONFIG(TAG, "  TX ownership: queue/flush split, auto_flush=%s",
@@ -776,18 +779,20 @@ bool MhiAcCtrl::read_and_sync_rx_frame_() {
   }
 
   uint8_t buffer[kMhiMaxFrameBytes]{};
-
-  const std::size_t len = this->transport_.read_rx(buffer, sizeof(buffer));
-
-  if (len > 0U) {
-    this->frame_sync_.push_bytes(buffer, len);
-  }
-
   MhiFrameBuffer frame{};
 
-  while (this->frame_sync_.pop_frame(frame)) {
-    this->diagnostics_.stats().on_valid_frame(millis());
-    this->ingest_rx_frame_(frame);
+  for (std::size_t chunk = 0U; chunk < kMaxRxChunksPerLoop; chunk++) {
+    const std::size_t len = this->transport_.read_rx(buffer, sizeof(buffer));
+    if (len == 0U) {
+      break;
+    }
+
+    this->frame_sync_.push_bytes(buffer, len);
+
+    while (this->frame_sync_.pop_frame(frame)) {
+      this->diagnostics_.stats().on_valid_frame(millis());
+      this->ingest_rx_frame_(frame);
+    }
   }
 
   return this->decode_cataloged_frames_();

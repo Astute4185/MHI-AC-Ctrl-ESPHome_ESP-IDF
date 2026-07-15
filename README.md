@@ -15,18 +15,19 @@ Recommended/default path:
 ```yaml
 rx_driver: fast_gpio_rx
 tx_driver: fast_gpio_tx
-rx_worker: false
-tx_worker: false
 ```
 
-Experimental path:
+Preferred experimental ESP32-S3 path:
 
 ```yaml
-rx_driver: external_clock_rx
+rx_driver: rmt_spi_rx
 tx_driver: fast_gpio_tx
+rx_worker: false
+tx_worker: false
+rmt_spi_frame_gap_us: 1000
 ```
 
-Worker mode is currently recommended only for **external-clock RX experiments**. Do not enable workers on the normal FastGPIO backend unless you are actively debugging the worker path.
+`rmt_spi_rx` uses RMT to infer the missing chip-select boundary and the ESP32-S3 SPI slave peripheral with DMA to capture complete frames. A roughly 47.5-hour soak completed about 3.42 million transactions with zero checksum failures, signature misses, sync losses, backend queue errors, completed-frame overwrites, or completed-frame drops. Workers should remain disabled; current generic RX/TX workers are polling-based and regress the otherwise clean hardware-assisted path.
 
 Implemented and runtime-tested:
 
@@ -34,6 +35,7 @@ Implemented and runtime-tested:
 - Split RX/TX transport selection.
 - FastGPIO RX and FastGPIO TX transport.
 - Experimental external-clock RX with FastGPIO TX on ESP32 and ESP32-S3.
+- Experimental RMT-generated-CS SPI/DMA RX with FastGPIO TX on ESP32-S3.
 - Latest-slot frame cataloging for status, extended status, opdata, and unknown frames.
 - Command confirmation and duplicate command suppression.
 - Climate control with confirmed-state updates.
@@ -47,11 +49,12 @@ Implemented and runtime-tested:
 Still intentionally conservative:
 
 - FastGPIO RX/TX remains the stable/default transport path.
-- `external_clock_rx` remains experimental and should be validated with soak logs before being treated as supported.
+- `rmt_spi_rx` remains experimental, although the ESP32-S3 path has completed a roughly 47.5-hour soak with clean RX protocol health.
+- `external_clock_rx` remains experimental and available as a software external-clock comparison path.
 - `rx_worker` and `tx_worker` are optional, experimental, and disabled by default.
-- Workers are not currently recommended for `fast_gpio_rx`.
+- Workers are not currently recommended for `fast_gpio_rx` or `rmt_spi_rx`.
 
-For detailed test findings and transport trade-offs, see [`FINDINGS.md`](FINDINGS.md).
+For the hardware-assisted RX findings, see [`notes/FINDINGS_RMT_SPI_RX.md`](notes/FINDINGS_RMT_SPI_RX.md). For earlier FastGPIO/external-clock findings, see [`notes/FINDINGS_fastGpio&ExternalClock.md`](notes/FINDINGS_fastGpio&ExternalClock.md).
 
 ## Hardware assumptions
 
@@ -64,7 +67,7 @@ The MHI bus used by this component has:
 
 The air conditioner is the SPI-style bus master. The ESP device listens to MOSI/SCK and drives MISO at the correct time.
 
-Known-good current development target:
+Known-good stable baseline:
 
 - ESP32-S3
 - ESP-IDF framework
@@ -73,10 +76,16 @@ Known-good current development target:
 - `tx_driver: fast_gpio_tx`
 - workers disabled
 
-Experimental transport targets:
+Validated experimental development path:
+
+- ESP32-S3 with `rx_driver: rmt_spi_rx` and `tx_driver: fast_gpio_tx`
+- `rmt_spi_frame_gap_us: 1000`
+- workers disabled
+- clean 33-byte SPI/DMA capture, opdata flow, and command confirmation through a roughly 47.5-hour hardware soak
+
+Other experimental transport targets:
 
 - ESP32 / ESP32-S3 with `rx_driver: external_clock_rx` and `tx_driver: fast_gpio_tx`
-- ESP32 / ESP32-S3 with `external_clock_rx` and optional workers
 - ESP32-C3 compile coverage only; runtime behaviour is not validated
 
 ## ESP32-C3 status
@@ -127,6 +136,7 @@ The transport layer treats RX and TX as separate responsibilities:
 mhi_fast_gpio_rx_driver
 mhi_fast_gpio_tx_driver
 mhi_external_clock_rx_driver
+mhi_rmt_spi_rx_driver
 mhi_null_tx_driver
 ```
 
@@ -135,8 +145,6 @@ The stable/default path is:
 ```yaml
 rx_driver: fast_gpio_rx
 tx_driver: fast_gpio_tx
-rx_worker: false
-tx_worker: false
 ```
 
 This uses the split FastGPIO RX and FastGPIO TX drivers. RX captures MOSI/SCK and publishes a frame-end bus marker. TX queues frames and attempts to drive MISO after a new RX bus marker is observed.
@@ -157,7 +165,35 @@ rx_driver: external_clock_rx
 tx_driver: none
 ```
 
-The current bus has no chip-select line, so normal ESP-IDF SPI slave assumptions do not fit this hardware cleanly. FastGPIO remains the stable baseline while hardware-assisted receive work, such as LCD-CAM/I2S-style external-clock capture, remains experimental.
+The ESP32-S3 hardware-assisted path is:
+
+```yaml
+rx_driver: rmt_spi_rx
+tx_driver: fast_gpio_tx
+rmt_spi_frame_gap_us: 1000
+```
+
+`rmt_spi_rx` observes SCK with RMT, treats the inter-frame idle gap as an internal chip-select boundary, and captures MOSI through the SPI slave peripheral using DMA. The application-facing handoff is intentionally limited to two complete frames and is aggressively drained into the existing latest-slot catalogue.
+
+This path was investigated after reviewing [hberntsen/mhi-ac-ctrl-esp32](https://github.com/hberntsen/mhi-ac-ctrl-esp32), which demonstrates the key technique of deriving an internal SPI CS signal from RMT-observed clock gaps. Redux retains its own transport, synchronisation, catalogue, decoder, state, publishing, diagnostics, and command-confirmation architecture; only the transport technique informed this backend.
+
+The current bus has no physical chip-select line, so normal ESP-IDF SPI slave assumptions do not fit directly. FastGPIO remains the stable baseline, while `rmt_spi_rx` is now the preferred experimental ESP32-S3 receive path.
+
+
+Long-duration validation on the tested ESP32-S3 reached approximately:
+
+```text
+RMT/SPI completed frames:  3,421,459
+Redux valid frames:        3,421,625
+Invalid frames:            0
+Checksum failures:         0
+Signature misses:          0
+Sync losses:               0
+Completed-frame overwrite: 0
+Completed-frame drops:     0
+```
+
+The same soak confirmed that the remaining transport risk is FastGPIO TX rather than RMT/SPI RX. Background TX recorded a small failure rate, while all tested command frames confirmed without timeout. The opdata catalogue also reported sustained slot-pressure, which now requires separate investigation. See the findings document for details.
 
 ## Installation
 
@@ -185,8 +221,6 @@ MhiAcCtrl:
   miso_pin: 39
   rx_driver: fast_gpio_rx
   tx_driver: fast_gpio_tx
-  rx_worker: false
-  tx_worker: false
   room_temp_timeout: 60
 ```
 
@@ -216,6 +250,7 @@ tx_worker_stack_size
 tx_worker_priority
 tx_worker_core_id
 tx_background_interval_ms
+rmt_spi_frame_gap_us
 room_temp_timeout
 external_temperature_sensor
 ```
@@ -230,97 +265,56 @@ Current recommendation:
 FastGPIO RX/TX:
   keep workers disabled
 
-External-clock RX experiments:
-  workers may be enabled for testing
+External-clock RX:
+  keep workers disabled unless explicitly testing the worker path
+
+RMT/SPI RX:
+  keep workers disabled
 ```
 
-The worker path is currently intended for external-clock RX testing only:
+The RMT/SPI backend already performs deterministic hardware capture. In initial testing, the no-worker path captured every 33-byte frame without checksum, synchronisation, queue, or RMT re-arm errors. Enabling both generic workers reduced main-loop blocking but introduced completed-frame overwrites/drops and FastGPIO TX marker misses.
 
-```yaml
-MhiAcCtrl:
-  id: mhi_ac
+The worker issue is not excessive bus throughput. The AC remains at roughly 20 frames per second. The problem is that the existing workers poll and yield instead of blocking on transport events. During scheduling gaps, the two-frame completed handoff can fill even though the main-loop path drains it reliably.
 
-  # Required bus/frame config.
-  frame_size: 33
-  sck_pin: 8
-  mosi_pin: 38
-  miso_pin: 39
-
-  # Experimental transport selection.
-  rx_driver: external_clock_rx
-  tx_driver: fast_gpio_tx
-
-  # Optional worker mode.
-  rx_worker: true
-  tx_worker: true
-
-  # Optional worker tuning.
-  rx_worker_start_delay_ms: 5000
-  rx_worker_stack_size: 6144
-  rx_worker_priority: 4
-  rx_worker_core_id: 0
-
-  tx_worker_start_delay_ms: 5000
-  tx_worker_stack_size: 6144
-  tx_worker_priority: 4
-  tx_worker_core_id: 1
-
-  # Optional. Recommended for worker testing to reduce background TX pressure.
-  tx_background_interval_ms: 1000
-```
-
-Worker responsibilities:
+Observed worker shape:
 
 ```text
-rx_worker:
-  capture/sync/classify/catalog RX frames only
+RX worker:
+  tens of thousands of polling loops
+  mostly idle yields
+  completed-frame handoff can overwrite under contention
 
- tx_worker:
-  flush queued TX frames against RX bus markers
-
-main loop:
-  decode cataloged frames
-  publish ESPHome entities
-  manage command confirmation
-  queue TX frames
+TX worker:
+  tens of thousands of flush attempts
+  very few actual sends
+  bus-marker timing misses can occur
 ```
 
-Do not assume workers improve stability simply because the board is dual-core. On the FastGPIO backend, worker mode can improve loop timing counters while degrading real behaviour such as command confirmation or opdata flow.
+The future RTOS direction is event-driven:
 
-A worker test should only be considered healthy if all of these remain true:
+```text
+RMT/SPI completion notification
+  -> drain completed DMA transactions
+  -> validate/classify
+  -> update latest catalogue slots
+  -> notify main loop
+
+TX command/boundary notification
+  -> wake TX task only when work and a valid bus window exist
+```
+
+A worker experiment is only healthy if all of these remain true:
 
 ```text
 valid_frames increases
 checksum_failures stays at 0
 signature_misses stays at 0
-tx_failures stays low
-command_confirmations increases when commands are sent
-command_confirmation_timeouts stays at 0
-opdata frames continue to appear when requested
-Home Assistant state matches the physical AC state
+command confirmations work
+command timeouts stay at 0
+opdata continues to publish
+RMT/SPI overwritten and dropped stay at 0
+Home Assistant state matches the physical AC
 ```
-
-### Worker queue policy
-
-Do not use a general FIFO queue for status or extended-status frames. A bounded FIFO was considered during RX-worker testing, but rejected because it reintroduces queue/timing pressure and works against the latest-state design.
-
-Preferred worker/catalog shape:
-
-```text
-status:
-  latest slot only
-
-extended status:
-  latest slot only
-
-opdata:
-  keyed latest slots
-
-command feedback:
-  optional latest command-candidate side slot
-```
-
-The intent is to keep worker mode from building a backlog. Repeated steady-state frames should collapse to the latest value. Transient command feedback may have a dedicated latest side slot, but should not become a FIFO backlog.
 
 ## Frame size
 
@@ -718,19 +712,16 @@ Run lint:
 
 ## Roadmap
 
-Near term:
+* Keep the default path conservative: `fast_gpio_rx` + `fast_gpio_tx`, with workers disabled.
+* Continue long-duration validation of `rmt_spi_rx` on ESP32-S3, with `fast_gpio_tx` and workers disabled.
+* Treat `rmt_spi_rx` as the preferred experimental S3 receive backend following the successful 47.5-hour soak test.
+* Investigate and fix FastGPIO TX timing failures, missed bus markers, and main-loop blocking.
+* Evaluate hardware-assisted SPI TX so RX and TX can share the same externally clocked transaction path.
+* Replace polling RX/TX workers with event-driven RTOS tasks using SPI/RMT completion and command notifications.
+* Investigate `opdata_slots_full`, including logging rejected opdata keys and reviewing catalogue slot allocation.
+* Continue fan, mode, temperature, vane, and command-confirmation validation on the stable no-worker path.
+* Continue hardening command confirmation around rapid and overlapping UI changes.
 
-- Keep the default path conservative: `fast_gpio_rx` + `fast_gpio_tx`, workers disabled.
-- Document `external_clock_rx` as the main experimental worker path.
-- Continue soaking external-clock RX against FastGPIO TX.
-- Continue fan/control validation on the stable FastGPIO path.
-- Continue command confirmation hardening around rapid UI changes.
-
-Later:
-
-- Treat ESP32-C3/single-core support as experimental until validated on real hardware with clean soak logs.
-- Re-investigate LCD-CAM/I2S-style external-clock RX capture for a future hardware-assisted backend.
-- Keep TX on the stable FastGPIO path unless a clear reason appears to change it.
 
 ## Credits
 

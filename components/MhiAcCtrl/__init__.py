@@ -15,6 +15,7 @@ CONF_MISO_PIN = "miso_pin"
 CONF_RX_DRIVER = "rx_driver"
 CONF_TX_DRIVER = "tx_driver"
 CONF_FRAME_START_IDLE_MS = "frame_start_idle_ms"
+CONF_RMT_SPI_FRAME_GAP_US = "rmt_spi_frame_gap_us"
 CONF_TX_BACKGROUND_INTERVAL_MS = "tx_background_interval_ms"
 CONF_RX_WORKER = "rx_worker"
 CONF_RX_WORKER_START_DELAY_MS = "rx_worker_start_delay_ms"
@@ -35,7 +36,7 @@ CONF_TEMPERATURE = "temperature"
 CONF_EXTERNAL_TEMPERATURE_SENSOR = "external_temperature_sensor"
 
 DEPENDENCIES = ["climate"]
-AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "select", "sensor", "switch", "text_sensor"]
 
 mhi_ns = cg.esphome_ns.namespace("mhi_ac_ctrl")
 MhiAcCtrl = mhi_ns.class_("MhiAcCtrl", cg.Component)
@@ -56,9 +57,12 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SCK_PIN): cv.int_,
         cv.Optional(CONF_MOSI_PIN): cv.int_,
         cv.Optional(CONF_MISO_PIN): cv.int_,
-        cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of("fast_gpio_rx", "external_clock_rx", lower=True),
+        cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of(
+            "fast_gpio_rx", "external_clock_rx", "rmt_spi_rx", lower=True
+        ),
         cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
+        cv.Optional(CONF_RMT_SPI_FRAME_GAP_US, default=1000): cv.int_range(min=500, max=5000),
         cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
         cv.Optional(CONF_RX_WORKER, default=False): cv.boolean,
         cv.Optional(CONF_RX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
@@ -93,6 +97,7 @@ async def to_code(config):
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
     cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
+    cg.add(var.set_rmt_spi_frame_gap_us(config[CONF_RMT_SPI_FRAME_GAP_US]))
     cg.add(var.set_tx_background_interval_ms(_default_tx_background_interval_ms(config)))
     cg.add(var.set_rx_worker(config[CONF_RX_WORKER]))
     cg.add(var.set_rx_worker_start_delay_ms(config[CONF_RX_WORKER_START_DELAY_MS]))

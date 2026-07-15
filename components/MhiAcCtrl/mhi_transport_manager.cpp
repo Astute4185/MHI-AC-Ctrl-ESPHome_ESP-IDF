@@ -50,6 +50,13 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   native_spi_rx_.set_config(native_spi_rx_config);
 #endif
 
+#if MHI_ENABLE_RMT_SPI_RX_DRIVER
+  MhiRmtSpiRxConfig rmt_spi_rx_config{};
+  rmt_spi_rx_config.frame_size_hint = frame_size_hint;
+  rmt_spi_rx_config.frame_gap_us = rmt_spi_frame_gap_us_;
+  rmt_spi_rx_.set_config(rmt_spi_rx_config);
+#endif
+
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxConfig external_clock_rx_config{};
   external_clock_rx_config.frame_size_hint = frame_size_hint;
@@ -102,6 +109,26 @@ void MhiTransportManager::resolve_drivers() {
 #endif
 #endif
 
+#if MHI_ENABLE_RMT_SPI_RX_DRIVER
+  if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "none") {
+    rx_ = &rmt_spi_rx_;
+#if MHI_ENABLE_SPLIT_TX_DRIVER
+    tx_ = &null_tx_;
+#else
+    tx_ = nullptr;
+#endif
+    return;
+  }
+
+#if MHI_ENABLE_SPLIT_TX_DRIVER
+  if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "fast_gpio_tx") {
+    rx_ = &rmt_spi_rx_;
+    tx_ = &fast_gpio_tx_;
+    return;
+  }
+#endif
+#endif
+
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "none") {
     rx_ = &external_clock_rx_;
@@ -132,6 +159,12 @@ void MhiTransportManager::resolve_drivers() {
   }
 #endif
 
+#if !MHI_ENABLE_RMT_SPI_RX_DRIVER
+  if (rx_driver_name_ == "rmt_spi_rx") {
+    ESP_LOGW(TAG, "rmt_spi_rx is only built for ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
+  }
+#endif
+
   ESP_LOGW(TAG, "Unsupported driver combination RX=%s TX=%s; falling back to fast_gpio_rx/fast_gpio_tx",
            rx_driver_name_.c_str(), tx_driver_name_.c_str());
 
@@ -155,6 +188,10 @@ bool MhiTransportManager::setup() {
   if (!rx_ready_ || !tx_ready_) {
     ESP_LOGW(TAG, "Transport RX=%s TX=%s failed to start; falling back to fast_gpio_rx/fast_gpio_tx",
              rx_driver_name_.c_str(), tx_driver_name_.c_str());
+
+    if (rx_ != nullptr && rx_ready_) {
+      rx_->shutdown();
+    }
 
     rx_driver_name_ = "fast_gpio_rx";
     tx_driver_name_ = "fast_gpio_tx";

@@ -15,6 +15,9 @@ int main() {
   frame_sync_records_checksum_failure_stats();
   frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise();
 
+  frame_queue_preserves_complete_frames();
+  frame_queue_overwrites_oldest_complete_frame();
+
   frame_classifier_classifies_status_opdata_and_extended_status();
   frame_catalog_overwrites_repeated_status_with_latest();
   frame_catalog_keeps_opdata_slots_separate_by_key();

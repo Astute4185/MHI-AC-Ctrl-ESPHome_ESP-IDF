@@ -38,9 +38,11 @@
 
 #if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 #include "mhi_native_spi_rx_driver.h"
+#include "mhi_rmt_spi_rx_driver.h"
 #endif
 
 #define MHI_ENABLE_NATIVE_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#define MHI_ENABLE_RMT_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -52,6 +54,10 @@ class MhiTransportManager {
                  uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
                  uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
                  uint32_t external_clock_sample_delay_nops = 0U);
+
+  void set_rmt_spi_frame_gap_us(uint32_t frame_gap_us) {
+    rmt_spi_frame_gap_us_ = frame_gap_us;
+  }
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -114,6 +120,9 @@ class MhiTransportManager {
 #if MHI_ENABLE_NATIVE_SPI_RX_DRIVER
   MhiNativeSpiRxDriver native_spi_rx_{};
 #endif
+#if MHI_ENABLE_RMT_SPI_RX_DRIVER
+  MhiRmtSpiRxDriver rmt_spi_rx_{};
+#endif
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxDriver external_clock_rx_{};
 #endif
@@ -146,6 +155,7 @@ class MhiTransportManager {
   uint32_t tx_marker_arm_max_age_us_{3000U};
   uint32_t tx_marker_timeout_ms_{60U};
   uint32_t tx_failure_backoff_ms_{250U};
+  uint32_t rmt_spi_frame_gap_us_{1000U};
 
   MhiDiagnostics* diagnostics_{nullptr};
 };

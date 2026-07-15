@@ -68,6 +68,12 @@ class MhiAcCtrl : public Component {
     }
   }
 
+  void set_rmt_spi_frame_gap_us(int frame_gap_us) {
+    if (frame_gap_us >= 500 && frame_gap_us <= 5000) {
+      this->rmt_spi_frame_gap_us_ = static_cast<uint32_t>(frame_gap_us);
+    }
+  }
+
   void set_tx_background_interval_ms(int interval_ms) {
     if (interval_ms >= 0) {
       this->tx_background_interval_ms_ = static_cast<uint32_t>(interval_ms);
@@ -405,6 +411,7 @@ class MhiAcCtrl : public Component {
   MhiCommandConfirmation command_confirmation_{};
 
   uint32_t frame_start_idle_ms_{10U};
+  uint32_t rmt_spi_frame_gap_us_{1000U};
   uint32_t tx_background_interval_ms_{250U};
   uint32_t last_background_tx_ms_{0U};
   uint32_t tx_background_interval_deferrals_{0U};
