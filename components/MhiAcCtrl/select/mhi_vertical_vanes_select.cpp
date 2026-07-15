@@ -1,53 +1,43 @@
-#include "esphome/core/log.h"
 #include "mhi_vertical_vanes_select.h"
 
+#include "esphome/core/log.h"
+
 namespace esphome {
-namespace mhi {
+namespace mhi_ac_ctrl {
 
-namespace {
-static constexpr const char *const kVerticalVanes[] = {
-    "Up",
-    "Up/Center",
-    "Center/Down",
-    "Down",
-    "Swing",
-};
-
-static constexpr int kVerticalVanesCount =
-    static_cast<int>(sizeof(kVerticalVanes) / sizeof(kVerticalVanes[0]));
-}  // namespace
-
-static const char *const TAG = "mhi.select";
+static const char* const TAG = "mhi.select.vertical_vanes";
 
 void MhiVerticalVanesSelect::setup() {
-    this->parent_->add_listener(this);
+  ESP_LOGCONFIG(TAG, "Setting up MHI vertical vanes select");
+
+  if (this->parent_ != nullptr) {
+    this->parent_->set_vertical_vanes_select(this);
+  }
 }
 
 void MhiVerticalVanesSelect::dump_config() {
-    ESP_LOGCONFIG(TAG, "MHI Vertical Vanes Select");
+  ESP_LOGCONFIG(TAG, "MHI Vertical Vanes Select");
 }
 
-void MhiVerticalVanesSelect::control(const std::string &value) {
-    auto idx = this->index_of(value);
-    if (idx.has_value() && idx.value() < kVerticalVanesCount) {
-        this->parent_->set_vanes(idx.value() + 1);
-    }
-    this->publish_state(value);
+void MhiVerticalVanesSelect::control(const std::string& value) {
+  if (this->parent_ == nullptr) {
+    ESP_LOGW(TAG, "Ignoring vertical vanes command because parent is not set");
+    return;
+  }
+
+  auto index = this->index_of(value);
+  if (!index.has_value()) {
+    ESP_LOGW(TAG, "Unknown vertical vanes option: %s", value.c_str());
+    return;
+  }
+
+  auto& command = this->parent_->state().command();
+
+  command.vertical_vane_set = true;
+  command.vertical_vane = static_cast<uint8_t>(index.value() + 1U);
+
+  ESP_LOGD(TAG, "Vertical vanes command staged: %s; waiting for confirmed MOSI state", value.c_str());
 }
 
-void MhiVerticalVanesSelect::update_status(ACStatus status, int value) {
-    if (status != status_vanes) {
-        return;
-    }
-
-    const int index = value - 1;
-    if (index >= 0 && index < kVerticalVanesCount) {
-        this->publish_state(kVerticalVanes[index]);
-        ESP_LOGV(TAG, "Vertical vanes status updated");
-    } else {
-        ESP_LOGW(TAG, "Failed to map vertical vanes status, value %i", value);
-    }
-}
-
-}  // namespace mhi
+}  // namespace mhi_ac_ctrl
 }  // namespace esphome

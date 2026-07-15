@@ -1,0 +1,2 @@
+# Garbage prefix, then valid MOSI status frame
+00 ff 12 aa 55 6c 80 04 09 21 2c 9d 00 00 00 00 00 00 00 00 00 00 00 01 e3

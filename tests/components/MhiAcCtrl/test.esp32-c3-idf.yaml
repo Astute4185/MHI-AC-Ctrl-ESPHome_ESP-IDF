@@ -1,0 +1,139 @@
+esphome:
+  name: mhi-redux-c3-compile
+  friendly_name: MHI Redux C3 Compile
+  includes:
+    - ../../../components/MhiAcCtrl/firmware_identity.h
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+  baud_rate: 0
+
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [MhiAcCtrl]
+
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  # Compile-test pins only. Change for real hardware.
+  # Avoid C3 strapping pins GPIO2/GPIO8/GPIO9 unless your board design requires them.
+  sck_pin: 3
+  mosi_pin: 4
+  miso_pin: 5
+  # C3 compile coverage intentionally stays on FastGPIO.
+  # external_clock_rx is not enabled for C3 in this branch.
+  rx_driver: fast_gpio_rx
+  tx_driver: fast_gpio_tx
+  initial_vertical_vanes_position: 5
+  initial_horizontal_vanes_position: 8
+  room_temp_timeout: 60
+
+climate:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    name: MHI Climate
+    temperature_offset: false
+    visual_min_temperature: 16
+    visual_max_temperature: 31
+    visual_temperature_step: 1
+
+sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    room_temperature:
+      name: MHI Room Temperature
+    target_temperature:
+      name: MHI Target Temperature
+    outdoor_temperature:
+      name: MHI Outdoor Temperature
+    return_air_temperature:
+      name: MHI Return Air Temperature
+    compressor_frequency:
+      name: MHI Compressor Frequency
+    current_power:
+      name: MHI Current
+    indoor_unit_fan_speed:
+      name: MHI Indoor Unit Fan Speed
+    outdoor_unit_fan_speed:
+      name: MHI Outdoor Unit Fan Speed
+    indoor_unit_total_run_time:
+      name: MHI Indoor Unit Total Run Time
+    compressor_total_run_time:
+      name: MHI Compressor Total Run Time
+    energy_used:
+      name: MHI Energy Used
+    indoor_unit_thi_r1:
+      name: MHI Indoor Unit THI R1
+    indoor_unit_thi_r2:
+      name: MHI Indoor Unit THI R2
+    indoor_unit_thi_r3:
+      name: MHI Indoor Unit THI R3
+    outdoor_unit_tho_r1:
+      name: MHI Outdoor Unit THO R1
+    outdoor_unit_expansion_valve:
+      name: MHI Outdoor Unit Expansion Valve
+    outdoor_unit_discharge_pipe:
+      name: MHI Outdoor Unit Discharge Pipe
+    outdoor_unit_discharge_pipe_super_heat:
+      name: MHI Outdoor Unit Discharge Pipe Super Heat
+    protection_state_number:
+      name: MHI Protection State Number
+
+binary_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    power:
+      name: MHI Power
+    defrost:
+      name: MHI Defrost
+    vanes_3d_auto_enabled:
+      name: MHI 3D Auto Enabled
+
+text_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    error_code:
+      name: MHI Error Code
+    protection_state:
+      name: MHI Protection State
+  - platform: template
+    name: Firmware ELF SHA256
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return firmware_elf_sha256();
+  - platform: template
+    name: Firmware App Description
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return firmware_app_description();
+  - platform: template
+    name: Firmware Running Partition
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return firmware_running_partition();
+
+select:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    vertical_vanes:
+      name: MHI Vertical Vanes
+    horizontal_vanes:
+      name: MHI Horizontal Vanes
+    fan_speed:
+      name: MHI Fan Speed
+
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    vanes_3d_auto:
+      name: MHI 3D Auto

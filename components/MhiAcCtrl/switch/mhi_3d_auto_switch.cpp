@@ -1,40 +1,38 @@
-#include "esphome/core/log.h"
 #include "mhi_3d_auto_switch.h"
 
-namespace esphome {
-namespace mhi {
+#include "esphome/core/log.h"
 
-static const char *TAG = "mhi.switch";
+namespace esphome {
+namespace mhi_ac_ctrl {
+
+static const char* const TAG = "mhi.switch";
 
 void Mhi3dAutoSwitch::setup() {
-    this->parent_->add_listener(this);
+  ESP_LOGCONFIG(TAG, "Setting up MHI 3D auto switch");
+
+  if (this->parent_ == nullptr) {
+    ESP_LOGW(TAG, "MHI 3D auto switch has no parent component");
+    return;
+  }
+
+  this->parent_->set_vanes_3d_auto_switch(this);
+}
+
+void Mhi3dAutoSwitch::dump_config() {
+  ESP_LOGCONFIG(TAG, "MHI 3D Auto Switch");
+  ESP_LOGCONFIG(TAG, "  State: %s", this->state ? "ON" : "OFF");
 }
 
 void Mhi3dAutoSwitch::write_state(bool state) {
-    this->parent_->set_3Dauto(state);
-    ESP_LOGD(TAG, "3d auto state written %d", state);
+  if (this->parent_ == nullptr) {
+    ESP_LOGW(TAG, "Ignoring 3D auto command because parent is not set");
+    return;
+  }
+
+  if (this->parent_->request_three_d_auto_command(state)) {
+    ESP_LOGD(TAG, "3D auto command staged: %s", state ? "ON" : "OFF");
+  }
 }
 
-void Mhi3dAutoSwitch::dump_config(){
-    ESP_LOGCONFIG(TAG, "3d Auto switch");
-    ESP_LOGCONFIG(TAG, "  state: %d", this->state);
-}
-
-void Mhi3dAutoSwitch::update_status(ACStatus status, int value) {
-
-    if (status == status_3Dauto) {
-        switch (value) {
-        case 0b00000000:
-            this->publish_state(false);
-            ESP_LOGD(TAG, "3d auto status updated: disabled");
-            break;
-        case 0b00000100:
-            this->publish_state(true);
-            ESP_LOGD(TAG, "3d auto status updated: enabled");
-            break;
-        }
-    }
-}
-
-} //namespace mhi
-} //namespace esphome
+}  // namespace mhi_ac_ctrl
+}  // namespace esphome

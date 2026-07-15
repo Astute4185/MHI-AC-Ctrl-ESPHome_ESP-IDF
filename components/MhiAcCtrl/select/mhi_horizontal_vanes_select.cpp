@@ -1,56 +1,42 @@
-#include "esphome/core/log.h"
 #include "mhi_horizontal_vanes_select.h"
 
+#include "esphome/core/log.h"
+
 namespace esphome {
-namespace mhi {
+namespace mhi_ac_ctrl {
 
-namespace {
-static constexpr const char *const kHorizontalVanes[] = {
-    "Left",
-    "Left/Center",
-    "Center",
-    "Center/Right",
-    "Right",
-    "Wide",
-    "Spot",
-    "Swing",
-};
-
-static constexpr int kHorizontalVanesCount =
-    static_cast<int>(sizeof(kHorizontalVanes) / sizeof(kHorizontalVanes[0]));
-}  // namespace
-
-static const char *const TAG = "mhi.select";
+static const char* const TAG = "mhi.select.horizontal_vanes";
 
 void MhiHorizontalVanesSelect::setup() {
-    this->parent_->add_listener(this);
+  ESP_LOGCONFIG(TAG, "Setting up MHI horizontal vanes select");
+
+  if (this->parent_ != nullptr) {
+    this->parent_->set_horizontal_vanes_select(this);
+  }
 }
 
 void MhiHorizontalVanesSelect::dump_config() {
-    ESP_LOGCONFIG(TAG, "MHI Horizontal Vanes Select");
+  ESP_LOGCONFIG(TAG, "MHI Horizontal Vanes Select");
 }
 
-void MhiHorizontalVanesSelect::control(const std::string &value) {
-    auto idx = this->index_of(value);
-    if (idx.has_value() && idx.value() < kHorizontalVanesCount) {
-        this->parent_->set_vanesLR(idx.value() + 1);
-    }
-    this->publish_state(value);
+void MhiHorizontalVanesSelect::control(const std::string& value) {
+  if (this->parent_ == nullptr) {
+    ESP_LOGW(TAG, "Ignoring horizontal vanes command because parent is not set");
+    return;
+  }
+
+  auto index = this->index_of(value);
+  if (!index.has_value()) {
+    ESP_LOGW(TAG, "Unknown horizontal vanes option: %s", value.c_str());
+    return;
+  }
+
+  const uint8_t horizontal_vane = static_cast<uint8_t>(index.value() + 1U);
+
+  if (this->parent_->request_horizontal_vane_command(horizontal_vane)) {
+    ESP_LOGD(TAG, "Horizontal vanes command staged: %s", value.c_str());
+  }
 }
 
-void MhiHorizontalVanesSelect::update_status(ACStatus status, int value) {
-    if (status != status_vanesLR) {
-        return;
-    }
-
-    const int index = value - 1;
-    if (index >= 0 && index < kHorizontalVanesCount) {
-        this->publish_state(kHorizontalVanes[index]);
-        ESP_LOGV(TAG, "Horizontal vanes status updated");
-    } else {
-        ESP_LOGW(TAG, "Failed to map horizontal vanes status, value %i", value);
-    }
-}
-
-}  // namespace mhi
+}  // namespace mhi_ac_ctrl
 }  // namespace esphome

@@ -1,0 +1,2 @@
+# Same as valid status frame, but DB2 changed from 2c to 2d without fixing checksum
+6c 80 04 09 21 2d 9d 00 00 00 00 00 00 00 00 00 00 00 01 e3

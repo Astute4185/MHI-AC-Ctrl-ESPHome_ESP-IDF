@@ -30,22 +30,34 @@ web_server:
   port: 80
 
 external_components:
-  - source: github://Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF@master
+  - source:
+      type: git
+      url: https://github.com/Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF
+      ref: ESP-IDF-Redux
     components: [MhiAcCtrl]
 
 MhiAcCtrl:
-  # Set to 20 if your unit does not support 33-byte frames.
-  frame_size: 20
-  sck_pin: 21
-  miso_pin: 34
-  mosi_pin: 48
-
+  id: mhi_ac
+  # Set to 20 for older units.
+  # Set to 33 for newer WF-RAC compatible units that expose 3D Auto and left/right vanes.
+  # If you see checksum/signature failures, verify frame_size first.
+  frame_size: 33
+  # Update these pins to match your hardware.
+  sck_pin: 14
+  mosi_pin: 13
+  miso_pin: 12
+  # FastGPIO is the currently validated transport backend.
+  # Keeping it explicit makes future driver/backend testing easier.
+  rx_driver: fast_gpio_rx
+  tx_driver: fast_gpio_tx
 climate:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     name: "${friendly_name}"
 
 select:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     vertical_vanes:
       name: "Vanes Up-Down"
     horizontal_vanes:
@@ -53,10 +65,12 @@ select:
 
 switch:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: "3D Auto"
 
 sensor:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     outdoor_temperature:
       name: "Outdoor Temperature"

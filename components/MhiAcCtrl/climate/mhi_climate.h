@@ -1,83 +1,58 @@
 #pragma once
 
-#include "esphome/components/climate/climate.h"
-#include "esphome/core/time.h"
 #include <cstdint>
-#include <vector>
-#include "../mhi_platform.h"
 
-using namespace esphome::climate;
+#include "../mhi_ac_ctrl.h"
+#include "esphome/components/climate/climate.h"
+#include "esphome/core/component.h"
 
 namespace esphome {
-namespace mhi {
+namespace mhi_ac_ctrl {
 
-class MhiClimate :
-    public climate::Climate,
-    public Component,
-    public Parented<MhiPlatform>,
-    protected MhiStatusListener {
+class MhiClimate : public climate::Climate, public Component, public Parented<MhiAcCtrl> {
+ public:
+  void setup() override;
+  void dump_config() override;
 
-protected:
-    void setup() override;
-    void dump_config() override;
-    void control(const climate::ClimateCall& call) override;
-    climate::ClimateTraits traits() override;
-    void update_status(ACStatus status, int value) override;
+  void set_temperature_offset_enabled(bool enabled) {
+    this->temperature_offset_enabled_ = enabled;
+  }
 
-private:
-    static constexpr uint32_t kCommandSettleWindowMs = 1500U;
+  void set_minimum_temperature(float temp) {
+    this->minimum_temperature_ = temp;
+  }
 
-    bool temperature_offset_enabled_{false};
-    float temperature_offset_{0.0f};
-    float minimum_temperature_{18.0f};
-    float maximum_temperature_{30.0f};
-    float temperature_step_{0.5f};
+  void set_maximum_temperature(float temp) {
+    this->maximum_temperature_ = temp;
+  }
 
-    ACPower power_;
-    ACMode mode_;
-    float tsetpoint_;
-    uint32_t fan_;
-    ACVanes vanes_;
-    ACVanesLR vanesLR_;
-    int vanesLR_pos_old_state_;
-    int vanesLR_pos_state_{0};
-    int vanes_pos_old_state_;
-    int vanes_pos_state_{0};
-    MhiPlatform* platform_;
+  void set_temperature_step(float step) {
+    this->temperature_step_ = step;
+  }
 
-    uint32_t pending_until_ms_{0};
+ protected:
+  climate::ClimateTraits traits() override;
+  void control(const climate::ClimateCall& call) override;
 
-    bool pending_power_valid_{false};
-    ACPower pending_power_{power_off};
+ private:
+  static constexpr float kAcMinimumSetpointC = 18.0f;
 
-    bool pending_mode_valid_{false};
-    climate::ClimateMode pending_mode_{climate::CLIMATE_MODE_OFF};
+  uint8_t mode_to_mhi_(climate::ClimateMode mode) const;
+  uint8_t fan_to_mhi_(climate::ClimateFanMode fan) const;
 
-    bool pending_target_temperature_valid_{false};
-    float pending_target_temperature_{0.0f};
+  void apply_swing_command_(climate::ClimateSwingMode swing);
 
-    bool pending_fan_valid_{false};
-    climate::ClimateFanMode pending_fan_mode_{climate::CLIMATE_FAN_AUTO};
+  bool temperature_offset_enabled_{false};
+  float temperature_offset_{0.0f};
 
-    bool pending_swing_valid_{false};
-    climate::ClimateSwingMode pending_swing_mode_{climate::CLIMATE_SWING_OFF};
+  float minimum_temperature_{18.0f};
+  float maximum_temperature_{30.0f};
+  float temperature_step_{0.5f};
 
-    bool startup_power_synced_{false};
-
-    bool pending_window_active_() const;
-    void start_pending_window_();
-    void clear_expired_pending_();
-    void clear_all_pending_();
-
-public:
-    void set_temperature_offset_enabled(bool enabled) {
-        this->temperature_offset_enabled_ = enabled;
-    }
-
-    void set_minimum_temperature(float temp) {
-        this->minimum_temperature_ = temp;
-    }
+  // Used when switching swing off, so we return to a tangible vane position.
+  uint8_t last_vertical_vane_position_{4};
+  uint8_t last_horizontal_vane_position_{4};
 };
 
-}
-}
+}  // namespace mhi_ac_ctrl
+}  // namespace esphome

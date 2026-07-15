@@ -1,57 +1,39 @@
 #include "mhi_binary_sensors.h"
 
 #include "esphome/core/log.h"
+
 namespace esphome {
-namespace mhi {
+namespace mhi_ac_ctrl {
 
-static const char* TAG = "mhi.binary_sensor";
-
-void MhiBinarySensors::set_defrost(BinarySensor* sensor){ defrost_ = sensor; }
-void MhiBinarySensors::set_vanes_3d_auto_enabled(BinarySensor* sensor){ vanes_3d_auto_enabled_ = sensor; }
-
-
+static const char* const TAG = "mhi.binary_sensor";
 
 void MhiBinarySensors::setup() {
-    this->parent_->add_listener(this);
+  ESP_LOGCONFIG(TAG, "Setting up MHI binary sensors");
+
+  if (this->parent_ == nullptr) {
+    ESP_LOGW(TAG, "MHI binary sensors have no parent component");
+    return;
+  }
+
+  if (this->power_sensor_ != nullptr) {
+    this->parent_->set_power_binary_sensor(this->power_sensor_);
+  }
+
+  if (this->defrost_sensor_ != nullptr) {
+    this->parent_->set_defrost_binary_sensor(this->defrost_sensor_);
+  }
+
+  if (this->vanes_3d_auto_enabled_sensor_ != nullptr) {
+    this->parent_->set_vanes_3d_auto_enabled_binary_sensor(this->vanes_3d_auto_enabled_sensor_);
+  }
 }
 
 void MhiBinarySensors::dump_config() {
-    
-    ESP_LOGCONFIG(TAG, "MHI Binary Sensors");
-
-    if (defrost_ != NULL) {
-        ESP_LOGCONFIG(TAG, "  defrost: %d", this->defrost_->state);
-    }
-    if (vanes_3d_auto_enabled_ != NULL) {
-        ESP_LOGCONFIG(TAG, "  vanes_3d_auto_enabled: %d", this->vanes_3d_auto_enabled_->state);
-    }
+  ESP_LOGCONFIG(TAG, "MHI Binary Sensors");
+  ESP_LOGCONFIG(TAG, "  Power: %s", this->power_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Defrost: %s", this->defrost_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  3D Auto enabled: %s", this->vanes_3d_auto_enabled_sensor_ != nullptr ? "YES" : "NO");
 }
 
-void MhiBinarySensors::update_status(ACStatus status, int value) {
-
-    switch (status) {
-    case opdata_defrost:
-        if (this->defrost_ != NULL) { 
-            this->defrost_ -> publish_state(value != 0); 
-        }
-        break;
-    case status_3Dauto:
-        if (this->vanes_3d_auto_enabled_ != NULL) { 
-            switch (value) {
-            case 0b00000000:
-                this->vanes_3d_auto_enabled_ -> publish_state(false); 
-                break;
-            case 0b00000100:
-                this->vanes_3d_auto_enabled_ -> publish_state(true); 
-                break;
-            }
-        }
-        break;
-    default:
-        // skip these values as they are not used currently
-        break;
-    }
-}
-
-} //namespace mhi
-} //namespace esphome
+}  // namespace mhi_ac_ctrl
+}  // namespace esphome

@@ -1,7 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import select
-from .. import MhiAcCtrl, CONF_MHI_AC_CTRL_ID
+
+from .. import CONF_MHI_AC_CTRL_ID, MhiAcCtrl, mhi_ns
 
 CONF_VERTICAL = "vertical_vanes"
 CONF_VERTICAL_SELECTS = [
@@ -12,6 +13,7 @@ CONF_VERTICAL_SELECTS = [
     "Swing",
 ]
 ICON_UP_DOWN = "mdi:arrow-up-down"
+
 CONF_HORIZONTAL = "horizontal_vanes"
 CONF_HORIZONTAL_SELECTS = [
     "Left",
@@ -28,58 +30,75 @@ ICON_LEFT_RIGHT = "mdi:arrow-left-right"
 CONF_FAN_SPEED = "fan_speed"
 CONF_FAN_SPEED_SELECTS = [
     "Auto",
-    "Quiet",
     "Low",
     "Medium",
     "High",
 ]
 ICON_FAN = "mdi:fan"
 
+MhiVerticalVanesSelect = mhi_ns.class_(
+    "MhiVerticalVanesSelect",
+    select.Select,
+    cg.Component,
+)
 
-mhi_ns = cg.esphome_ns.namespace('mhi')
-MhiVerticalVanesSelect = mhi_ns.class_("MhiVerticalVanesSelect", select.Select, cg.Component)
-MhiHorizontalVanesSelect = mhi_ns.class_("MhiHorizontalVanesSelect", select.Select, cg.Component)
-MhiFanSpeedSelect = mhi_ns.class_("MhiFanSpeedSelect", select.Select, cg.Component)
+MhiHorizontalVanesSelect = mhi_ns.class_(
+    "MhiHorizontalVanesSelect",
+    select.Select,
+    cg.Component,
+)
 
-CONFIG_SCHEMA = {
-    cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
-    cv.Optional(CONF_VERTICAL): select.select_schema(
-        MhiVerticalVanesSelect,
-        icon=ICON_UP_DOWN
-    ),
-    cv.Optional(CONF_HORIZONTAL): select.select_schema(
-        MhiHorizontalVanesSelect,
-        icon=ICON_LEFT_RIGHT
-    ),
-    cv.Optional(CONF_FAN_SPEED): select.select_schema(
-        MhiFanSpeedSelect,
-        icon=ICON_FAN
-    ),
-}
+MhiFanSpeedSelect = mhi_ns.class_(
+    "MhiFanSpeedSelect",
+    select.Select,
+    cg.Component,
+)
+
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
+        cv.Optional(CONF_VERTICAL): select.select_schema(
+            MhiVerticalVanesSelect,
+            icon=ICON_UP_DOWN,
+        ),
+        cv.Optional(CONF_HORIZONTAL): select.select_schema(
+            MhiHorizontalVanesSelect,
+            icon=ICON_LEFT_RIGHT,
+        ),
+        cv.Optional(CONF_FAN_SPEED): select.select_schema(
+            MhiFanSpeedSelect,
+            icon=ICON_FAN,
+        ),
+    }
+)
 
 
 async def to_code(config):
-    mhi = await cg.get_variable(config[CONF_MHI_AC_CTRL_ID])
-    if vertical_config := config.get(CONF_VERTICAL):
+    parent = await cg.get_variable(config[CONF_MHI_AC_CTRL_ID])
+
+    if CONF_VERTICAL in config:
         sel = await select.new_select(
-            vertical_config,
+            config[CONF_VERTICAL],
             options=CONF_VERTICAL_SELECTS,
         )
-        await cg.register_parented(sel, mhi)
-        await cg.register_component(sel, vertical_config)
+        await cg.register_component(sel, config[CONF_VERTICAL])
+        await cg.register_parented(sel, parent)
+        cg.add(parent.set_vertical_vanes_select(sel))
 
-    if horizontal_config := config.get(CONF_HORIZONTAL):
+    if CONF_HORIZONTAL in config:
         sel = await select.new_select(
-            horizontal_config,
+            config[CONF_HORIZONTAL],
             options=CONF_HORIZONTAL_SELECTS,
         )
-        await cg.register_parented(sel, mhi)
-        await cg.register_component(sel, horizontal_config)
+        await cg.register_component(sel, config[CONF_HORIZONTAL])
+        await cg.register_parented(sel, parent)
+        cg.add(parent.set_horizontal_vanes_select(sel))
 
-    if fan_speed_config := config.get(CONF_FAN_SPEED):
+    if CONF_FAN_SPEED in config:
         sel = await select.new_select(
-            fan_speed_config,
+            config[CONF_FAN_SPEED],
             options=CONF_FAN_SPEED_SELECTS,
         )
-        await cg.register_parented(sel, mhi)
-        await cg.register_component(sel, fan_speed_config)
+        await cg.register_component(sel, config[CONF_FAN_SPEED])
+        await cg.register_parented(sel, parent)
+        cg.add(parent.set_fan_speed_select(sel))

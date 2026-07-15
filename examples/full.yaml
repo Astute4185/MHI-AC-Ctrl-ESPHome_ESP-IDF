@@ -27,6 +27,7 @@ api:
         temperature_value: float
       then:
         - climate.mhi.set_external_room_temperature:
+            mhi_ac_ctrl_id: mhi_ac
             temperature: !lambda "return temperature_value;"
 
 ota:
@@ -43,15 +44,26 @@ wifi:
 captive_portal:
 
 external_components:
-  - source: github://Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF@master
+  - source:
+      type: git
+      url: https://github.com/Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF
+      ref: ESP-IDF-Redux
     components: [MhiAcCtrl]
 
 MhiAcCtrl:
-  # Verify this first if you see checksum/signature failures.
+  id: mhi_ac
+  # Set to 20 for older units.
+  # Set to 33 for newer WF-RAC compatible units that expose 3D Auto and left/right vanes.
+  # If you see checksum/signature failures, verify frame_size first.
   frame_size: 33
+  # Update these pins to match your hardware.
   sck_pin: 14
   mosi_pin: 13
   miso_pin: 12
+  # FastGPIO is the currently validated transport backend.
+  # Keeping it explicit makes future driver/backend testing easier.
+  rx_driver: fast_gpio_rx
+  tx_driver: fast_gpio_tx
   initial_vertical_vanes_position: 5
   initial_horizontal_vanes_position: 8
   room_temp_timeout: 60
@@ -63,6 +75,7 @@ button:
 
 climate:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     name: "${friendly_name}"
     temperature_offset: true
     visual_min_temperature: 17.0
@@ -77,6 +90,9 @@ time:
 
 binary_sensor:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    power:
+      name: "Power"
     defrost:
       name: "Defrost"
     vanes_3d_auto_enabled:
@@ -89,6 +105,11 @@ sensor:
     name: "WiFi Signal"
     update_interval: 60s
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    room_temperature:
+      name: "Room Temperature"
+    target_temperature:
+      name: "Target Temperature"
     outdoor_temperature:
       name: "Outdoor Temperature"
     return_air_temperature:
@@ -104,17 +125,17 @@ sensor:
     compressor_total_run_time:
       name: "Compressor Total Run Time"
     current_power:
-      name: "Current Power"
+      name: "Current"
     energy_used:
       name: "Energy Used"
     indoor_unit_thi_r1:
-      name: "Indoor HE Temp 1"
+      name: "Indoor Unit THI R1"
     indoor_unit_thi_r2:
-      name: "Indoor HE Temp 2"
+      name: "Indoor Unit THI R2"
     indoor_unit_thi_r3:
-      name: "Indoor HE Temp 3"
+      name: "Indoor Unit THI R3"
     outdoor_unit_tho_r1:
-      name: "Outdoor HE Temp"
+      name: "Outdoor Unit THO R1"
     outdoor_unit_expansion_valve:
       name: "Outdoor Unit Expansion Valve"
     outdoor_unit_discharge_pipe:
@@ -122,13 +143,7 @@ sensor:
     outdoor_unit_discharge_pipe_super_heat:
       name: "Outdoor Unit Discharge Pipe Super Heat"
     protection_state_number:
-      name: "Compressor Protection Code"
-    error_code:
-      name: "Error Code"
-    vanes_pos:
-      name: "Vanes"
-    vanesLR_pos:
-      name: "Vanes Left-Right"
+      name: "Protection State Number"
 
 text_sensor:
   - platform: version
@@ -141,11 +156,15 @@ text_sensor:
     bssid:
       name: "BSSID"
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    error_code:
+      name: "Error Code"
     protection_state:
-      name: "Compressor Protection Status"
+      name: "Protection State"
 
 select:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     vertical_vanes:
       name: "Vanes Up-Down"
     horizontal_vanes:
@@ -155,5 +174,6 @@ select:
 
 switch:
   - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: "3D Auto"

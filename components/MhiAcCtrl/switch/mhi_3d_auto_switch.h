@@ -1,25 +1,20 @@
 #pragma once
 
-#include "esphome/core/component.h"
+#include "../mhi_ac_ctrl.h"
 #include "esphome/components/switch/switch.h"
-#include "../mhi_platform.h"
+#include "esphome/core/component.h"
 
 namespace esphome {
-namespace mhi {
+namespace mhi_ac_ctrl {
 
-class Mhi3dAutoSwitch : 
-    public switch_::Switch, 
-    public Component,
-    public Parented<MhiPlatform>, 
-    protected MhiStatusListener {
-public:
-  void write_state(bool state);
-  
-protected:
-    void setup() override;
-    void dump_config() override;
-    void update_status(ACStatus status, int value) override;
+class Mhi3dAutoSwitch : public switch_::Switch, public Component, public Parented<MhiAcCtrl> {
+ public:
+  void setup() override;
+  void dump_config() override;
+
+ protected:
+  void write_state(bool state) override;
 };
 
-} //namespace mhi
-} //namespace esphome
+}  // namespace mhi_ac_ctrl
+}  // namespace esphome

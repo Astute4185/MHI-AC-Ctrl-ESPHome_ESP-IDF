@@ -1,25 +1,20 @@
 #pragma once
 
+#include "../mhi_ac_ctrl.h"
 #include "esphome/components/select/select.h"
-#include "../mhi_platform.h"
+#include "esphome/core/component.h"
 
 namespace esphome {
-namespace mhi {
+namespace mhi_ac_ctrl {
 
-class MhiVerticalVanesSelect : 
-    public Component, 
-    public select::Select, 
-    public Parented<MhiPlatform>,
-    protected MhiStatusListener {
-public:
-    MhiVerticalVanesSelect() = default;
+class MhiVerticalVanesSelect : public Component, public select::Select, public Parented<MhiAcCtrl> {
+ public:
+  void setup() override;
+  void dump_config() override;
 
-protected:
-    void control(const std::string &value) override;
-    void setup() override;
-    void dump_config() override;
-    void update_status(ACStatus status, int value) override;
+ protected:
+  void control(const std::string& value) override;
 };
 
-}  // namespace mhi
+}  // namespace mhi_ac_ctrl
 }  // namespace esphome
