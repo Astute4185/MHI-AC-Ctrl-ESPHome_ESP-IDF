@@ -270,4 +270,7 @@ void fixture_garbage_then_valid_frame_resyncs();
 void fixture_opdata_outdoor_temp_decodes();
 void fixture_opdata_current_decodes();
 
+void tx_builder_persists_external_room_temperature_override();
+void tx_builder_clears_external_room_temperature_override();
+
 }  // namespace mhi_unit_tests

@@ -233,4 +233,37 @@ void tx_builder_preserves_horizontal_context_for_3d_auto_command() {
   EXPECT_FALSE(command.has_pending_command());
 }
 
+void tx_builder_persists_external_room_temperature_override() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer first{};
+  MhiFrameBuffer second{};
+
+  config.frame_size = kMhiFrame20Bytes;
+  runtime.room_temp_override_raw = 0x89U;
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, first));
+  EXPECT_EQ(first.data[DB3], 0x89U);
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, second));
+  EXPECT_EQ(second.data[DB3], 0x89U);
+}
+
+void tx_builder_clears_external_room_temperature_override() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer frame{};
+
+  config.frame_size = kMhiFrame33Bytes;
+  runtime.room_temp_override_raw = 0x91U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, frame));
+  EXPECT_EQ(frame.data[DB3], 0x91U);
+
+  runtime.room_temp_override_raw = 0xFFU;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, frame));
+  EXPECT_EQ(frame.data[DB3], 0xFFU);
+}
+
 }  // namespace mhi_unit_tests

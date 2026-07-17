@@ -3,6 +3,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <cmath>
+
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -23,6 +25,74 @@ bool in_range(float value, float min_value, float max_value) {
 }
 
 }  // namespace
+
+void MhiAcCtrl::set_external_room_temperature(float value) {
+  this->apply_external_room_temperature_(value, true);
+}
+
+void MhiAcCtrl::apply_external_room_temperature_(float value, bool api_value) {
+  if (std::isnan(value)) {
+    if (api_value) {
+      this->room_temp_api_active_ = false;
+    }
+    this->clear_external_room_temperature_();
+    return;
+  }
+
+  if (value <= -10.0f || value >= 48.0f) {
+    ESP_LOGW(DIAG_TAG, "external room temperature ignored: %.2fC is outside the supported range", value);
+    return;
+  }
+
+  if (api_value) {
+    this->room_temp_api_active_ = true;
+    this->room_temp_api_timeout_start_ms_ = millis();
+  } else {
+    // A configured sensor owns the value and does not use the API timeout.
+    this->room_temp_api_active_ = false;
+  }
+
+  const uint8_t raw = static_cast<uint8_t>((value * 4.0f) + 61.0f);
+  const bool changed = std::isnan(this->last_external_room_temperature_c_) ||
+                       std::fabs(value - this->last_external_room_temperature_c_) >= 0.01f ||
+                       this->tx_runtime_.room_temp_override_raw != raw;
+
+  this->last_external_room_temperature_c_ = value;
+  this->tx_runtime_.room_temp_override_raw = raw;
+
+  if (changed) {
+    ESP_LOGI(DIAG_TAG, "external room temperature active: %.2fC raw=0x%02x source=%s", value,
+             static_cast<unsigned int>(raw), api_value ? "API" : "sensor");
+  }
+}
+
+void MhiAcCtrl::clear_external_room_temperature_() {
+  const bool changed =
+      this->tx_runtime_.room_temp_override_raw != 0xFFU || !std::isnan(this->last_external_room_temperature_c_);
+
+  this->tx_runtime_.room_temp_override_raw = 0xFFU;
+  this->last_external_room_temperature_c_ = NAN;
+
+  if (changed) {
+    ESP_LOGI(DIAG_TAG, "external room temperature cleared; using indoor-unit sensor");
+  }
+}
+
+void MhiAcCtrl::check_external_room_temperature_timeout_() {
+  if (!this->room_temp_api_active_ || this->room_temp_api_timeout_s_ <= 0) {
+    return;
+  }
+
+  const uint32_t timeout_ms = static_cast<uint32_t>(this->room_temp_api_timeout_s_) * 1000U;
+  const uint32_t now = millis();
+  if ((now - this->room_temp_api_timeout_start_ms_) < timeout_ms) {
+    return;
+  }
+
+  this->room_temp_api_active_ = false;
+  this->clear_external_room_temperature_();
+  ESP_LOGI(DIAG_TAG, "external room temperature API value timed out after %ds", this->room_temp_api_timeout_s_);
+}
 
 bool MhiAcCtrl::request_horizontal_vane_command(uint8_t horizontal_vane) {
   if (horizontal_vane < 1U || horizontal_vane > 8U) {
@@ -119,6 +189,10 @@ void MhiAcCtrl::setup() {
   this->tx_background_attempts_ = 0U;
   this->tx_background_failures_ = 0U;
   this->tx_command_priority_attempts_ = 0U;
+  this->room_temp_api_active_ = false;
+  this->room_temp_api_timeout_start_ms_ = 0U;
+  this->last_external_room_temperature_c_ = NAN;
+  this->tx_runtime_.room_temp_override_raw = 0xFFU;
   this->rx_worker_running_ = false;
   this->rx_worker_stop_requested_ = false;
   this->rx_worker_started_ = false;
@@ -162,6 +236,12 @@ void MhiAcCtrl::setup() {
 
   this->transport_.setup();
 
+  if (this->external_room_temperature_sensor_ != nullptr) {
+    this->external_room_temperature_sensor_->add_on_state_callback(
+        [this](float state) { this->apply_external_room_temperature_(state, false); });
+    this->apply_external_room_temperature_(this->external_room_temperature_sensor_->state, false);
+  }
+
   this->start_rx_worker_();
   this->start_tx_worker_();
 
@@ -181,6 +261,7 @@ void MhiAcCtrl::loop() {
   uint32_t rx_read_sync_us = 0U;
 
   section_start_us = micros();
+  this->check_external_room_temperature_timeout_();
   this->build_and_stage_tx_frame_();
   tx_stage_us = elapsed_us_(section_start_us);
 
@@ -212,6 +293,10 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "MHI AC Ctrl rewrite skeleton:");
   ESP_LOGCONFIG(TAG, "  Frame size: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  Room temp timeout: %ds", this->room_temp_api_timeout_s_);
+  ESP_LOGCONFIG(TAG, "  External temperature sensor: %s",
+                this->external_room_temperature_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  External room temperature raw: 0x%02x",
+                static_cast<unsigned int>(this->tx_runtime_.room_temp_override_raw));
   ESP_LOGCONFIG(TAG, "  Pins: SCK=%d MOSI=%d MISO=%d", this->pins_.sck, this->pins_.mosi, this->pins_.miso);
   ESP_LOGCONFIG(TAG, "  RX driver configured: %s", this->rx_driver_.c_str());
   ESP_LOGCONFIG(TAG, "  TX driver configured: %s", this->tx_driver_.c_str());

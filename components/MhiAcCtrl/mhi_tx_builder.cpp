@@ -231,11 +231,14 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
     }
   }
 
+  // Room temperature is persistent transport state, not a one-shot confirmed command.
+  // Retain compatibility with callers that still stage the legacy command field,
+  // then place the active value in every outgoing frame.
   if (command.room_temp_override_set) {
-    out.data[DB3] = command.room_temp_override_raw;
+    runtime.room_temp_override_raw = command.room_temp_override_raw;
     command.room_temp_override_set = false;
-    result.encoded_command_mask |= MHI_COMMAND_ROOM_TEMP_OVERRIDE;
   }
+  out.data[DB3] = runtime.room_temp_override_raw;
 
   if (out.len == kMhiFrame33Bytes) {
     out.data[DB16] = 0x00U;
