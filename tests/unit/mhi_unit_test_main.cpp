@@ -62,8 +62,6 @@ int main() {
   tx_builder_applies_3d_auto_in_33_byte_frame();
   tx_builder_reports_horizontal_vane_intent_in_33_byte_frame();
   tx_builder_preserves_horizontal_context_for_3d_auto_command();
-  tx_builder_persists_external_room_temperature_override();
-  tx_builder_clears_external_room_temperature_override();
 
   command_confirmation_confirms_power_mode_and_vertical_vane();
   command_confirmation_keeps_partial_pending_until_later_status();
@@ -92,6 +90,9 @@ int main() {
   fixture_garbage_then_valid_frame_resyncs();
   fixture_opdata_outdoor_temp_decodes();
   fixture_opdata_current_decodes();
+
+  tx_builder_persists_external_room_temperature_override();
+  tx_builder_clears_external_room_temperature_override();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;

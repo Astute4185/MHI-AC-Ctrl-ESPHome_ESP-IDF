@@ -36,6 +36,7 @@ constexpr uint32_t kMhiDefaultOpdataMask = MHI_OPDATA_REQ_MODE;
 
 struct MhiTxRuntime {
   uint8_t opdata_index{0};
+  // Persistent DB3 room-temperature override. 0xFF selects the indoor-unit sensor.
   uint8_t room_temp_override_raw{0xFF};
   uint8_t error_opdata_count{0};
   bool double_frame{false};

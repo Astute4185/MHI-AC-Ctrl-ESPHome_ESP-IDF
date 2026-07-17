@@ -146,6 +146,7 @@ class MhiAcCtrl : public Component {
     this->external_room_temperature_sensor_ = sensor;
   }
 
+  // Used by the compatibility automation action/API service.
   void set_external_room_temperature(float value);
 
   // Compatibility aliases for old config names.
@@ -379,7 +380,7 @@ class MhiAcCtrl : public Component {
   bool background_tx_due_(uint32_t now_ms) const;
   bool command_confirmation_pending_() const;
   bool background_tx_allowed_(uint32_t now_ms);
-  void apply_external_room_temperature_(float value);
+  void apply_external_room_temperature_(float value, bool api_value);
   void clear_external_room_temperature_();
   void check_external_room_temperature_timeout_();
 
@@ -388,9 +389,6 @@ class MhiAcCtrl : public Component {
 
   int frame_size_{20};
   int room_temp_api_timeout_s_{60};
-  bool room_temp_api_active_{false};
-  uint32_t room_temp_api_timeout_start_ms_{0U};
-  float last_external_room_temperature_c_{NAN};
 
   int initial_vertical_vanes_position_{0};
   int initial_horizontal_vanes_position_{0};
@@ -401,6 +399,9 @@ class MhiAcCtrl : public Component {
   std::string tx_driver_{"fast_gpio"};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
+  float last_external_room_temperature_c_{NAN};
+  bool room_temp_api_active_{false};
+  uint32_t room_temp_api_timeout_start_ms_{0U};
 
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
 

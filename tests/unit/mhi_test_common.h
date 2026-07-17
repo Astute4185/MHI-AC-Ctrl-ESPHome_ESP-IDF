@@ -240,8 +240,6 @@ void tx_builder_drops_33_byte_only_commands_in_20_byte_mode();
 void tx_builder_applies_3d_auto_in_33_byte_frame();
 void tx_builder_reports_horizontal_vane_intent_in_33_byte_frame();
 void tx_builder_preserves_horizontal_context_for_3d_auto_command();
-void tx_builder_persists_external_room_temperature_override();
-void tx_builder_clears_external_room_temperature_override();
 
 void command_confirmation_confirms_power_mode_and_vertical_vane();
 void command_confirmation_keeps_partial_pending_until_later_status();
@@ -271,5 +269,8 @@ void fixture_bad_checksum_rejects();
 void fixture_garbage_then_valid_frame_resyncs();
 void fixture_opdata_outdoor_temp_decodes();
 void fixture_opdata_current_decodes();
+
+void tx_builder_persists_external_room_temperature_override();
+void tx_builder_clears_external_room_temperature_override();
 
 }  // namespace mhi_unit_tests
