@@ -36,6 +36,7 @@ constexpr uint32_t kMhiDefaultOpdataMask = MHI_OPDATA_REQ_MODE;
 
 struct MhiTxRuntime {
   uint8_t opdata_index{0};
+  uint8_t room_temp_override_raw{0xFF};
   uint8_t error_opdata_count{0};
   bool double_frame{false};
   uint32_t frame_counter{1};

@@ -233,4 +233,43 @@ void tx_builder_preserves_horizontal_context_for_3d_auto_command() {
   EXPECT_FALSE(command.has_pending_command());
 }
 
+
+
+void tx_builder_persists_external_room_temperature_override() {
+  MhiCommandState command{};
+  command.room_temp_override_set = true;
+  command.room_temp_override_raw = 0x9DU;  // 24.0C: (24 * 4) + 61.
+
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB3], 0x9DU);
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_ROOM_TEMP_OVERRIDE));
+  EXPECT_FALSE(command.room_temp_override_set);
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB3], 0x9DU);
+  EXPECT_EQ(result.encoded_command_mask, 0U);
+}
+
+void tx_builder_clears_external_room_temperature_override() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  runtime.room_temp_override_raw = 0x9DU;
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  command.room_temp_override_set = true;
+  command.room_temp_override_raw = 0xFFU;
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB3], 0xFFU);
+  EXPECT_EQ(runtime.room_temp_override_raw, 0xFFU);
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_ROOM_TEMP_OVERRIDE));
+}
+
 }  // namespace mhi_unit_tests

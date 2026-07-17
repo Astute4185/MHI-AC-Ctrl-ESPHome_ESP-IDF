@@ -135,3 +135,14 @@ switch:
     mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: MHI 3D Auto
+
+
+api:
+  services:
+    - service: set_external_room_temperature
+      variables:
+        temperature_value: float
+      then:
+        - climate.mhi.set_external_room_temperature:
+            mhi_ac_ctrl_id: mhi_ac
+            temperature: !lambda "return temperature_value;"

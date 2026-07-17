@@ -3,6 +3,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -144,6 +145,8 @@ class MhiAcCtrl : public Component {
   void set_external_room_temperature_sensor(sensor::Sensor* sensor) {
     this->external_room_temperature_sensor_ = sensor;
   }
+
+  void set_external_room_temperature(float value);
 
   // Compatibility aliases for old config names.
   void set_vanes(int position) {
@@ -376,12 +379,18 @@ class MhiAcCtrl : public Component {
   bool background_tx_due_(uint32_t now_ms) const;
   bool command_confirmation_pending_() const;
   bool background_tx_allowed_(uint32_t now_ms);
+  void apply_external_room_temperature_(float value);
+  void clear_external_room_temperature_();
+  void check_external_room_temperature_timeout_();
 
   static uint32_t elapsed_us_(uint32_t start_us);
   static uint8_t detect_chip_core_count_();
 
   int frame_size_{20};
   int room_temp_api_timeout_s_{60};
+  bool room_temp_api_active_{false};
+  uint32_t room_temp_api_timeout_start_ms_{0U};
+  float last_external_room_temperature_c_{NAN};
 
   int initial_vertical_vanes_position_{0};
   int initial_horizontal_vanes_position_{0};
