@@ -16,6 +16,7 @@ enum ClimateMode {
 
 enum ClimateFanMode {
   CLIMATE_FAN_AUTO,
+  CLIMATE_FAN_QUIET,
   CLIMATE_FAN_LOW,
   CLIMATE_FAN_MEDIUM,
   CLIMATE_FAN_HIGH,

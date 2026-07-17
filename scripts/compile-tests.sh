@@ -9,6 +9,7 @@ cd "${REPO_ROOT}"
 CONFIGS=(
   "tests/components/MhiAcCtrl/test.esp32-s3-idf.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-frame33.yaml"
+  "tests/components/MhiAcCtrl/test.esp32-s3-idf-quiet-four-speed.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-external-clock-rx.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-spi-rx.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-spi-rx-fast-gpio-tx.yaml"

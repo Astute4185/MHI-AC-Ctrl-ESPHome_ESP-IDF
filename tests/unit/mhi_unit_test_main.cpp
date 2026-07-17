@@ -24,7 +24,13 @@ int main() {
   frame_catalog_keeps_command_candidate_side_slot_latest_only();
   frame_catalog_reports_unknown_frames();
 
+  fan_profile_defaults_to_three_speed();
+  fan_profile_three_speed_collapses_code_zero_to_low();
+  fan_profile_four_speed_exposes_code_zero_as_quiet();
+  fan_profile_encodes_quiet_only_when_opted_in();
+
   status_decoder_decodes_core_fields();
+  status_decoder_preserves_protocol_fan_code_zero();
   status_decoder_decodes_33_byte_vane_feedback();
   status_decoder_ignores_unknown_horizontal_vane_feedback();
   status_decoder_ignores_33_byte_vane_feedback_on_opdata_frames();
@@ -45,6 +51,8 @@ int main() {
   publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();
   publish_bridge_maps_unknown_protection_state();
   publish_bridge_maps_mhi_auto_to_heat_cool_for_ha_setpoint_ui();
+  publish_bridge_three_speed_maps_code_zero_to_low();
+  publish_bridge_four_speed_maps_code_zero_to_quiet();
   publish_bridge_publishes_sensor_parity_slice3_vane_feedback();
   publish_bridge_suppresses_unchanged_sensor_republishes();
   publish_bridge_suppresses_alternating_climate_current_temperature_chatter();
@@ -57,16 +65,20 @@ int main() {
   tx_builder_uses_configured_sensor_parity_opdata_mask();
   tx_builder_uses_configured_sensor_parity_slice2_opdata_mask();
   tx_builder_reports_encoded_command_mask();
+  tx_builder_encodes_quiet_fan_code_zero();
   tx_builder_keeps_double_frame_commands_pending_until_command_frame();
   tx_builder_drops_33_byte_only_commands_in_20_byte_mode();
   tx_builder_applies_3d_auto_in_33_byte_frame();
   tx_builder_reports_horizontal_vane_intent_in_33_byte_frame();
   tx_builder_preserves_horizontal_context_for_3d_auto_command();
+  tx_builder_persists_external_room_temperature_override();
+  tx_builder_clears_external_room_temperature_override();
 
   command_confirmation_confirms_power_mode_and_vertical_vane();
   command_confirmation_keeps_partial_pending_until_later_status();
   command_confirmation_confirms_auto_fan();
   command_confirmation_confirms_supported_fan_codes();
+  command_confirmation_confirms_quiet_fan_code_zero();
   command_confirmation_times_out_unconfirmed_commands();
   command_confirmation_detects_duplicate_pending_commands();
   command_confirmation_confirms_horizontal_vane_feedback();
@@ -90,9 +102,6 @@ int main() {
   fixture_garbage_then_valid_frame_resyncs();
   fixture_opdata_outdoor_temp_decodes();
   fixture_opdata_current_decodes();
-
-  tx_builder_persists_external_room_temperature_override();
-  tx_builder_clears_external_room_temperature_override();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;

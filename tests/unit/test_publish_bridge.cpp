@@ -488,3 +488,52 @@ void publish_bridge_publishes_high_priority_climate_current_temperature_change_i
 
 
 }  // namespace mhi_unit_tests
+
+
+namespace mhi_unit_tests {
+
+void publish_bridge_three_speed_maps_code_zero_to_low() {
+  MhiStateStore state{};
+  auto& status = state.status();
+  status.valid = true;
+  status.fan = 0U;
+
+  esphome::climate::Climate climate{};
+  esphome::select::Select fan{};
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+  targets.fan_speed_select = &fan;
+
+  MhiPublishBridge bridge{};
+  bridge.set_fan_profile(MhiFanProfile::THREE_SPEED);
+  bridge.set_targets(targets);
+  bridge.publish(state);
+
+  EXPECT_TRUE(climate.fan_mode.has_value());
+  EXPECT_EQ(climate.fan_mode.value(), esphome::climate::CLIMATE_FAN_LOW);
+  EXPECT_TRUE(fan.state == "Low");
+}
+
+void publish_bridge_four_speed_maps_code_zero_to_quiet() {
+  MhiStateStore state{};
+  auto& status = state.status();
+  status.valid = true;
+  status.fan = 0U;
+
+  esphome::climate::Climate climate{};
+  esphome::select::Select fan{};
+  MhiPublishTargets targets{};
+  targets.climate = &climate;
+  targets.fan_speed_select = &fan;
+
+  MhiPublishBridge bridge{};
+  bridge.set_fan_profile(MhiFanProfile::QUIET_FOUR_SPEED);
+  bridge.set_targets(targets);
+  bridge.publish(state);
+
+  EXPECT_TRUE(climate.fan_mode.has_value());
+  EXPECT_EQ(climate.fan_mode.value(), esphome::climate::CLIMATE_FAN_QUIET);
+  EXPECT_TRUE(fan.state == "Quiet");
+}
+
+}  // namespace mhi_unit_tests
