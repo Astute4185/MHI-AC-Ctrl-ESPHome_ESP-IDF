@@ -104,11 +104,15 @@ void MhiClimate::control(const climate::ClimateCall& call) {
 
   if (call.get_fan_mode().has_value()) {
     const auto requested_fan = *call.get_fan_mode();
+    uint8_t fan_code = 0U;
 
-    command.fan_set = true;
-    command.fan = this->fan_to_mhi_(requested_fan);
-
-    had_change = true;
+    if (this->fan_to_mhi_(requested_fan, fan_code)) {
+      command.fan_set = true;
+      command.fan = fan_code;
+      had_change = true;
+    } else {
+      ESP_LOGW(TAG, "Ignoring unsupported fan mode for configured fan profile");
+    }
   }
 
   if (call.get_swing_mode().has_value()) {
@@ -144,21 +148,31 @@ uint8_t MhiClimate::mode_to_mhi_(climate::ClimateMode mode) const {
   }
 }
 
-uint8_t MhiClimate::fan_to_mhi_(climate::ClimateFanMode fan) const {
+bool MhiClimate::fan_to_mhi_(climate::ClimateFanMode fan, uint8_t& out) const {
+  MhiFanMode mode = MhiFanMode::UNKNOWN;
+
   switch (fan) {
+    case climate::CLIMATE_FAN_QUIET:
+      mode = MhiFanMode::QUIET;
+      break;
     case climate::CLIMATE_FAN_LOW:
-      return 1U;
-
+      mode = MhiFanMode::LOW;
+      break;
     case climate::CLIMATE_FAN_MEDIUM:
-      return 2U;
-
+      mode = MhiFanMode::MEDIUM;
+      break;
     case climate::CLIMATE_FAN_HIGH:
-      return 6U;
-
+      mode = MhiFanMode::HIGH;
+      break;
     case climate::CLIMATE_FAN_AUTO:
+      mode = MhiFanMode::AUTO;
+      break;
     default:
-      return 7U;
+      return false;
   }
+
+  const MhiFanProfile profile = this->parent_ != nullptr ? this->parent_->fan_profile() : MhiFanProfile::THREE_SPEED;
+  return mhi_fan_code_from_mode(profile, mode, out);
 }
 
 void MhiClimate::apply_swing_command_(climate::ClimateSwingMode swing) {
@@ -217,12 +231,22 @@ climate::ClimateTraits MhiClimate::traits() {
   traits.set_visual_max_temperature(this->maximum_temperature_);
   traits.set_visual_temperature_step(this->temperature_step_);
 
-  traits.set_supported_fan_modes({
-      climate::CLIMATE_FAN_AUTO,
-      climate::CLIMATE_FAN_LOW,
-      climate::CLIMATE_FAN_MEDIUM,
-      climate::CLIMATE_FAN_HIGH,
-  });
+  if (this->parent_ != nullptr && this->parent_->fan_profile_supports_quiet()) {
+    traits.set_supported_fan_modes({
+        climate::CLIMATE_FAN_AUTO,
+        climate::CLIMATE_FAN_QUIET,
+        climate::CLIMATE_FAN_LOW,
+        climate::CLIMATE_FAN_MEDIUM,
+        climate::CLIMATE_FAN_HIGH,
+    });
+  } else {
+    traits.set_supported_fan_modes({
+        climate::CLIMATE_FAN_AUTO,
+        climate::CLIMATE_FAN_LOW,
+        climate::CLIMATE_FAN_MEDIUM,
+        climate::CLIMATE_FAN_HIGH,
+    });
+  }
 
   traits.set_supported_swing_modes({
       climate::CLIMATE_SWING_OFF,
@@ -254,12 +278,22 @@ climate::ClimateTraits MhiClimate::traits() {
   traits.set_visual_max_temperature(this->maximum_temperature_);
   traits.set_visual_temperature_step(this->temperature_step_);
 
-  traits.set_supported_fan_modes({
-      climate::CLIMATE_FAN_AUTO,
-      climate::CLIMATE_FAN_LOW,
-      climate::CLIMATE_FAN_MEDIUM,
-      climate::CLIMATE_FAN_HIGH,
-  });
+  if (this->parent_ != nullptr && this->parent_->fan_profile_supports_quiet()) {
+    traits.set_supported_fan_modes({
+        climate::CLIMATE_FAN_AUTO,
+        climate::CLIMATE_FAN_QUIET,
+        climate::CLIMATE_FAN_LOW,
+        climate::CLIMATE_FAN_MEDIUM,
+        climate::CLIMATE_FAN_HIGH,
+    });
+  } else {
+    traits.set_supported_fan_modes({
+        climate::CLIMATE_FAN_AUTO,
+        climate::CLIMATE_FAN_LOW,
+        climate::CLIMATE_FAN_MEDIUM,
+        climate::CLIMATE_FAN_HIGH,
+    });
+  }
 
   traits.set_supported_swing_modes({
       climate::CLIMATE_SWING_OFF,

@@ -16,7 +16,7 @@ class MhiFanSpeedSelect : public Component, public select::Select, public Parent
   void control(const std::string& value) override;
 
  private:
-  static uint8_t fan_code_from_name_(const std::string& value);
+  static bool fan_code_from_name_(MhiFanProfile profile, const std::string& value, uint8_t& out);
 };
 
 }  // namespace mhi_ac_ctrl

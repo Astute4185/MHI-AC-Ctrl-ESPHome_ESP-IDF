@@ -14,6 +14,7 @@ CONF_MOSI_PIN = "mosi_pin"
 CONF_MISO_PIN = "miso_pin"
 CONF_RX_DRIVER = "rx_driver"
 CONF_TX_DRIVER = "tx_driver"
+CONF_FAN_PROFILE = "fan_profile"
 CONF_FRAME_START_IDLE_MS = "frame_start_idle_ms"
 CONF_RMT_SPI_FRAME_GAP_US = "rmt_spi_frame_gap_us"
 CONF_TX_BACKGROUND_INTERVAL_MS = "tx_background_interval_ms"
@@ -61,6 +62,7 @@ CONFIG_SCHEMA = cv.Schema(
             "fast_gpio_rx", "external_clock_rx", "rmt_spi_rx", lower=True
         ),
         cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
+        cv.Optional(CONF_FAN_PROFILE, default="three_speed"): cv.one_of("three_speed", "quiet_four_speed", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
         cv.Optional(CONF_RMT_SPI_FRAME_GAP_US, default=1000): cv.int_range(min=500, max=5000),
         cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
@@ -96,6 +98,7 @@ async def to_code(config):
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
+    cg.add(var.set_fan_profile(config[CONF_FAN_PROFILE]))
     cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
     cg.add(var.set_rmt_spi_frame_gap_us(config[CONF_RMT_SPI_FRAME_GAP_US]))
     cg.add(var.set_tx_background_interval_ms(_default_tx_background_interval_ms(config)))

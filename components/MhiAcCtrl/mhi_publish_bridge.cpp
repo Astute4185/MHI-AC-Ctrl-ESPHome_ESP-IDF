@@ -266,16 +266,18 @@ climate::ClimateMode MhiPublishBridge::map_climate_mode(bool power, uint8_t mode
   }
 }
 
-climate::ClimateFanMode MhiPublishBridge::map_climate_fan(uint8_t fan) {
-  switch (fan) {
-    case 0U:
-    case 1U:
+climate::ClimateFanMode MhiPublishBridge::map_climate_fan(uint8_t fan) const {
+  switch (mhi_fan_mode_from_code(this->fan_profile_, fan)) {
+    case MhiFanMode::QUIET:
+      return climate::CLIMATE_FAN_QUIET;
+    case MhiFanMode::LOW:
       return climate::CLIMATE_FAN_LOW;
-    case 2U:
+    case MhiFanMode::MEDIUM:
       return climate::CLIMATE_FAN_MEDIUM;
-    case 6U:
+    case MhiFanMode::HIGH:
       return climate::CLIMATE_FAN_HIGH;
-    case 7U:
+    case MhiFanMode::AUTO:
+    case MhiFanMode::UNKNOWN:
     default:
       return climate::CLIMATE_FAN_AUTO;
   }
@@ -329,20 +331,8 @@ const char* MhiPublishBridge::map_horizontal_vane_option(const MhiStatusState& s
   }
 }
 
-const char* MhiPublishBridge::map_fan_option(uint8_t fan) {
-  switch (fan) {
-    case 0U:
-    case 1U:
-      return "Low";
-    case 2U:
-      return "Medium";
-    case 6U:
-      return "High";
-    case 7U:
-      return "Auto";
-    default:
-      return nullptr;
-  }
+const char* MhiPublishBridge::map_fan_option(uint8_t fan) const {
+  return mhi_fan_mode_name(mhi_fan_mode_from_code(this->fan_profile_, fan));
 }
 
 const char* MhiPublishBridge::map_protection_state(uint8_t state) {

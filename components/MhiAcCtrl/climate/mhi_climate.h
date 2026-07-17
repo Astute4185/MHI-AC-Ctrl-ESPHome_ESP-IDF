@@ -38,7 +38,7 @@ class MhiClimate : public climate::Climate, public Component, public Parented<Mh
   static constexpr float kAcMinimumSetpointC = 18.0f;
 
   uint8_t mode_to_mhi_(climate::ClimateMode mode) const;
-  uint8_t fan_to_mhi_(climate::ClimateFanMode fan) const;
+  bool fan_to_mhi_(climate::ClimateFanMode fan, uint8_t& out) const;
 
   void apply_swing_command_(climate::ClimateSwingMode swing);
 

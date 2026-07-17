@@ -3,8 +3,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <cmath>
-
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -27,14 +25,19 @@ bool in_range(float value, float min_value, float max_value) {
 }  // namespace
 
 void MhiAcCtrl::set_external_room_temperature(float value) {
-  this->apply_external_room_temperature_(value, true);
+  if (std::isnan(value)) {
+    this->room_temp_api_active_ = false;
+    this->clear_external_room_temperature_();
+    return;
+  }
+
+  this->room_temp_api_active_ = true;
+  this->room_temp_api_timeout_start_ms_ = millis();
+  this->apply_external_room_temperature_(value);
 }
 
-void MhiAcCtrl::apply_external_room_temperature_(float value, bool api_value) {
+void MhiAcCtrl::apply_external_room_temperature_(float value) {
   if (std::isnan(value)) {
-    if (api_value) {
-      this->room_temp_api_active_ = false;
-    }
     this->clear_external_room_temperature_();
     return;
   }
@@ -44,38 +47,31 @@ void MhiAcCtrl::apply_external_room_temperature_(float value, bool api_value) {
     return;
   }
 
-  if (api_value) {
-    this->room_temp_api_active_ = true;
-    this->room_temp_api_timeout_start_ms_ = millis();
-  } else {
-    // A configured sensor owns the value and does not use the API timeout.
-    this->room_temp_api_active_ = false;
+  if (!std::isnan(this->last_external_room_temperature_c_) &&
+      std::fabs(value - this->last_external_room_temperature_c_) < 0.01f) {
+    return;
   }
 
-  const uint8_t raw = static_cast<uint8_t>((value * 4.0f) + 61.0f);
-  const bool changed = std::isnan(this->last_external_room_temperature_c_) ||
-                       std::fabs(value - this->last_external_room_temperature_c_) >= 0.01f ||
-                       this->tx_runtime_.room_temp_override_raw != raw;
-
+  auto& command = this->state_.command();
+  command.room_temp_override_raw = static_cast<uint8_t>((value * 4.0f) + 61.0f);
+  command.room_temp_override_set = true;
   this->last_external_room_temperature_c_ = value;
-  this->tx_runtime_.room_temp_override_raw = raw;
 
-  if (changed) {
-    ESP_LOGI(DIAG_TAG, "external room temperature active: %.2fC raw=0x%02x source=%s", value,
-             static_cast<unsigned int>(raw), api_value ? "API" : "sensor");
-  }
+  ESP_LOGD(DIAG_TAG, "external room temperature staged: %.2fC raw=0x%02x", value,
+           static_cast<unsigned int>(command.room_temp_override_raw));
 }
 
 void MhiAcCtrl::clear_external_room_temperature_() {
-  const bool changed =
-      this->tx_runtime_.room_temp_override_raw != 0xFFU || !std::isnan(this->last_external_room_temperature_c_);
+  if (std::isnan(this->last_external_room_temperature_c_) && this->tx_runtime_.room_temp_override_raw == 0xFFU) {
+    return;
+  }
 
-  this->tx_runtime_.room_temp_override_raw = 0xFFU;
+  auto& command = this->state_.command();
+  command.room_temp_override_raw = 0xFFU;
+  command.room_temp_override_set = true;
   this->last_external_room_temperature_c_ = NAN;
 
-  if (changed) {
-    ESP_LOGI(DIAG_TAG, "external room temperature cleared; using indoor-unit sensor");
-  }
+  ESP_LOGD(DIAG_TAG, "external room temperature cleared; using indoor-unit sensor");
 }
 
 void MhiAcCtrl::check_external_room_temperature_timeout_() {
@@ -85,13 +81,14 @@ void MhiAcCtrl::check_external_room_temperature_timeout_() {
 
   const uint32_t timeout_ms = static_cast<uint32_t>(this->room_temp_api_timeout_s_) * 1000U;
   const uint32_t now = millis();
+
   if ((now - this->room_temp_api_timeout_start_ms_) < timeout_ms) {
     return;
   }
 
   this->room_temp_api_active_ = false;
   this->clear_external_room_temperature_();
-  ESP_LOGI(DIAG_TAG, "external room temperature API value timed out after %ds", this->room_temp_api_timeout_s_);
+  ESP_LOGD(DIAG_TAG, "external room temperature timed out after %ds", this->room_temp_api_timeout_s_);
 }
 
 bool MhiAcCtrl::request_horizontal_vane_command(uint8_t horizontal_vane) {
@@ -158,6 +155,7 @@ bool MhiAcCtrl::request_three_d_auto_command(bool enabled) {
 }
 
 void MhiAcCtrl::refresh_publish_targets_() {
+  this->publish_bridge_.set_fan_profile(this->fan_profile_);
   this->publish_bridge_.set_targets(this->publish_targets_);
   this->publish_requested_ = true;
 }
@@ -192,7 +190,6 @@ void MhiAcCtrl::setup() {
   this->room_temp_api_active_ = false;
   this->room_temp_api_timeout_start_ms_ = 0U;
   this->last_external_room_temperature_c_ = NAN;
-  this->tx_runtime_.room_temp_override_raw = 0xFFU;
   this->rx_worker_running_ = false;
   this->rx_worker_stop_requested_ = false;
   this->rx_worker_started_ = false;
@@ -237,9 +234,11 @@ void MhiAcCtrl::setup() {
   this->transport_.setup();
 
   if (this->external_room_temperature_sensor_ != nullptr) {
-    this->external_room_temperature_sensor_->add_on_state_callback(
-        [this](float state) { this->apply_external_room_temperature_(state, false); });
-    this->apply_external_room_temperature_(this->external_room_temperature_sensor_->state, false);
+    this->external_room_temperature_sensor_->add_on_state_callback([this](float state) {
+      this->room_temp_api_active_ = false;
+      this->apply_external_room_temperature_(state);
+    });
+    this->apply_external_room_temperature_(this->external_room_temperature_sensor_->state);
   }
 
   this->start_rx_worker_();
@@ -293,13 +292,12 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "MHI AC Ctrl rewrite skeleton:");
   ESP_LOGCONFIG(TAG, "  Frame size: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  Room temp timeout: %ds", this->room_temp_api_timeout_s_);
-  ESP_LOGCONFIG(TAG, "  External temperature sensor: %s",
+  ESP_LOGCONFIG(TAG, "  External room temperature sensor: %s",
                 this->external_room_temperature_sensor_ != nullptr ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  External room temperature raw: 0x%02x",
-                static_cast<unsigned int>(this->tx_runtime_.room_temp_override_raw));
   ESP_LOGCONFIG(TAG, "  Pins: SCK=%d MOSI=%d MISO=%d", this->pins_.sck, this->pins_.mosi, this->pins_.miso);
   ESP_LOGCONFIG(TAG, "  RX driver configured: %s", this->rx_driver_.c_str());
   ESP_LOGCONFIG(TAG, "  TX driver configured: %s", this->tx_driver_.c_str());
+  ESP_LOGCONFIG(TAG, "  Fan profile: %s", mhi_fan_profile_name(this->fan_profile_));
   ESP_LOGCONFIG(TAG, "  RX driver active: %s", diag.rx_driver_name);
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
   ESP_LOGCONFIG(TAG, "  RX ready: %s", diag.rx_driver_ready ? "YES" : "NO");

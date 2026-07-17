@@ -9,6 +9,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "mhi_fan_profile.h"
 #include "mhi_state.h"
 
 namespace esphome {
@@ -64,15 +65,22 @@ class MhiPublishBridge {
     this->reset_publish_cache_();
   }
 
+  void set_fan_profile(MhiFanProfile profile) {
+    if (this->fan_profile_ != profile) {
+      this->fan_profile_ = profile;
+      this->reset_publish_cache_();
+    }
+  }
+
   void publish(const MhiStateStore& state);
 
  private:
   static climate::ClimateMode map_climate_mode(bool power, uint8_t mode);
-  static climate::ClimateFanMode map_climate_fan(uint8_t fan);
+  climate::ClimateFanMode map_climate_fan(uint8_t fan) const;
   static climate::ClimateSwingMode map_climate_swing(const MhiStatusState& status);
   static const char* map_vertical_vane_option(const MhiStatusState& status);
   static const char* map_horizontal_vane_option(const MhiStatusState& status);
-  static const char* map_fan_option(uint8_t fan);
+  const char* map_fan_option(uint8_t fan) const;
   static const char* map_protection_state(uint8_t state);
   static bool float_changed(float old_value, float new_value);
 
@@ -83,6 +91,7 @@ class MhiPublishBridge {
   void reset_publish_cache_();
 
   MhiPublishTargets targets_{};
+  MhiFanProfile fan_profile_{MhiFanProfile::THREE_SPEED};
 
   bool has_last_status_{false};
   bool has_last_opdata_{false};

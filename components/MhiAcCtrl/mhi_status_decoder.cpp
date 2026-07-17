@@ -12,8 +12,9 @@ uint8_t MhiStatusDecoder::decode_mode(uint8_t db0) {
 uint8_t MhiStatusDecoder::decode_fan(uint8_t db1, uint8_t) {
   const uint8_t fan = static_cast<uint8_t>(db1 & 0x07U);
 
-  // Practical fan status codes observed on this AC / current firmware path:
-  // 0=lowest/quiet-adjacent feedback, 1=Low, 2=Medium, 6=High, 7=Auto.
+  // Practical protocol fan codes:
+  // 0=lowest fixed speed (Quiet on opt-in four-speed profile),
+  // 1=Low, 2=Medium, 6=High, 7=Auto.
   // Do not map unknown codes to Auto, otherwise a bad command reports as Auto.
   switch (fan) {
     case 0U:
