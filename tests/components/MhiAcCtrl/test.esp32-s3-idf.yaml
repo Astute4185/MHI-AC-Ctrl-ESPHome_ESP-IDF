@@ -29,6 +29,7 @@ MhiAcCtrl:
   initial_vertical_vanes_position: 5
   initial_horizontal_vanes_position: 8
   room_temp_timeout: 60
+  external_temperature_sensor: external_room_temperature
 
 climate:
   - platform: MhiAcCtrl
@@ -41,6 +42,11 @@ climate:
 
 
 sensor:
+  - platform: template
+    id: external_room_temperature
+    name: Compile Test External Room Temperature
+    update_interval: never
+
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     room_temperature:
@@ -135,14 +141,3 @@ switch:
     mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: MHI 3D Auto
-
-
-api:
-  services:
-    - service: set_external_room_temperature
-      variables:
-        temperature_value: float
-      then:
-        - climate.mhi.set_external_room_temperature:
-            mhi_ac_ctrl_id: mhi_ac
-            temperature: !lambda "return temperature_value;"
