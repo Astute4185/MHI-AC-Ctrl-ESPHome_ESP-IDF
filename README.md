@@ -39,7 +39,7 @@ Implemented and runtime-tested:
 - Latest-slot frame cataloging for status, extended status, opdata, and unknown frames.
 - Command confirmation and duplicate command suppression.
 - Climate control with confirmed-state updates.
-- Fan speed select.
+- Configurable three-speed or Quiet/four-speed fan profile.
 - Vertical vane select.
 - Horizontal vane select from 33-byte feedback.
 - 3D Auto switch and read-only 3D Auto feedback sensor.
@@ -222,6 +222,7 @@ MhiAcCtrl:
   rx_driver: fast_gpio_rx
   tx_driver: fast_gpio_tx
   room_temp_timeout: 60
+  fan_profile: three_speed
 ```
 
 Required component-level fields:
@@ -253,6 +254,7 @@ tx_background_interval_ms
 rmt_spi_frame_gap_us
 room_temp_timeout
 external_temperature_sensor
+fan_profile
 ```
 
 ## Worker mode
@@ -352,14 +354,38 @@ select:
       name: Fan Control Left Right
 ```
 
-Supported fan options:
+Fan capabilities vary by AC model. Redux defaults to the conservative three-speed profile:
+
+```yaml
+MhiAcCtrl:
+  fan_profile: three_speed
+```
+
+This exposes:
 
 - Auto
 - Low
 - Medium
 - High
 
-Quiet mode is not currently exposed as a normal fan speed. Some ACs appear to have a separate quiet/silent mode, but it should not be assumed to be part of the internal fan-speed enum unless the feedback code is clearly identified.
+Under this profile, protocol values `0` and `1` are both presented as Low. Outgoing Low commands use protocol value `1`.
+
+For units with a distinct Quiet speed plus Low, Medium, and High, opt in explicitly:
+
+```yaml
+MhiAcCtrl:
+  fan_profile: quiet_four_speed
+```
+
+This exposes:
+
+- Auto
+- Quiet
+- Low
+- Medium
+- High
+
+The four-speed profile maps protocol value `0` to Quiet and value `1` to Low. The profile controls climate traits, fan-select options, status publishing, TX command encoding, and command confirmation. Automatic detection is intentionally not attempted because a three-speed unit may never emit value `0`, and model behaviour for unsupported commands is not known.
 
 Supported vertical vane options:
 
