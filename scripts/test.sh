@@ -23,6 +23,7 @@ CXX="${CXX:-g++}"
   tests/unit/test_frame_sync.cpp \
   tests/unit/test_frame_queue.cpp \
   tests/unit/test_frame_catalog.cpp \
+  tests/unit/test_fan_profile.cpp \
   tests/unit/test_status_decoder.cpp \
   tests/unit/test_opdata_decoder.cpp \
   tests/unit/test_publish_bridge.cpp \

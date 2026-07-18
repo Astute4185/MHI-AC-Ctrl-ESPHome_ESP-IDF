@@ -19,6 +19,17 @@ void status_decoder_decodes_core_fields() {
 }
 
 
+
+void status_decoder_preserves_protocol_fan_code_zero() {
+  MhiFrameBuffer frame = make_mosi_status_frame();
+  frame.data[DB1] = static_cast<uint8_t>(frame.data[DB1] & 0xF8U);
+
+  MhiDecodedStatus decoded{};
+  EXPECT_TRUE(MhiStatusDecoder::decode_mosi(frame.view(), decoded));
+  EXPECT_EQ(decoded.fan_raw, 0U);
+  EXPECT_EQ(decoded.fan, 0U);
+}
+
 void status_decoder_decodes_33_byte_vane_feedback() {
   const MhiFrameBuffer frame = make_mosi_status_frame_33(6U, false, true);
 

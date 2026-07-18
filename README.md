@@ -39,7 +39,7 @@ Implemented and runtime-tested:
 - Latest-slot frame cataloging for status, extended status, opdata, and unknown frames.
 - Command confirmation and duplicate command suppression.
 - Climate control with confirmed-state updates.
-- Fan speed select.
+- Configurable three-speed or Quiet/four-speed fan profile.
 - Vertical vane select.
 - Horizontal vane select from 33-byte feedback.
 - 3D Auto switch and read-only 3D Auto feedback sensor.
@@ -253,6 +253,7 @@ tx_background_interval_ms
 rmt_spi_frame_gap_us
 room_temp_timeout
 external_temperature_sensor
+fan_profile
 ```
 
 ## Worker mode
@@ -352,14 +353,45 @@ select:
       name: Fan Control Left Right
 ```
 
-Supported fan options:
+Redux defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  # fan_profile defaults to four_speed
+```
+
+The default exposes:
 
 - Auto
+- Quiet
 - Low
 - Medium
 - High
 
-Quiet mode is not currently exposed as a normal fan speed. Some ACs appear to have a separate quiet/silent mode, but it should not be assumed to be part of the internal fan-speed enum unless the feedback code is clearly identified.
+Mapping:
+
+```text
+MOSI 0 -> Quiet
+MOSI 1 -> Low
+MOSI 2 -> Medium
+MOSI 6 -> High
+MOSI 7 -> Auto
+```
+
+Hardware testing on both available AC models confirmed that protocol value `0` is accepted, returned in status, and distinct from Low. Quiet, Low, Medium, High, and Auto all completed command confirmation successfully.
+
+For a model that genuinely does not support Quiet, explicitly select the compatibility profile:
+
+```yaml
+MhiAcCtrl:
+  fan_profile: three_speed
+```
+
+The three-speed profile exposes Auto, Low, Medium, and High. It presents received protocol values `0` and `1` as Low, while outgoing Low commands continue to use protocol value `1`.
+
+
+The selected profile controls climate traits, fan-select options, status publishing, TX command encoding, and command confirmation.
 
 Supported vertical vane options:
 

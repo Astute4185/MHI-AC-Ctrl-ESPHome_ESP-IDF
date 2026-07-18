@@ -18,6 +18,7 @@
 #include "mhi_command_confirmation.h"
 #include "mhi_defs.h"
 #include "mhi_diag.h"
+#include "mhi_fan_profile.h"
 #include "mhi_frame_catalog.h"
 #include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
@@ -61,6 +62,19 @@ class MhiAcCtrl : public Component {
   }
   void set_tx_driver(const std::string& driver) {
     this->tx_driver_ = driver;
+  }
+
+  void set_fan_profile(const std::string& profile) {
+    this->fan_profile_ = mhi_fan_profile_from_name(profile);
+    this->publish_bridge_.set_fan_profile(this->fan_profile_);
+  }
+
+  MhiFanProfile fan_profile() const {
+    return this->fan_profile_;
+  }
+
+  bool fan_profile_supports_quiet() const {
+    return mhi_fan_profile_supports_quiet(this->fan_profile_);
   }
 
   void set_frame_start_idle_ms(int idle_ms) {
@@ -146,7 +160,6 @@ class MhiAcCtrl : public Component {
     this->external_room_temperature_sensor_ = sensor;
   }
 
-  // Used by the compatibility automation action/API service.
   void set_external_room_temperature(float value);
 
   // Compatibility aliases for old config names.
@@ -380,7 +393,7 @@ class MhiAcCtrl : public Component {
   bool background_tx_due_(uint32_t now_ms) const;
   bool command_confirmation_pending_() const;
   bool background_tx_allowed_(uint32_t now_ms);
-  void apply_external_room_temperature_(float value, bool api_value);
+  void apply_external_room_temperature_(float value);
   void clear_external_room_temperature_();
   void check_external_room_temperature_timeout_();
 
@@ -389,6 +402,9 @@ class MhiAcCtrl : public Component {
 
   int frame_size_{20};
   int room_temp_api_timeout_s_{60};
+  bool room_temp_api_active_{false};
+  uint32_t room_temp_api_timeout_start_ms_{0U};
+  float last_external_room_temperature_c_{NAN};
 
   int initial_vertical_vanes_position_{0};
   int initial_horizontal_vanes_position_{0};
@@ -397,11 +413,9 @@ class MhiAcCtrl : public Component {
 
   std::string rx_driver_{"fast_gpio"};
   std::string tx_driver_{"fast_gpio"};
+  MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
-  float last_external_room_temperature_c_{NAN};
-  bool room_temp_api_active_{false};
-  uint32_t room_temp_api_timeout_start_ms_{0U};
 
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
 

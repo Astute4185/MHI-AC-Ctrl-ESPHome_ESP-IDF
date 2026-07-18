@@ -85,6 +85,23 @@ void command_confirmation_confirms_supported_fan_codes() {
   EXPECT_FALSE(confirmation.has_pending());
 }
 
+
+void command_confirmation_confirms_quiet_fan_code_zero() {
+  MhiCommandConfirmation confirmation{};
+
+  MhiCommandIntent intent{};
+  intent.mask = MHI_COMMAND_FAN;
+  intent.fan = 0U;
+  confirmation.stage(intent, intent.mask, 1000U);
+
+  MhiStatusState status{};
+  status.valid = true;
+  status.fan = 0U;
+
+  EXPECT_EQ(confirmation.observe_status(status), static_cast<uint32_t>(MHI_COMMAND_FAN));
+  EXPECT_FALSE(confirmation.has_pending());
+}
+
 void command_confirmation_times_out_unconfirmed_commands() {
   MhiCommandConfirmation confirmation{};
 
