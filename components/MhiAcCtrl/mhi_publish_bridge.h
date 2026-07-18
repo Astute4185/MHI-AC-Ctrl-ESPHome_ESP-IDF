@@ -91,7 +91,7 @@ class MhiPublishBridge {
   void reset_publish_cache_();
 
   MhiPublishTargets targets_{};
-  MhiFanProfile fan_profile_{MhiFanProfile::THREE_SPEED};
+  MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};
 
   bool has_last_status_{false};
   bool has_last_opdata_{false};

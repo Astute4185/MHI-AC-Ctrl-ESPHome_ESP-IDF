@@ -413,7 +413,7 @@ class MhiAcCtrl : public Component {
 
   std::string rx_driver_{"fast_gpio"};
   std::string tx_driver_{"fast_gpio"};
-  MhiFanProfile fan_profile_{MhiFanProfile::THREE_SPEED};
+  MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
 

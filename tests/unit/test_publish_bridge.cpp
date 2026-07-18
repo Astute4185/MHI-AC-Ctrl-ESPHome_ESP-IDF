@@ -527,7 +527,7 @@ void publish_bridge_four_speed_maps_code_zero_to_quiet() {
   targets.fan_speed_select = &fan;
 
   MhiPublishBridge bridge{};
-  bridge.set_fan_profile(MhiFanProfile::QUIET_FOUR_SPEED);
+  bridge.set_fan_profile(MhiFanProfile::FOUR_SPEED);
   bridge.set_targets(targets);
   bridge.publish(state);
 

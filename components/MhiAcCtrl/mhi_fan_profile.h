@@ -8,7 +8,7 @@ namespace mhi_ac_ctrl {
 
 enum class MhiFanProfile : uint8_t {
   THREE_SPEED = 0,
-  QUIET_FOUR_SPEED = 1,
+  FOUR_SPEED = 1,
 };
 
 enum class MhiFanMode : uint8_t {
@@ -21,15 +21,18 @@ enum class MhiFanMode : uint8_t {
 };
 
 inline MhiFanProfile mhi_fan_profile_from_name(const std::string& name) {
-  return name == "quiet_four_speed" ? MhiFanProfile::QUIET_FOUR_SPEED : MhiFanProfile::THREE_SPEED;
+  if (name == "three_speed") {
+    return MhiFanProfile::THREE_SPEED;
+  }
+  return MhiFanProfile::FOUR_SPEED;
 }
 
 inline const char* mhi_fan_profile_name(MhiFanProfile profile) {
-  return profile == MhiFanProfile::QUIET_FOUR_SPEED ? "quiet_four_speed" : "three_speed";
+  return profile == MhiFanProfile::FOUR_SPEED ? "four_speed" : "three_speed";
 }
 
 inline bool mhi_fan_profile_supports_quiet(MhiFanProfile profile) {
-  return profile == MhiFanProfile::QUIET_FOUR_SPEED;
+  return profile == MhiFanProfile::FOUR_SPEED;
 }
 
 inline MhiFanMode mhi_fan_mode_from_code(MhiFanProfile profile, uint8_t code) {

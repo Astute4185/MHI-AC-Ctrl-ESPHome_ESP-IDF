@@ -222,7 +222,6 @@ MhiAcCtrl:
   rx_driver: fast_gpio_rx
   tx_driver: fast_gpio_tx
   room_temp_timeout: 60
-  fan_profile: three_speed
 ```
 
 Required component-level fields:
@@ -354,30 +353,15 @@ select:
       name: Fan Control Left Right
 ```
 
-Fan capabilities vary by AC model. Redux defaults to the conservative three-speed profile:
+Redux defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
 
 ```yaml
 MhiAcCtrl:
-  fan_profile: three_speed
+  id: mhi_ac
+  # fan_profile defaults to four_speed
 ```
 
-This exposes:
-
-- Auto
-- Low
-- Medium
-- High
-
-Under this profile, protocol values `0` and `1` are both presented as Low. Outgoing Low commands use protocol value `1`.
-
-For units with a distinct Quiet speed plus Low, Medium, and High, opt in explicitly:
-
-```yaml
-MhiAcCtrl:
-  fan_profile: quiet_four_speed
-```
-
-This exposes:
+The default exposes:
 
 - Auto
 - Quiet
@@ -385,7 +369,29 @@ This exposes:
 - Medium
 - High
 
-The four-speed profile maps protocol value `0` to Quiet and value `1` to Low. The profile controls climate traits, fan-select options, status publishing, TX command encoding, and command confirmation. Automatic detection is intentionally not attempted because a three-speed unit may never emit value `0`, and model behaviour for unsupported commands is not known.
+Mapping:
+
+```text
+MOSI 0 -> Quiet
+MOSI 1 -> Low
+MOSI 2 -> Medium
+MOSI 6 -> High
+MOSI 7 -> Auto
+```
+
+Hardware testing on both available AC models confirmed that protocol value `0` is accepted, returned in status, and distinct from Low. Quiet, Low, Medium, High, and Auto all completed command confirmation successfully.
+
+For a model that genuinely does not support Quiet, explicitly select the compatibility profile:
+
+```yaml
+MhiAcCtrl:
+  fan_profile: three_speed
+```
+
+The three-speed profile exposes Auto, Low, Medium, and High. It presents received protocol values `0` and `1` as Low, while outgoing Low commands continue to use protocol value `1`.
+
+
+The selected profile controls climate traits, fan-select options, status publishing, TX command encoding, and command confirmation.
 
 Supported vertical vane options:
 

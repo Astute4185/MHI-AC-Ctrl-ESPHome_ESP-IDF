@@ -2,63 +2,34 @@
 
 ## Summary
 
-MHI fan capabilities are model-dependent. Testing identified one unit with three fixed speeds and another with four fixed speeds, excluding Auto.
-
-The protocol values used by the current implementation are:
+The MHI protocol provides four fixed fan values plus Auto:
 
 ```text
-0 = lowest fixed speed
+0 = Quiet / lowest fixed speed
 1 = Low
 2 = Medium
 6 = High
 7 = Auto
 ```
 
-Reference implementations preserve protocol value `0`, but name it differently:
+Initial testing suggested that one AC exposed only three fixed speeds. Further hardware testing showed that both available AC models accept protocol value `0`, return it in MOSI status, and distinguish it from Low. Quiet, Low, Medium, High, and Auto all completed command confirmation successfully.
 
-- `ginkage/MHI-AC-Ctrl-ESPHome` exposes it as Quiet.
-- `hberntsen/mhi-ac-ctrl-esp32` exposes the lowest level separately rather than collapsing it into Low.
+Redux therefore defaults to the four-speed profile.
 
-Redux therefore uses an explicit profile rather than automatic detection.
+## Default four-speed profile
 
-## Default three-speed profile
-
-```yaml
-MhiAcCtrl:
-  fan_profile: three_speed
-```
-
-This is the default and exposes:
-
-```text
-Auto
-Low
-Medium
-High
-```
-
-Mapping:
-
-```text
-MOSI 0 -> Low
-MOSI 1 -> Low
-MOSI 2 -> Medium
-MOSI 6 -> High
-MOSI 7 -> Auto
-
-TX Low    -> 1
-TX Medium -> 2
-TX High   -> 6
-TX Auto   -> 7
-```
-
-Protocol value `0` is retained by the decoder but collapsed to Low at the presentation layer.
-
-## Opt-in Quiet/four-speed profile
+No explicit setting is required:
 
 ```yaml
 MhiAcCtrl:
-  fan_profile: quiet_four_speed
+  id: mhi_ac
+```
+
+The equivalent explicit configuration is:
+
+```yaml
+MhiAcCtrl:
+  fan_profile: four_speed
 ```
 
 This exposes:
@@ -87,36 +58,84 @@ TX High   -> 6
 TX Auto   -> 7
 ```
 
-## Why it is opt-in
+## Three-speed compatibility profile
 
-Automatic detection is unreliable. A three-speed unit may never report protocol value `0`, while an unsupported Quiet command may be ignored, aliased, or handled differently by another model. The user must therefore select the profile that matches the physical unit.
+A model that genuinely does not support Quiet can opt out explicitly:
 
-## Validation coverage
+```yaml
+MhiAcCtrl:
+  fan_profile: three_speed
+```
 
-Host tests cover:
-
-- default profile selection;
-- value `0` collapsing to Low under `three_speed`;
-- value `0` exposing Quiet under `quiet_four_speed`;
-- Quiet command rejection under the default profile;
-- Quiet command encoding as protocol value `0` when opted in;
-- preservation of raw fan value `0` by the status decoder;
-- climate and select publishing for both profiles;
-- TX frame encoding and checksum validity;
-- Quiet command confirmation.
-
-ESPHome compile coverage includes a dedicated ESP32-S3 `quiet_four_speed` fixture containing both the climate and fan-select entities.
-
-## Hardware test sequence
-
-For a new AC model, record the model number and test:
+This exposes:
 
 ```text
 Auto
-Quiet (four-speed profile only)
 Low
 Medium
 High
 ```
 
-Confirm that each command is accepted and that returned MOSI state settles to the expected protocol value. Indoor fan-speed opdata is useful supporting evidence but is not a replacement for command/status confirmation.
+Mapping:
+
+```text
+MOSI 0 -> Low
+MOSI 1 -> Low
+MOSI 2 -> Medium
+MOSI 6 -> High
+MOSI 7 -> Auto
+
+TX Low    -> 1
+TX Medium -> 2
+TX High   -> 6
+TX Auto   -> 7
+```
+
+Protocol value `0` remains preserved by the status decoder but is collapsed to Low at the presentation layer.
+
+## Compatibility alias
+
+The earlier configuration value remains accepted:
+
+```yaml
+MhiAcCtrl:
+  fan_profile: four_speed
+```
+
+It maps internally to `four_speed`. New configurations should use `four_speed` or omit `fan_profile`.
+
+## Validation coverage
+
+Host tests cover:
+
+- four-speed selection as the C++ fallback/default;
+- canonical `four_speed` naming;
+- value `0` exposing Quiet under `four_speed`;
+- value `0` collapsing to Low under `three_speed`;
+- Quiet command rejection under `three_speed`;
+- Quiet command encoding as protocol value `0` under `four_speed`;
+- preservation of raw fan value `0` by the status decoder;
+- climate and select publishing for both profiles;
+- TX frame encoding and checksum validity;
+- Quiet command confirmation.
+
+ESPHome compile coverage includes:
+
+- the standard fixture with `fan_profile` omitted, validating the default four-speed path;
+- an explicit `three_speed` compatibility fixture;
+
+## Hardware validation
+
+Hardware testing confirmed the following returned command values:
+
+```text
+Quiet  -> DB1 0x08
+Low    -> DB1 0x09
+Medium -> DB1 0x0A
+High   -> DB1 0x0E
+Auto   -> DB1 0x0F
+```
+
+Each mode was accepted, confirmed from returned MOSI state, and published correctly to both the climate entity and fan-speed select on the tested four-speed unit. Subsequent testing showed the unit initially believed to be three-speed also supported the distinct Quiet state.
+
+New AC models should still be checked for command acceptance, returned status, climate/select synchronisation, and unintended state-publishing regressions.

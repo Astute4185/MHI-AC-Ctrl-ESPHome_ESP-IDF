@@ -171,7 +171,7 @@ bool MhiClimate::fan_to_mhi_(climate::ClimateFanMode fan, uint8_t& out) const {
       return false;
   }
 
-  const MhiFanProfile profile = this->parent_ != nullptr ? this->parent_->fan_profile() : MhiFanProfile::THREE_SPEED;
+  const MhiFanProfile profile = this->parent_ != nullptr ? this->parent_->fan_profile() : MhiFanProfile::FOUR_SPEED;
   return mhi_fan_code_from_mode(profile, mode, out);
 }
 

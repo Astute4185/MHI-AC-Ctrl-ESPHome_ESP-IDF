@@ -274,10 +274,10 @@ void fixture_opdata_outdoor_temp_decodes();
 void fixture_opdata_current_decodes();
 
 
-void fan_profile_defaults_to_three_speed();
+void fan_profile_defaults_to_four_speed();
 void fan_profile_three_speed_collapses_code_zero_to_low();
 void fan_profile_four_speed_exposes_code_zero_as_quiet();
-void fan_profile_encodes_quiet_only_when_opted_in();
+void fan_profile_encodes_quiet_only_for_four_speed();
 void status_decoder_preserves_protocol_fan_code_zero();
 void publish_bridge_three_speed_maps_code_zero_to_low();
 void publish_bridge_four_speed_maps_code_zero_to_quiet();

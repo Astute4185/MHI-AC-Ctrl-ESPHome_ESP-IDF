@@ -24,10 +24,10 @@ int main() {
   frame_catalog_keeps_command_candidate_side_slot_latest_only();
   frame_catalog_reports_unknown_frames();
 
-  fan_profile_defaults_to_three_speed();
+  fan_profile_defaults_to_four_speed();
   fan_profile_three_speed_collapses_code_zero_to_low();
   fan_profile_four_speed_exposes_code_zero_as_quiet();
-  fan_profile_encodes_quiet_only_when_opted_in();
+  fan_profile_encodes_quiet_only_for_four_speed();
 
   status_decoder_decodes_core_fields();
   status_decoder_preserves_protocol_fan_code_zero();

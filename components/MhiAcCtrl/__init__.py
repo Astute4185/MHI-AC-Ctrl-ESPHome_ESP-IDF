@@ -62,7 +62,7 @@ CONFIG_SCHEMA = cv.Schema(
             "fast_gpio_rx", "external_clock_rx", "rmt_spi_rx", lower=True
         ),
         cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
-        cv.Optional(CONF_FAN_PROFILE, default="three_speed"): cv.one_of("three_speed", "quiet_four_speed", lower=True),
+        cv.Optional(CONF_FAN_PROFILE, default="four_speed"): cv.one_of("four_speed", "three_speed", lower=True),
         cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
         cv.Optional(CONF_RMT_SPI_FRAME_GAP_US, default=1000): cv.int_range(min=500, max=5000),
         cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
