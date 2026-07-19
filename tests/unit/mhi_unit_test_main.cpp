@@ -18,6 +18,10 @@ int main() {
   frame_queue_preserves_complete_frames();
   frame_queue_overwrites_oldest_complete_frame();
 
+  duplex_tx_mailbox_stages_and_consumes_20_byte_frame();
+  duplex_tx_mailbox_latest_stage_replaces_unclaimed_frame();
+  duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data();
+
   frame_classifier_classifies_status_opdata_and_extended_status();
   frame_catalog_overwrites_repeated_status_with_latest();
   frame_catalog_keeps_opdata_slots_separate_by_key();
