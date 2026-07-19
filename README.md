@@ -40,7 +40,7 @@ Workers were disabled for the stable and in-testing configurations above.
 | ESP chip | Validated hardware | Recommended RX selection | Effective TX | Status | Notes |
 |---|---|---|---|---|---|
 | ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` | `fast_gpio_tx` | **Stable** | Current running non-S3 configuration. Use `fast_gpio_rx` as the conservative fallback. |
-| ESP32-S3 | Current ESP32-S3 test unit; board/module model still to be recorded | `rmt_spi_rx`; `rmt_cs_spi` for active testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | `rmt_spi_rx` has completed extended soak testing. `rmt_cs_spi` is in the current longer soak. |
+| ESP32-S3 | M5Stack Atom S3 current ESP32-S3 test unit | `rmt_spi_rx`; `rmt_cs_spi` for active testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | `rmt_spi_rx` has completed extended soak testing. `rmt_cs_spi` is in the current longer soak. |
 | ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` | `fast_gpio_tx` | **In development** | Compile coverage only. Single-core runtime behaviour has not been validated. |
 
 Add tested boards or modules to the matching chip row as results become available. Do not add a new row for every board; each ESP chip version should have one consolidated row.
