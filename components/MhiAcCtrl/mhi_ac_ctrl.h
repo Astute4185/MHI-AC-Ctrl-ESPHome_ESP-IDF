@@ -57,9 +57,6 @@ class MhiAcCtrl : public Component {
     this->pins_.miso = pin;
   }
 
-  void set_transport_driver(const std::string& driver) {
-    this->transport_driver_ = driver;
-  }
   void set_rx_driver(const std::string& driver) {
     this->rx_driver_ = driver;
   }
@@ -414,7 +411,6 @@ class MhiAcCtrl : public Component {
 
   MhiPins pins_{};
 
-  std::string transport_driver_{"split"};
   std::string rx_driver_{"fast_gpio_rx"};
   std::string tx_driver_{"fast_gpio_tx"};
   MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};

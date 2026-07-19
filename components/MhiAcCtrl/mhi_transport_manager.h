@@ -54,9 +54,9 @@ class MhiTransportManager {
  public:
   void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
                  uint8_t frame_size_hint = 20U, uint32_t frame_start_idle_ms = 10U,
-                 const std::string& transport_driver = "split", uint32_t external_clock_byte_gap_us = 80U,
-                 uint32_t external_clock_frame_gap_us = 5000U, uint32_t external_clock_min_edge_gap_us = 4U,
-                 const std::string& external_clock_edge = "falling", uint32_t external_clock_sample_delay_nops = 0U);
+                 uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
+                 uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
+                 uint32_t external_clock_sample_delay_nops = 0U);
 
   void set_rmt_spi_frame_gap_us(uint32_t frame_gap_us) {
     rmt_spi_frame_gap_us_ = frame_gap_us;

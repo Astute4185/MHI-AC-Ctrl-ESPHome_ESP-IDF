@@ -21,16 +21,17 @@ inline uint32_t elapsed_us(uint32_t now_us, uint32_t then_us) {
 
 void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver,
                                     const std::string& tx_driver, uint8_t frame_size_hint, uint32_t frame_start_idle_ms,
-                                    const std::string& transport_driver, uint32_t external_clock_byte_gap_us,
-                                    uint32_t external_clock_frame_gap_us, uint32_t external_clock_min_edge_gap_us,
-                                    const std::string& external_clock_edge, uint32_t external_clock_sample_delay_nops) {
+                                    uint32_t external_clock_byte_gap_us, uint32_t external_clock_frame_gap_us,
+                                    uint32_t external_clock_min_edge_gap_us, const std::string& external_clock_edge,
+                                    uint32_t external_clock_sample_delay_nops) {
   pins_.sck = sck_pin;
   pins_.mosi = mosi_pin;
   pins_.miso = miso_pin;
 
-  transport_driver_name_ = transport_driver.empty() ? "split" : transport_driver;
   rx_driver_name_ = rx_driver.empty() ? "fast_gpio_rx" : rx_driver;
-  tx_driver_name_ = tx_driver.empty() ? "fast_gpio_tx" : tx_driver;
+  transport_driver_name_ = rx_driver_name_ == "rmt_cs_spi" ? "rmt_cs_spi" : "split";
+  tx_driver_name_ =
+      tx_driver.empty() ? (transport_driver_name_ == "rmt_cs_spi" ? "rmt_cs_spi" : "fast_gpio_tx") : tx_driver;
 
   MhiFastGpioRxConfig fast_gpio_rx_config{};
   fast_gpio_rx_config.frame_size_hint = frame_size_hint;
@@ -96,8 +97,10 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
 void MhiTransportManager::resolve_drivers() {
   duplex_ = nullptr;
 
-  if (transport_driver_name_ == "rmt_cs_spi") {
+  if (rx_driver_name_ == "rmt_cs_spi") {
 #if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
+    transport_driver_name_ = "rmt_cs_spi";
+    tx_driver_name_ = "rmt_cs_spi";
     duplex_ = &rmt_cs_spi_;
     rx_ = nullptr;
     tx_ = nullptr;
@@ -110,13 +113,7 @@ void MhiTransportManager::resolve_drivers() {
 #endif
   }
 
-  if (transport_driver_name_ != "split") {
-    ESP_LOGW(TAG, "Unsupported transport driver=%s; falling back to split FastGPIO transport",
-             transport_driver_name_.c_str());
-    transport_driver_name_ = "split";
-    rx_driver_name_ = "fast_gpio_rx";
-    tx_driver_name_ = "fast_gpio_tx";
-  }
+  transport_driver_name_ = "split";
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
     rx_ = &fast_gpio_rx_;
