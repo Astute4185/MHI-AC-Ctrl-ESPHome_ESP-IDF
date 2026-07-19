@@ -128,9 +128,18 @@ rx_driver: fast_gpio_rx
 tx_driver: fast_gpio_tx
 ```
 
-There are no legacy aliases in the schema. `fast_gpio_rx` is an RX driver and `fast_gpio_tx` is a TX driver.
+There are no legacy aliases in the schema. `rx_driver` is the primary transport selection and `tx_driver` is an optional advanced override. Existing explicit split configurations remain valid.
 
-The transport layer treats RX and TX as separate responsibilities:
+The default TX mapping is:
+
+```text
+fast_gpio_rx     -> fast_gpio_tx
+external_clock_rx -> fast_gpio_tx
+rmt_spi_rx       -> fast_gpio_tx
+rmt_cs_spi       -> full-duplex rmt_cs_spi ownership
+```
+
+The transport layer retains separate RX and TX drivers for split operation and a shared duplex backend where one peripheral owns both directions:
 
 ```text
 mhi_fast_gpio_rx_driver
@@ -138,27 +147,33 @@ mhi_fast_gpio_tx_driver
 mhi_external_clock_rx_driver
 mhi_rmt_spi_rx_driver
 mhi_null_tx_driver
+mhi_rmt_cs_spi_transport
 ```
 
-The stable/default path is:
+The stable/default path is now configured with the RX selection only:
+
+```yaml
+rx_driver: fast_gpio_rx
+```
+
+This automatically selects `fast_gpio_tx`. The previous explicit configuration remains valid:
 
 ```yaml
 rx_driver: fast_gpio_rx
 tx_driver: fast_gpio_tx
 ```
 
-This uses the split FastGPIO RX and FastGPIO TX drivers. RX captures MOSI/SCK and publishes a frame-end bus marker. TX queues frames and attempts to drive MISO after a new RX bus marker is observed.
+FastGPIO RX captures MOSI/SCK and publishes a frame-end bus marker. FastGPIO TX queues frames and attempts to drive MISO after a new RX bus marker is observed.
 
 The experimental external-clock path is:
 
 ```yaml
 rx_driver: external_clock_rx
-tx_driver: fast_gpio_tx
 ```
 
-`external_clock_rx` samples MOSI from the external SCK edge and emits signature-anchored frame chunks. It also publishes the same frame-end bus marker used by FastGPIO RX, so FastGPIO TX can respond from RX-observed bus timing instead of blindly polling for a transmit window.
+This automatically selects `fast_gpio_tx`. `external_clock_rx` samples MOSI from the external SCK edge and emits signature-anchored frame chunks. It also publishes the same frame-end bus marker used by FastGPIO RX, so FastGPIO TX can respond from RX-observed bus timing instead of blindly polling for a transmit window.
 
-RX-only validation is also available:
+RX-only validation remains available through an explicit override:
 
 ```yaml
 rx_driver: external_clock_rx
@@ -169,9 +184,10 @@ The ESP32-S3 hardware-assisted path is:
 
 ```yaml
 rx_driver: rmt_spi_rx
-tx_driver: fast_gpio_tx
 rmt_spi_frame_gap_us: 1000
 ```
+
+This automatically selects `fast_gpio_tx`; an explicit `tx_driver: fast_gpio_tx` remains supported for existing configurations.
 
 `rmt_spi_rx` observes SCK with RMT, treats the inter-frame idle gap as an internal chip-select boundary, and captures MOSI through the SPI slave peripheral using DMA. The application-facing handoff is intentionally limited to two complete frames and is aggressively drained into the existing latest-slot catalogue.
 
@@ -182,13 +198,13 @@ The current bus has no physical chip-select line, so normal ESP-IDF SPI slave as
 An initial full-duplex transport is also available for ESP32-S3 development:
 
 ```yaml
-transport_driver: rmt_cs_spi
+rx_driver: rmt_cs_spi
 rmt_spi_frame_gap_us: 1000
 rx_worker: false
 tx_worker: false
 ```
 
-`rmt_cs_spi` gives one backend exclusive ownership of RMT, SPI2, SCK, MOSI, MISO, and the DMA transaction buffers. It captures MOSI and shifts MISO in the same mode-3, LSB-first SPI slave transaction. Do not combine it with `rx_driver` or `tx_driver` overrides. This path has compile coverage for 20-byte and 33-byte configurations but still requires hardware validation; the stable defaults remain unchanged.
+`rmt_cs_spi` gives one backend exclusive ownership of RMT, SPI2, SCK, MOSI, MISO, and the DMA transaction buffers. It captures MOSI and shifts MISO in the same mode-3, LSB-first SPI slave transaction. Because it owns both directions, configuring any `tx_driver` override with `rx_driver: rmt_cs_spi` is rejected. This path has compile coverage for 20-byte and 33-byte configurations but still requires hardware validation; the stable defaults remain unchanged.
 
 Long-duration validation on the tested ESP32-S3 reached approximately:
 
@@ -230,7 +246,6 @@ MhiAcCtrl:
   mosi_pin: 38
   miso_pin: 39
   rx_driver: fast_gpio_rx
-  tx_driver: fast_gpio_tx
   room_temp_timeout: 60
 ```
 
@@ -243,13 +258,12 @@ sck_pin
 mosi_pin
 miso_pin
 rx_driver
-tx_driver
 ```
 
 Optional fields:
 
 ```text
-transport_driver
+tx_driver
 rx_worker
 tx_worker
 rx_worker_start_delay_ms
