@@ -225,7 +225,8 @@ void MhiAcCtrl::setup() {
   this->transport_.set_rmt_spi_frame_gap_us(this->rmt_spi_frame_gap_us_);
 
   this->transport_.configure(this->pins_.sck, this->pins_.mosi, this->pins_.miso, this->rx_driver_, this->tx_driver_,
-                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_);
+                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_,
+                             this->transport_driver_);
 
   this->rx_byte_critical_sections_enabled_ = true;
   this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);
@@ -295,6 +296,7 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  External room temperature sensor: %s",
                 this->external_room_temperature_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Pins: SCK=%d MOSI=%d MISO=%d", this->pins_.sck, this->pins_.mosi, this->pins_.miso);
+  ESP_LOGCONFIG(TAG, "  Transport driver configured: %s", this->transport_driver_.c_str());
   ESP_LOGCONFIG(TAG, "  RX driver configured: %s", this->rx_driver_.c_str());
   ESP_LOGCONFIG(TAG, "  TX driver configured: %s", this->tx_driver_.c_str());
   ESP_LOGCONFIG(TAG, "  Fan profile: %s", mhi_fan_profile_name(this->fan_profile_));
