@@ -47,3 +47,5 @@ CXX="${CXX:-g++}"
   -o "${BUILD_DIR}/mhi_protocol_tests"
 
 "${BUILD_DIR}/mhi_protocol_tests"
+
+python3 tests/unit/test_driver_selection.py
