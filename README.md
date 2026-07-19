@@ -179,6 +179,16 @@ This path was investigated after reviewing [hberntsen/mhi-ac-ctrl-esp32](https:/
 
 The current bus has no physical chip-select line, so normal ESP-IDF SPI slave assumptions do not fit directly. FastGPIO remains the stable baseline, while `rmt_spi_rx` is now the preferred experimental ESP32-S3 receive path.
 
+An initial full-duplex transport is also available for ESP32-S3 development:
+
+```yaml
+transport_driver: rmt_cs_spi
+rmt_spi_frame_gap_us: 1000
+rx_worker: false
+tx_worker: false
+```
+
+`rmt_cs_spi` gives one backend exclusive ownership of RMT, SPI2, SCK, MOSI, MISO, and the DMA transaction buffers. It captures MOSI and shifts MISO in the same mode-3, LSB-first SPI slave transaction. Do not combine it with `rx_driver` or `tx_driver` overrides. This path has compile coverage for 20-byte and 33-byte configurations but still requires hardware validation; the stable defaults remain unchanged.
 
 Long-duration validation on the tested ESP32-S3 reached approximately:
 
@@ -239,6 +249,7 @@ tx_driver
 Optional fields:
 
 ```text
+transport_driver
 rx_worker
 tx_worker
 rx_worker_start_delay_ms
