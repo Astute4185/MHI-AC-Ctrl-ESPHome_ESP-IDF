@@ -109,7 +109,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF
-      ref: main
+      ref: master
     components: [MhiAcCtrl]
 ```
 
