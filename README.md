@@ -204,7 +204,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF
-      ref: ESP-IDF-Redux
+      ref: master
     components: [MhiAcCtrl]
 ```
 
