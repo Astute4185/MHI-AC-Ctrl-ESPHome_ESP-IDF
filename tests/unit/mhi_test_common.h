@@ -239,6 +239,7 @@ void tx_builder_reports_encoded_command_mask();
 void tx_builder_keeps_double_frame_commands_pending_until_command_frame();
 void tx_builder_drops_33_byte_only_commands_in_20_byte_mode();
 void tx_builder_applies_3d_auto_in_33_byte_frame();
+void tx_builder_3d_auto_command_bits_regression_suite();
 void tx_builder_reports_horizontal_vane_intent_in_33_byte_frame();
 void tx_builder_preserves_horizontal_context_for_3d_auto_command();
 void tx_builder_persists_external_room_temperature_override();
