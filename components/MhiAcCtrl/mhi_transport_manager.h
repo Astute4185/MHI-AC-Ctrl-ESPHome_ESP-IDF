@@ -10,6 +10,7 @@
 
 #include "mhi_defs.h"
 #include "mhi_diag.h"
+#include "mhi_duplex_transport.h"
 #include "mhi_fast_gpio_rx_driver.h"
 #include "mhi_rx_driver.h"
 #include "mhi_transport_pins.h"
@@ -38,11 +39,13 @@
 
 #if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 #include "mhi_native_spi_rx_driver.h"
+#include "mhi_rmt_cs_spi_transport.h"
 #include "mhi_rmt_spi_rx_driver.h"
 #endif
 
 #define MHI_ENABLE_NATIVE_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 #define MHI_ENABLE_RMT_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
+#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -101,6 +104,7 @@ class MhiTransportManager {
 
  private:
   void resolve_drivers();
+  void update_duplex_diagnostics_();
   std::size_t read_rx_raw_(uint8_t* dst, std::size_t max_len);
   void queue_pending_tx_(const uint8_t* data, std::size_t len);
   bool pending_tx_available_() const;
@@ -109,6 +113,7 @@ class MhiTransportManager {
 
   MhiTransportPins pins_{};
 
+  std::string transport_driver_name_{"split"};
   std::string rx_driver_name_{"fast_gpio_rx"};
   std::string tx_driver_name_{"fast_gpio_tx"};
 
@@ -123,10 +128,14 @@ class MhiTransportManager {
 #if MHI_ENABLE_RMT_SPI_RX_DRIVER
   MhiRmtSpiRxDriver rmt_spi_rx_{};
 #endif
+#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
+  MhiRmtCsSpiTransport rmt_cs_spi_{};
+#endif
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxDriver external_clock_rx_{};
 #endif
 
+  IMhiDuplexTransport* duplex_{nullptr};
   IMhiRxDriver* rx_{&fast_gpio_rx_};
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   IMhiTxDriver* tx_{&fast_gpio_tx_};
@@ -156,6 +165,8 @@ class MhiTransportManager {
   uint32_t tx_marker_timeout_ms_{60U};
   uint32_t tx_failure_backoff_ms_{250U};
   uint32_t rmt_spi_frame_gap_us_{1000U};
+  uint32_t last_duplex_tx_completed_{0U};
+  uint32_t last_duplex_tx_failures_{0U};
 
   MhiDiagnostics* diagnostics_{nullptr};
 };

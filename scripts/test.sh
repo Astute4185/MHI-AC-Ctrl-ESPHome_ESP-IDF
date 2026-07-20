@@ -22,6 +22,7 @@ CXX="${CXX:-g++}"
   tests/unit/test_checksum.cpp \
   tests/unit/test_frame_sync.cpp \
   tests/unit/test_frame_queue.cpp \
+  tests/unit/test_duplex_tx_mailbox.cpp \
   tests/unit/test_frame_catalog.cpp \
   tests/unit/test_fan_profile.cpp \
   tests/unit/test_status_decoder.cpp \
@@ -47,3 +48,5 @@ CXX="${CXX:-g++}"
   -o "${BUILD_DIR}/mhi_protocol_tests"
 
 "${BUILD_DIR}/mhi_protocol_tests"
+
+python3 tests/unit/test_driver_selection.py

@@ -14,6 +14,7 @@
 #include "mhi_command_confirmation.h"
 #include "mhi_defs.h"
 #include "mhi_diag.h"
+#include "mhi_duplex_tx_mailbox.h"
 #include "mhi_frame.h"
 #include "mhi_frame_queue.h"
 #include "mhi_frame_catalog.h"
@@ -196,6 +197,10 @@ void frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise();
 
 void frame_queue_preserves_complete_frames();
 void frame_queue_overwrites_oldest_complete_frame();
+
+void duplex_tx_mailbox_stages_and_consumes_20_byte_frame();
+void duplex_tx_mailbox_latest_stage_replaces_unclaimed_frame();
+void duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data();
 
 void frame_classifier_classifies_status_opdata_and_extended_status();
 void frame_catalog_overwrites_repeated_status_with_latest();

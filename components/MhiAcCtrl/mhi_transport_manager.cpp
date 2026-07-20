@@ -29,7 +29,9 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   pins_.miso = miso_pin;
 
   rx_driver_name_ = rx_driver.empty() ? "fast_gpio_rx" : rx_driver;
-  tx_driver_name_ = tx_driver.empty() ? "fast_gpio_tx" : tx_driver;
+  transport_driver_name_ = rx_driver_name_ == "rmt_cs_spi" ? "rmt_cs_spi" : "split";
+  tx_driver_name_ =
+      tx_driver.empty() ? (transport_driver_name_ == "rmt_cs_spi" ? "rmt_cs_spi" : "fast_gpio_tx") : tx_driver;
 
   MhiFastGpioRxConfig fast_gpio_rx_config{};
   fast_gpio_rx_config.frame_size_hint = frame_size_hint;
@@ -57,6 +59,13 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   rmt_spi_rx_.set_config(rmt_spi_rx_config);
 #endif
 
+#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
+  MhiRmtCsSpiConfig rmt_cs_spi_config{};
+  rmt_cs_spi_config.frame_size_hint = frame_size_hint;
+  rmt_cs_spi_config.frame_gap_us = rmt_spi_frame_gap_us_;
+  rmt_cs_spi_.set_config(rmt_cs_spi_config);
+#endif
+
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxConfig external_clock_rx_config{};
   external_clock_rx_config.frame_size_hint = frame_size_hint;
@@ -79,11 +88,32 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   last_consumed_bus_marker_sequence_ = 0U;
   last_stale_bus_marker_sequence_ = 0U;
   tx_backoff_until_ms_ = 0U;
+  last_duplex_tx_completed_ = 0U;
+  last_duplex_tx_failures_ = 0U;
 
   this->resolve_drivers();
 }
 
 void MhiTransportManager::resolve_drivers() {
+  duplex_ = nullptr;
+
+  if (rx_driver_name_ == "rmt_cs_spi") {
+#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
+    transport_driver_name_ = "rmt_cs_spi";
+    tx_driver_name_ = "rmt_cs_spi";
+    duplex_ = &rmt_cs_spi_;
+    rx_ = nullptr;
+    tx_ = nullptr;
+    return;
+#else
+    ESP_LOGW(TAG, "rmt_cs_spi is only built for ESP32-S3; falling back to split FastGPIO transport");
+    transport_driver_name_ = "split";
+    rx_driver_name_ = "fast_gpio_rx";
+    tx_driver_name_ = "fast_gpio_tx";
+#endif
+  }
+
+  transport_driver_name_ = "split";
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
     rx_ = &fast_gpio_rx_;
@@ -180,19 +210,30 @@ void MhiTransportManager::resolve_drivers() {
 }
 
 bool MhiTransportManager::setup() {
-  ESP_LOGCONFIG(TAG, "Transport setup: requested RX=%s TX=%s", rx_driver_name_.c_str(), tx_driver_name_.c_str());
+  ESP_LOGCONFIG(TAG, "Transport setup: requested transport=%s RX=%s TX=%s", transport_driver_name_.c_str(),
+                rx_driver_name_.c_str(), tx_driver_name_.c_str());
 
-  rx_ready_ = rx_ != nullptr && rx_->setup(pins_);
-  tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
+  if (duplex_ != nullptr) {
+    const bool duplex_ready = duplex_->setup(pins_);
+    rx_ready_ = duplex_ready;
+    tx_ready_ = duplex_ready;
+  } else {
+    rx_ready_ = rx_ != nullptr && rx_->setup(pins_);
+    tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
+  }
 
   if (!rx_ready_ || !tx_ready_) {
-    ESP_LOGW(TAG, "Transport RX=%s TX=%s failed to start; falling back to fast_gpio_rx/fast_gpio_tx",
-             rx_driver_name_.c_str(), tx_driver_name_.c_str());
+    ESP_LOGW(TAG, "Transport %s RX=%s TX=%s failed to start; falling back to fast_gpio_rx/fast_gpio_tx",
+             transport_driver_name_.c_str(), rx_driver_name_.c_str(), tx_driver_name_.c_str());
 
-    if (rx_ != nullptr && rx_ready_) {
+    if (duplex_ != nullptr) {
+      duplex_->shutdown();
+      duplex_ = nullptr;
+    } else if (rx_ != nullptr && rx_ready_) {
       rx_->shutdown();
     }
 
+    transport_driver_name_ = "split";
     rx_driver_name_ = "fast_gpio_rx";
     tx_driver_name_ = "fast_gpio_tx";
     rx_ = &fast_gpio_rx_;
@@ -212,16 +253,28 @@ bool MhiTransportManager::setup() {
     diagnostics_->set_tx_driver_ready(tx_ready_);
   }
 
-  ESP_LOGCONFIG(TAG, "Transport active: RX=%s ready=%s TX=%s ready=%s", this->rx_name(), rx_ready_ ? "YES" : "NO",
-                this->tx_name(), tx_ready_ ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "TX armed marker scheduling: max_marker_age=%luus timeout=%lums fail_backoff=%lums",
-                static_cast<unsigned long>(tx_marker_arm_max_age_us_),
-                static_cast<unsigned long>(tx_marker_timeout_ms_), static_cast<unsigned long>(tx_failure_backoff_ms_));
+  ESP_LOGCONFIG(TAG, "Transport active: transport=%s RX=%s ready=%s TX=%s ready=%s", transport_driver_name_.c_str(),
+                this->rx_name(), rx_ready_ ? "YES" : "NO", this->tx_name(), tx_ready_ ? "YES" : "NO");
+
+  if (duplex_ == nullptr) {
+    ESP_LOGCONFIG(TAG, "TX armed marker scheduling: max_marker_age=%luus timeout=%lums fail_backoff=%lums",
+                  static_cast<unsigned long>(tx_marker_arm_max_age_us_),
+                  static_cast<unsigned long>(tx_marker_timeout_ms_),
+                  static_cast<unsigned long>(tx_failure_backoff_ms_));
+  } else {
+    ESP_LOGCONFIG(TAG, "TX ownership: duplex transport stages one frame for the next GP-SPI transaction");
+  }
 
   return rx_ready_ && tx_ready_;
 }
 
 void MhiTransportManager::loop() {
+  if (duplex_ != nullptr) {
+    duplex_->loop();
+    this->update_duplex_diagnostics_();
+    return;
+  }
+
   if (rx_ != nullptr) {
     rx_->loop();
   }
@@ -238,7 +291,7 @@ void MhiTransportManager::loop() {
 std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
   const std::size_t len = this->read_rx_raw_(dst, max_len);
 
-  if (auto_tx_flush_) {
+  if (duplex_ == nullptr && auto_tx_flush_) {
     this->flush_tx_on_bus_marker();
   }
 
@@ -246,22 +299,26 @@ std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
 }
 
 std::size_t MhiTransportManager::read_rx_for_worker(uint8_t* dst, std::size_t max_len) {
-  // The RX worker must be side-effect free: it may drain RX bytes and update RX
-  // diagnostics, but it must never flush pending TX or enter the blocking TX
-  // shifter. TX remains owned by the main loop / future TX worker only.
+  // The RX worker may drain completed frames, but it must never enter the
+  // split transport's blocking TX shifter. Duplex TX is independently owned
+  // by the transport task.
   return this->read_rx_raw_(dst, max_len);
 }
 
 std::size_t MhiTransportManager::read_rx_raw_(uint8_t* dst, std::size_t max_len) {
-  if (rx_ == nullptr || !rx_ready_ || dst == nullptr || max_len == 0U) {
+  if (!rx_ready_ || dst == nullptr || max_len == 0U) {
     return 0U;
   }
 
-  const std::size_t len = rx_->read(dst, max_len);
+  std::size_t len = 0U;
+  if (duplex_ != nullptr) {
+    len = duplex_->read(dst, max_len);
+  } else if (rx_ != nullptr) {
+    len = rx_->read(dst, max_len);
+  }
 
   if (len > 0U && diagnostics_ != nullptr) {
     const uint32_t now = millis();
-
     diagnostics_->stats().on_rx_chunk(now);
     diagnostics_->stats().on_rx_bytes(static_cast<uint32_t>(len), now);
   }
@@ -270,11 +327,25 @@ std::size_t MhiTransportManager::read_rx_raw_(uint8_t* dst, std::size_t max_len)
 }
 
 bool MhiTransportManager::queue_tx(const uint8_t* data, std::size_t len) {
-  if (tx_ == nullptr || !tx_ready_ || data == nullptr || len == 0U || len > kMhiMaxFrameBytes) {
+  if (!tx_ready_ || data == nullptr || len == 0U || len > kMhiMaxFrameBytes) {
     if (diagnostics_ != nullptr) {
       diagnostics_->stats().on_tx_failure();
     }
+    return false;
+  }
 
+  if (duplex_ != nullptr) {
+    const bool staged = duplex_->send(data, len);
+    if (!staged && diagnostics_ != nullptr) {
+      diagnostics_->stats().on_tx_failure();
+    }
+    return staged;
+  }
+
+  if (tx_ == nullptr) {
+    if (diagnostics_ != nullptr) {
+      diagnostics_->stats().on_tx_failure();
+    }
     return false;
   }
 
@@ -291,7 +362,7 @@ bool MhiTransportManager::queue_tx(const uint8_t* data, std::size_t len) {
 bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
   const bool queued = this->queue_tx(data, len);
 
-  if (queued && auto_tx_flush_) {
+  if (queued && duplex_ == nullptr && auto_tx_flush_) {
     this->flush_tx_on_bus_marker();
   }
 
@@ -299,7 +370,29 @@ bool MhiTransportManager::send_tx(const uint8_t* data, std::size_t len) {
 }
 
 bool MhiTransportManager::flush_tx_on_bus_marker() {
+  if (duplex_ != nullptr) {
+    return false;
+  }
   return this->flush_pending_tx_on_bus_marker_();
+}
+
+void MhiTransportManager::update_duplex_diagnostics_() {
+  if (duplex_ == nullptr || diagnostics_ == nullptr) {
+    return;
+  }
+
+  const uint32_t completed = duplex_->completed_tx_frames();
+  const uint32_t failures = duplex_->tx_failures();
+
+  while (last_duplex_tx_completed_ != completed) {
+    diagnostics_->stats().on_tx_frame(millis());
+    last_duplex_tx_completed_++;
+  }
+
+  while (last_duplex_tx_failures_ != failures) {
+    diagnostics_->stats().on_tx_failure();
+    last_duplex_tx_failures_++;
+  }
 }
 
 void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
@@ -315,6 +408,9 @@ bool MhiTransportManager::rx_byte_critical_sections() const {
 }
 
 bool MhiTransportManager::tx_uses_bus_marker() const {
+  if (duplex_ != nullptr) {
+    return false;
+  }
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   return tx_ == &fast_gpio_tx_;
 #else
@@ -323,10 +419,16 @@ bool MhiTransportManager::tx_uses_bus_marker() const {
 }
 
 const char* MhiTransportManager::rx_name() const {
+  if (duplex_ != nullptr) {
+    return duplex_->name();
+  }
   return rx_ == nullptr ? "none" : rx_->name();
 }
 
 const char* MhiTransportManager::tx_name() const {
+  if (duplex_ != nullptr) {
+    return duplex_->name();
+  }
   return tx_ == nullptr ? "none" : tx_->name();
 }
 

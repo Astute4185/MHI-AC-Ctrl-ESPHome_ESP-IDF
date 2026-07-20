@@ -4,6 +4,13 @@ from esphome import automation
 from esphome.components import sensor
 from esphome.const import CONF_ID
 
+from .driver_selection import (
+    RX_DRIVERS,
+    TX_DRIVERS,
+    DriverSelectionError,
+    resolve_tx_driver,
+)
+
 CONF_MHI_AC_CTRL_ID = "mhi_ac_ctrl_id"
 CONF_FRAME_SIZE = "frame_size"
 CONF_ROOM_TEMP_TIMEOUT = "room_temp_timeout"
@@ -47,37 +54,53 @@ SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Acti
 SetHorizontalVanesAction = mhi_ns.class_("SetHorizontalVanesAction", automation.Action)
 SetExternalRoomTemperatureAction = mhi_ns.class_("SetExternalRoomTemperatureAction", automation.Action)
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(MhiAcCtrl),
-        cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
-        cv.Optional(CONF_FRAME_SIZE, default=20): cv.one_of(20, 33, int=True),
-        cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
-        cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
-        cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
-        cv.Optional(CONF_SCK_PIN): cv.int_,
-        cv.Optional(CONF_MOSI_PIN): cv.int_,
-        cv.Optional(CONF_MISO_PIN): cv.int_,
-        cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of(
-            "fast_gpio_rx", "external_clock_rx", "rmt_spi_rx", lower=True
-        ),
-        cv.Optional(CONF_TX_DRIVER, default="fast_gpio_tx"): cv.one_of("fast_gpio_tx", "none", lower=True),
-        cv.Optional(CONF_FAN_PROFILE, default="four_speed"): cv.one_of("four_speed", "three_speed", lower=True),
-        cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
-        cv.Optional(CONF_RMT_SPI_FRAME_GAP_US, default=1000): cv.int_range(min=500, max=5000),
-        cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
-        cv.Optional(CONF_RX_WORKER, default=False): cv.boolean,
-        cv.Optional(CONF_RX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
-        cv.Optional(CONF_RX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
-        cv.Optional(CONF_RX_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
-        cv.Optional(CONF_RX_WORKER_CORE_ID, default=0): cv.int_range(min=-1, max=1),
-        cv.Optional(CONF_TX_WORKER, default=False): cv.boolean,
-        cv.Optional(CONF_TX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
-        cv.Optional(CONF_TX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
-        cv.Optional(CONF_TX_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
-        cv.Optional(CONF_TX_WORKER_CORE_ID, default=1): cv.int_range(min=-1, max=1),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+
+def _validate_transport_configuration(config):
+    explicit_tx_driver = config.get(CONF_TX_DRIVER)
+
+    try:
+        resolve_tx_driver(config[CONF_RX_DRIVER], explicit_tx_driver)
+    except DriverSelectionError as err:
+        raise cv.Invalid(str(err)) from err
+
+    if config[CONF_RX_DRIVER] == "rmt_cs_spi" and (config[CONF_RX_WORKER] or config[CONF_TX_WORKER]):
+        raise cv.Invalid("rx_driver: rmt_cs_spi is initially restricted to rx_worker: false and tx_worker: false")
+
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(MhiAcCtrl),
+            cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
+            cv.Optional(CONF_FRAME_SIZE, default=20): cv.one_of(20, 33, int=True),
+            cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
+            cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
+            cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
+            cv.Optional(CONF_SCK_PIN): cv.int_,
+            cv.Optional(CONF_MOSI_PIN): cv.int_,
+            cv.Optional(CONF_MISO_PIN): cv.int_,
+            cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of(*RX_DRIVERS, lower=True),
+            cv.Optional(CONF_TX_DRIVER): cv.one_of(*TX_DRIVERS, lower=True),
+            cv.Optional(CONF_FAN_PROFILE, default="four_speed"): cv.one_of("four_speed", "three_speed", lower=True),
+            cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
+            cv.Optional(CONF_RMT_SPI_FRAME_GAP_US, default=1000): cv.int_range(min=500, max=5000),
+            cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
+            cv.Optional(CONF_RX_WORKER, default=False): cv.boolean,
+            cv.Optional(CONF_RX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
+            cv.Optional(CONF_RX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
+            cv.Optional(CONF_RX_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
+            cv.Optional(CONF_RX_WORKER_CORE_ID, default=0): cv.int_range(min=-1, max=1),
+            cv.Optional(CONF_TX_WORKER, default=False): cv.boolean,
+            cv.Optional(CONF_TX_WORKER_START_DELAY_MS, default=5000): cv.int_range(min=0, max=30000),
+            cv.Optional(CONF_TX_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
+            cv.Optional(CONF_TX_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
+            cv.Optional(CONF_TX_WORKER_CORE_ID, default=1): cv.int_range(min=-1, max=1),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    _validate_transport_configuration,
+)
 
 
 def _default_tx_background_interval_ms(config):
@@ -96,8 +119,9 @@ async def to_code(config):
 
     cg.add(var.set_frame_size(config[CONF_FRAME_SIZE]))
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
+    effective_tx_driver = resolve_tx_driver(config[CONF_RX_DRIVER], config.get(CONF_TX_DRIVER))
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
-    cg.add(var.set_tx_driver(config[CONF_TX_DRIVER]))
+    cg.add(var.set_tx_driver(effective_tx_driver))
     cg.add(var.set_fan_profile(config[CONF_FAN_PROFILE]))
     cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
     cg.add(var.set_rmt_spi_frame_gap_us(config[CONF_RMT_SPI_FRAME_GAP_US]))

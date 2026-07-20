@@ -8,192 +8,97 @@ This is not a clean-room protocol project. It builds on the original community M
 
 ## Current status
 
-The current validated target remains **ESP32-S3 with ESP-IDF**.
+The currently validated runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. Keep both workers disabled unless specifically testing worker behaviour.
 
-Recommended/default path:
+- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative stable baseline.
+- `external_clock_rx` with `fast_gpio_tx` is the stable non-S3 path currently running on an M5Stack Atom based on the original ESP32.
+- `rmt_spi_rx` with `fast_gpio_tx` is the stable hardware-assisted split path on ESP32-S3. It completed a roughly 47.5-hour soak with clean RX protocol health.
+- `rmt_cs_spi` is the full-duplex ESP32-S3 path currently in testing. Initial hardware results are clean and longer soak testing is in progress.
+- ESP32-C3 remains in development with compile coverage only; runtime operation is not validated.
+
+Implemented functionality includes 20-byte and 33-byte frames, command confirmation, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, common status sensors, opdata sensors, and transport diagnostics.
+
+## Driver selection
+
+`rx_driver` is the primary selection. For split transports, TX is selected automatically. Existing configurations may still specify `tx_driver` explicitly.
+
+### Driver combinations
+
+| RX selection | Effective TX | Validation status |
+|---|---|---|
+| `fast_gpio_rx` | `fast_gpio_tx` | **Stable** |
+| `external_clock_rx` | `fast_gpio_tx` | **Stable** |
+| `rmt_spi_rx` | `fast_gpio_tx` | **Stable** |
+| `rmt_cs_spi` | Integrated full-duplex TX | **In testing** |
+
+`Stable` means the driver combination has completed hardware validation and little to no transport-level change is expected. `In testing` means the implementation is functional but still undergoing soak or compatibility testing. `In development` means it is not ready for normal use.
+
+Workers were disabled for the stable and in-testing configurations above.
+
+### Hardware driver guide
+
+| ESP chip | Validated hardware | Recommended RX selection | Effective TX | Status | Notes |
+|---|---|---|---|---|---|
+| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` | `fast_gpio_tx` | **Stable** | Current running non-S3 configuration. Use `fast_gpio_rx` as the conservative fallback. |
+| ESP32-S3 | M5Stack Atom S3 current ESP32-S3 test unit | `rmt_spi_rx`; `rmt_cs_spi` for active testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | `rmt_spi_rx` has completed extended soak testing. `rmt_cs_spi` is in the current longer soak. |
+| ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` | `fast_gpio_tx` | **In development** | Compile coverage only. Single-core runtime behaviour has not been validated. |
+
+Add tested boards or modules to the matching chip row as results become available. Do not add a new row for every board; each ESP chip version should have one consolidated row.
+
+Minimal stable configuration:
 
 ```yaml
-rx_driver: fast_gpio_rx
-tx_driver: fast_gpio_tx
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  sck_pin: 8
+  mosi_pin: 38
+  miso_pin: 39
+  rx_driver: fast_gpio_rx
 ```
 
-Preferred experimental ESP32-S3 path:
+Preferred split ESP32-S3 configuration:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  sck_pin: 8
+  mosi_pin: 38
+  miso_pin: 39
+  rx_driver: rmt_spi_rx
+  rmt_spi_frame_gap_us: 1000
+  rx_worker: false
+  tx_worker: false
+```
+
+Experimental full-duplex ESP32-S3 configuration:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  sck_pin: 8
+  mosi_pin: 38
+  miso_pin: 39
+  rx_driver: rmt_cs_spi
+  rmt_spi_frame_gap_us: 1000
+  rx_worker: false
+  tx_worker: false
+```
+
+`rmt_cs_spi` owns RX and TX, so it rejects any `tx_driver` override. For split drivers, the previous explicit configuration remains valid:
 
 ```yaml
 rx_driver: rmt_spi_rx
 tx_driver: fast_gpio_tx
-rx_worker: false
-tx_worker: false
-rmt_spi_frame_gap_us: 1000
 ```
 
-`rmt_spi_rx` uses RMT to infer the missing chip-select boundary and the ESP32-S3 SPI slave peripheral with DMA to capture complete frames. A roughly 47.5-hour soak completed about 3.42 million transactions with zero checksum failures, signature misses, sync losses, backend queue errors, completed-frame overwrites, or completed-frame drops. Workers should remain disabled; current generic RX/TX workers are polling-based and regress the otherwise clean hardware-assisted path.
-
-Implemented and runtime-tested:
-
-- 20-byte and 33-byte MHI frame handling.
-- Split RX/TX transport selection.
-- FastGPIO RX and FastGPIO TX transport.
-- Experimental external-clock RX with FastGPIO TX on ESP32 and ESP32-S3.
-- Experimental RMT-generated-CS SPI/DMA RX with FastGPIO TX on ESP32-S3.
-- Latest-slot frame cataloging for status, extended status, opdata, and unknown frames.
-- Command confirmation and duplicate command suppression.
-- Climate control with confirmed-state updates.
-- Configurable three-speed or Quiet/four-speed fan profile.
-- Vertical vane select.
-- Horizontal vane select from 33-byte feedback.
-- 3D Auto switch and read-only 3D Auto feedback sensor.
-- Sensor parity for common status and opdata telemetry.
-- Runtime diagnostics for RX, TX, workers, frame cataloging, commands, loop budget, and protocol health.
-
-Still intentionally conservative:
-
-- FastGPIO RX/TX remains the stable/default transport path.
-- `rmt_spi_rx` remains experimental, although the ESP32-S3 path has completed a roughly 47.5-hour soak with clean RX protocol health.
-- `external_clock_rx` remains experimental and available as a software external-clock comparison path.
-- `rx_worker` and `tx_worker` are optional, experimental, and disabled by default.
-- Workers are not currently recommended for `fast_gpio_rx` or `rmt_spi_rx`.
-
-For the hardware-assisted RX findings, see [`notes/FINDINGS_RMT_SPI_RX.md`](notes/FINDINGS_RMT_SPI_RX.md). For earlier FastGPIO/external-clock findings, see [`notes/FINDINGS_fastGpio&ExternalClock.md`](notes/FINDINGS_fastGpio&ExternalClock.md).
+See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, invalid combinations, and the process for adding new hardware validation results. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting.
 
 ## Hardware assumptions
 
-The MHI bus used by this component has:
-
-- SCK
-- MOSI
-- MISO
-- no chip-select line
-
-The air conditioner is the SPI-style bus master. The ESP device listens to MOSI/SCK and drives MISO at the correct time.
-
-Known-good stable baseline:
-
-- ESP32-S3
-- ESP-IDF framework
-- 33-byte frame mode
-- `rx_driver: fast_gpio_rx`
-- `tx_driver: fast_gpio_tx`
-- workers disabled
-
-Validated experimental development path:
-
-- ESP32-S3 with `rx_driver: rmt_spi_rx` and `tx_driver: fast_gpio_tx`
-- `rmt_spi_frame_gap_us: 1000`
-- workers disabled
-- clean 33-byte SPI/DMA capture, opdata flow, and command confirmation through a roughly 47.5-hour hardware soak
-
-Other experimental transport targets:
-
-- ESP32 / ESP32-S3 with `rx_driver: external_clock_rx` and `tx_driver: fast_gpio_tx`
-- ESP32-C3 compile coverage only; runtime behaviour is not validated
-
-## ESP32-C3 status
-
-ESP32-C3 support is **experimental**.
-
-Current status:
-
-- ESP32-C3 ESP-IDF compile coverage exists.
-- The FastGPIO transport has target-specific register handling for ESP32-C3-class GPIO registers.
-- The component compiles for ESP32-C3.
-- Runtime behaviour has **not** been validated on real ESP32-C3 hardware.
-
-Important limitations:
-
-- ESP32-C3 is single-core.
-- FastGPIO capture is timing-sensitive and software-heavy.
-- Passing compile tests does not prove the C3 can reliably capture the MHI bus under Wi-Fi, logging, API, and Home Assistant load.
-- ESP32-S3 remains the validated and recommended target.
-
-Use ESP32-C3 only for development/testing until hardware soak logs show clean protocol health:
-
-```text
-valid_frames climbs
-invalid_frames = 0
-checksum_failures = 0
-signature_misses = 0
-sync_losses = 0
-dropped_bytes = 0
-commands confirm
-opdata continues to publish when requested
-```
-
-## Transport drivers
-
-Examples deliberately set the RX and TX drivers with concrete 1:1 driver names:
-
-```yaml
-rx_driver: fast_gpio_rx
-tx_driver: fast_gpio_tx
-```
-
-There are no legacy aliases in the schema. `fast_gpio_rx` is an RX driver and `fast_gpio_tx` is a TX driver.
-
-The transport layer treats RX and TX as separate responsibilities:
-
-```text
-mhi_fast_gpio_rx_driver
-mhi_fast_gpio_tx_driver
-mhi_external_clock_rx_driver
-mhi_rmt_spi_rx_driver
-mhi_null_tx_driver
-```
-
-The stable/default path is:
-
-```yaml
-rx_driver: fast_gpio_rx
-tx_driver: fast_gpio_tx
-```
-
-This uses the split FastGPIO RX and FastGPIO TX drivers. RX captures MOSI/SCK and publishes a frame-end bus marker. TX queues frames and attempts to drive MISO after a new RX bus marker is observed.
-
-The experimental external-clock path is:
-
-```yaml
-rx_driver: external_clock_rx
-tx_driver: fast_gpio_tx
-```
-
-`external_clock_rx` samples MOSI from the external SCK edge and emits signature-anchored frame chunks. It also publishes the same frame-end bus marker used by FastGPIO RX, so FastGPIO TX can respond from RX-observed bus timing instead of blindly polling for a transmit window.
-
-RX-only validation is also available:
-
-```yaml
-rx_driver: external_clock_rx
-tx_driver: none
-```
-
-The ESP32-S3 hardware-assisted path is:
-
-```yaml
-rx_driver: rmt_spi_rx
-tx_driver: fast_gpio_tx
-rmt_spi_frame_gap_us: 1000
-```
-
-`rmt_spi_rx` observes SCK with RMT, treats the inter-frame idle gap as an internal chip-select boundary, and captures MOSI through the SPI slave peripheral using DMA. The application-facing handoff is intentionally limited to two complete frames and is aggressively drained into the existing latest-slot catalogue.
-
-This path was investigated after reviewing [hberntsen/mhi-ac-ctrl-esp32](https://github.com/hberntsen/mhi-ac-ctrl-esp32), which demonstrates the key technique of deriving an internal SPI CS signal from RMT-observed clock gaps. Redux retains its own transport, synchronisation, catalogue, decoder, state, publishing, diagnostics, and command-confirmation architecture; only the transport technique informed this backend.
-
-The current bus has no physical chip-select line, so normal ESP-IDF SPI slave assumptions do not fit directly. FastGPIO remains the stable baseline, while `rmt_spi_rx` is now the preferred experimental ESP32-S3 receive path.
-
-
-Long-duration validation on the tested ESP32-S3 reached approximately:
-
-```text
-RMT/SPI completed frames:  3,421,459
-Redux valid frames:        3,421,625
-Invalid frames:            0
-Checksum failures:         0
-Signature misses:          0
-Sync losses:               0
-Completed-frame overwrite: 0
-Completed-frame drops:     0
-```
-
-The same soak confirmed that the remaining transport risk is FastGPIO TX rather than RMT/SPI RX. Background TX recorded a small failure rate, while all tested command frames confirmed without timeout. The opdata catalogue also reported sustained slot-pressure, which now requires separate investigation. See the findings document for details.
+The MHI bus exposes SCK, MOSI, and MISO, with the air conditioner acting as the clock master. There is no physical chip-select line. Confirm the GPIO pin mapping for the specific board and installation before flashing; example pin numbers are not universal.
 
 ## Installation
 
@@ -220,7 +125,6 @@ MhiAcCtrl:
   mosi_pin: 38
   miso_pin: 39
   rx_driver: fast_gpio_rx
-  tx_driver: fast_gpio_tx
   room_temp_timeout: 60
 ```
 
@@ -232,13 +136,13 @@ frame_size
 sck_pin
 mosi_pin
 miso_pin
-rx_driver
-tx_driver
 ```
 
 Optional fields:
 
 ```text
+rx_driver
+tx_driver
 rx_worker
 tx_worker
 rx_worker_start_delay_ms
@@ -250,6 +154,7 @@ tx_worker_stack_size
 tx_worker_priority
 tx_worker_core_id
 tx_background_interval_ms
+frame_start_idle_ms
 rmt_spi_frame_gap_us
 room_temp_timeout
 external_temperature_sensor
@@ -258,64 +163,16 @@ fan_profile
 
 ## Worker mode
 
-Worker mode is experimental and disabled by default.
+Workers are experimental and disabled by default:
 
-Current recommendation:
-
-```text
-FastGPIO RX/TX:
-  keep workers disabled
-
-External-clock RX:
-  keep workers disabled unless explicitly testing the worker path
-
-RMT/SPI RX:
-  keep workers disabled
+```yaml
+rx_worker: false
+tx_worker: false
 ```
 
-The RMT/SPI backend already performs deterministic hardware capture. In initial testing, the no-worker path captured every 33-byte frame without checksum, synchronisation, queue, or RMT re-arm errors. Enabling both generic workers reduced main-loop blocking but introduced completed-frame overwrites/drops and FastGPIO TX marker misses.
+All driver combinations listed as validated in this README were tested with workers disabled. `rmt_cs_spi` currently rejects worker enablement. Do not enable workers for a normal installation; worker redesign and validation will resume after the full-duplex transport soak is complete.
 
-The worker issue is not excessive bus throughput. The AC remains at roughly 20 frames per second. The problem is that the existing workers poll and yield instead of blocking on transport events. During scheduling gaps, the two-frame completed handoff can fill even though the main-loop path drains it reliably.
-
-Observed worker shape:
-
-```text
-RX worker:
-  tens of thousands of polling loops
-  mostly idle yields
-  completed-frame handoff can overwrite under contention
-
-TX worker:
-  tens of thousands of flush attempts
-  very few actual sends
-  bus-marker timing misses can occur
-```
-
-The future RTOS direction is event-driven:
-
-```text
-RMT/SPI completion notification
-  -> drain completed DMA transactions
-  -> validate/classify
-  -> update latest catalogue slots
-  -> notify main loop
-
-TX command/boundary notification
-  -> wake TX task only when work and a valid bus window exist
-```
-
-A worker experiment is only healthy if all of these remain true:
-
-```text
-valid_frames increases
-checksum_failures stays at 0
-signature_misses stays at 0
-command confirmations work
-command timeouts stay at 0
-opdata continues to publish
-RMT/SPI overwritten and dropped stay at 0
-Home Assistant state matches the physical AC
-```
+See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md#workers) for the technical background and functional validation criteria.
 
 ## Frame size
 
@@ -546,60 +403,16 @@ on_...:
 
 ## Runtime diagnostics
 
-The component logs runtime diagnostics for transport, protocol health, frame cataloging, worker state, command confirmation, and loop budget.
+Use DEBUG logging during initial hardware validation and soak testing. At minimum, confirm that valid frames continue to increase, protocol errors remain at zero, commands confirm, and opdata continues to publish.
 
-Healthy runtime should look like:
+See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for:
 
-```text
-runtime: rx_bytes=... candidate_frames=... valid_frames=... invalid_frames=0 checksum_failures=0
-runtime: signature_misses=0 sync_losses=0 dropped_bytes=0 tx_frames=... tx_failures=0
-runtime: command_confirmations=... command_confirmation_timeouts=0 pending_confirmation_mask=0x00000000
-runtime: catalog ingested=... status=... extended=... opdata=... unknown=... overwritten=... opdata_slots_full=0
-runtime: rx_worker enabled=... running=... loops=... ingested=... idle_yields=...
-runtime: tx_worker enabled=... running=... loops=... flush_attempts=... flush_successes=... idle_yields=...
-runtime: loop_us last=... avg=... max=... over_budget=... budget=30000
-```
-
-Recommended use:
-
-- Use detailed diagnostics while bringing up hardware or soak testing.
-- Reduce log level once the device is stable.
-- For worker testing, validate command confirmation and opdata flow, not just RX frame health.
-
-Important counters:
-
-- `valid_frames`
-- `invalid_frames`
-- `checksum_failures`
-- `signature_misses`
-- `sync_losses`
-- `dropped_bytes`
-- `tx_failures`
-- `command_confirmation_timeouts`
-- `catalog status`
-- `catalog extended`
-- `catalog opdata`
-- `opdata_slots_full`
-- `rx_worker running`
-- `tx_worker running`
-- `tx_worker flush_successes`
-- `loop_us avg`
-- `loop_us max`
-- `over_budget`
-
-Healthy target:
-
-```text
-valid_frames climbs
-invalid_frames = 0
-checksum_failures = 0
-sync_losses = 0
-tx_failures stays low
-commands confirm
-opdata continues to appear when requested
-loop_us avg < 30000us
-over_budget does not climb during normal operation
-```
+- Common protocol-health counters
+- Driver-specific SPI, RMT, buffering, and TX counters
+- Command-confirmation interpretation
+- Loop and worker measurements
+- Soak-test recording requirements
+- Troubleshooting workflows
 
 ## Command confirmation and duplicate suppression
 
@@ -623,61 +436,11 @@ Before submitting a merge request:
 ./scripts/compile-tests.sh
 ```
 
-For hardware validation:
-
-```text
-valid_frames climbs
-invalid_frames = 0
-checksum_failures = 0
-sync_losses = 0
-commands confirm
-opdata sensors continue to publish when requested
-Home Assistant state settles to confirmed AC feedback
-```
-
-For worker validation, also check:
-
-```text
-rx_worker/tx_worker state is what the YAML intended
-command_confirmation_timeouts = 0
-opdata does not stop flowing
-loop_us and over_budget improve without breaking functional behaviour
-```
+Hardware and soak-test validation criteria are documented in [`DIAGNOSTICS.md`](DIAGNOSTICS.md#hardware-validation-checklist).
 
 ## Troubleshooting
 
-### Long ESPHome loop warnings
-
-Synchronous FastGPIO RX/TX can block the ESPHome loop while waiting for the external MHI frame cadence. This can produce long-operation warnings even when RX is reliable.
-
-Treat clean protocol counters as necessary but not sufficient. If opdata stops flowing or commands stop confirming, the run is not healthy even if `valid_frames` looks good.
-
-### Worker mode looks faster but behaviour regresses
-
-Workers can improve loop timing counters while still breaking command confirmation or opdata flow.
-
-For normal FastGPIO operation, disable workers:
-
-```yaml
-rx_driver: fast_gpio_rx
-tx_driver: fast_gpio_tx
-rx_worker: false
-tx_worker: false
-```
-
-Use workers only for external-clock RX experiments unless actively debugging worker internals.
-
-### Sensor remains unavailable
-
-Many opdata fields are model-dependent. A configured sensor only publishes after the AC returns a valid response for that field.
-
-Unavailable is preferred over publishing bogus zero values.
-
-### Fan or vane command appears to bounce
-
-Confirmed AC feedback is authoritative. If the AC clamps or rejects a requested state, the UI will settle to the confirmed decoded state.
-
-Repeated identical pending commands should be suppressed by the command debounce/duplicate suppression path.
+Driver, protocol, command-confirmation, opdata, loop-time, and worker troubleshooting has moved to [`DIAGNOSTICS.md`](DIAGNOSTICS.md#troubleshooting).
 
 ## Development notes
 
@@ -694,9 +457,12 @@ mhi_tx_builder.*
 mhi_command_confirmation.*
 mhi_publish_bridge.*
 mhi_transport_manager.*
+mhi_duplex_transport.*
 mhi_fast_gpio_rx_driver.*
 mhi_fast_gpio_tx_driver.*
 mhi_external_clock_rx_driver.*
+mhi_rmt_spi_rx_driver.*
+mhi_rmt_cs_spi_transport.*
 mhi_null_tx_driver.*
 mhi_diag.*
 mhi_stats.*
@@ -730,29 +496,24 @@ Run lint:
 
 ## Current design rules
 
-- Keep sensor/opdata fields validity-gated.
+- Keep sensor and opdata fields validity-gated.
 - Keep confirmed decoded state authoritative.
-- Keep FastGPIO as the supported/default transport path.
-- Keep RX/TX driver selection explicit in examples.
-- Drive split FastGPIO TX from RX frame-end bus markers, not blind polling.
-- Keep workers opt-in and experimental.
-- Recommend workers only for `external_clock_rx` testing.
-- Do not recommend workers for `fast_gpio_rx` normal use.
-- Do not add general status/extended-status FIFO queues; use latest slots to avoid queue/timing pressure.
-- Use a dedicated latest command-candidate side slot only when transient command feedback needs protection from normal latest-slot overwrites.
-- Do not combine transport experiments with sensor parity changes.
+- Keep `fast_gpio_rx` as the conservative default and fallback.
+- Treat `rx_driver` as the primary selector and auto-resolve TX for split drivers.
+- Preserve explicit `tx_driver` support for existing split configurations and RX-only diagnostics.
+- Give full-duplex transports exclusive ownership of RX and TX.
+- Keep workers opt-in, experimental, and disabled for validated transport configurations.
+- Use latest-state catalogue slots instead of general status FIFOs.
+- Keep transport changes separate from protocol, decoder, and sensor-parity changes.
 
 ## Roadmap
 
-* Keep the default path conservative: `fast_gpio_rx` + `fast_gpio_tx`, with workers disabled.
-* Continue long-duration validation of `rmt_spi_rx` on ESP32-S3, with `fast_gpio_tx` and workers disabled.
-* Treat `rmt_spi_rx` as the preferred experimental S3 receive backend following the successful 47.5-hour soak test.
-* Investigate and fix FastGPIO TX timing failures, missed bus markers, and main-loop blocking.
-* Evaluate hardware-assisted SPI TX so RX and TX can share the same externally clocked transaction path.
-* Replace polling RX/TX workers with event-driven RTOS tasks using SPI/RMT completion and command notifications.
-* Investigate `opdata_slots_full`, including logging rejected opdata keys and reviewing catalogue slot allocation.
-* Continue fan, mode, temperature, vane, and command-confirmation validation on the stable no-worker path.
-* Continue hardening command confirmation around rapid and overlapping UI changes.
+- Complete the long-duration ESP32-S3 soak for `rmt_cs_spi`.
+- Compare full-duplex stability, command confirmation, opdata flow, and loop timing against `rmt_spi_rx` plus `fast_gpio_tx`.
+- Keep the stable default unchanged until the full-duplex path completes hardware validation.
+- Reopen the worker path as an event-driven design only after the transport result is established.
+- Investigate opdata catalogue slot pressure and rejected keys independently of transport work.
+- Add hardware rows to the compatibility table only after compile, command, opdata, and soak evidence is available.
 
 
 ## Credits
