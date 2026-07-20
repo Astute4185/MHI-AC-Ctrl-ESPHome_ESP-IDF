@@ -280,9 +280,11 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
 
       out.data[DB17] = static_cast<uint8_t>((out.data[DB17] & ~0x04U) | (command.three_d_auto ? 0x04U : 0x00U));
 
-      if ((out.data[DB17] & 0x0BU) == 0U) {
-        out.data[DB17] |= 0x0AU;
-      }
+      // Louver command-indicator bits (0x08 | 0x02) must be asserted for the
+      // AC to accept the write. The previous conditional skipped this when
+      // bit 0x01 was carried over from the preserved louver state, leaving
+      // DB17 as 0x05 which the AC treats as a status echo, not a command.
+      out.data[DB17] |= 0x0AU;
 
       result.intent.three_d_auto = command.three_d_auto;
       command.three_d_auto_set = false;
