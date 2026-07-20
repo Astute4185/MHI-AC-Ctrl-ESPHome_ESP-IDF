@@ -29,6 +29,7 @@ CXX="${CXX:-g++}"
   tests/unit/test_opdata_decoder.cpp \
   tests/unit/test_publish_bridge.cpp \
   tests/unit/test_tx_builder.cpp \
+  tests/unit/test_tx_builder_3d_auto_command_bits.cpp \
   tests/unit/test_command_confirmation.cpp \
   tests/unit/test_diag.cpp \
   tests/unit/test_fixtures.cpp \

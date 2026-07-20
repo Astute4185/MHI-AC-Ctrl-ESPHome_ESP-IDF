@@ -72,6 +72,7 @@ int main() {
   tx_builder_encodes_quiet_fan_code_zero();
   tx_builder_keeps_double_frame_commands_pending_until_command_frame();
   tx_builder_drops_33_byte_only_commands_in_20_byte_mode();
+  tx_builder_3d_auto_command_bits_regression_suite();
   tx_builder_applies_3d_auto_in_33_byte_frame();
   tx_builder_reports_horizontal_vane_intent_in_33_byte_frame();
   tx_builder_preserves_horizontal_context_for_3d_auto_command();
