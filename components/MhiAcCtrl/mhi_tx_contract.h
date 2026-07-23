@@ -51,9 +51,37 @@ struct MhiTxCompletion {
   MhiCommandIntent intent{};
   bool success{false};
   uint32_t completed_at_ms{0U};
+  uint32_t completed_at_us{0U};
+  uint32_t bus_sequence{0U};
+  uint32_t frame_end_us{0U};
+  uint16_t expected_len{0U};
+  uint16_t actual_len{0U};
+  std::array<uint8_t, kMhiMaxFrameBytes> transmitted_frame{};
+  std::size_t transmitted_len{0U};
 
   bool is_command() const {
     return kind == MhiTxKind::COMMAND && command_mask != 0U;
+  }
+
+  void set_transmitted_frame(const uint8_t* data, std::size_t frame_len) {
+    transmitted_frame.fill(0U);
+    transmitted_len = 0U;
+    if (data == nullptr ||
+        (frame_len != kMhiFrame20Bytes && frame_len != kMhiFrame33Bytes)) {
+      return;
+    }
+    std::memcpy(transmitted_frame.data(), data, frame_len);
+    transmitted_len = frame_len;
+  }
+
+  void set_transmitted_frame(const MhiTxEnvelope& envelope) {
+    expected_len = static_cast<uint16_t>(envelope.len);
+    if (!envelope.valid()) {
+      transmitted_frame.fill(0U);
+      transmitted_len = 0U;
+      return;
+    }
+    this->set_transmitted_frame(envelope.frame.data(), envelope.len);
   }
 };
 

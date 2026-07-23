@@ -3,6 +3,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <cstdio>
+
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -11,6 +13,7 @@ namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_ac_ctrl";
 static const char* const DIAG_TAG = "mhi.diag";
+static const char* const TRACE_TAG = "mhi.trace";
 static constexpr uint32_t kDiagLogIntervalMs = 30000U;
 static constexpr uint32_t kLoopBudgetUs = 30000U;
 static constexpr std::size_t kMaxRxChunksPerLoop = 4U;
@@ -22,6 +25,37 @@ namespace {
 
 bool in_range(float value, float min_value, float max_value) {
   return value >= min_value && value <= max_value;
+}
+
+void trace_byte_name(std::size_t index, char* out, std::size_t out_size) {
+  if (out == nullptr || out_size == 0U) {
+    return;
+  }
+  if (index <= SB2) {
+    std::snprintf(out, out_size, "SB%u", static_cast<unsigned int>(index));
+    return;
+  }
+  if (index >= DB0 && index <= DB14) {
+    std::snprintf(out, out_size, "DB%u", static_cast<unsigned int>(index - DB0));
+    return;
+  }
+  if (index == CBH) {
+    std::snprintf(out, out_size, "CBH");
+    return;
+  }
+  if (index == CBL) {
+    std::snprintf(out, out_size, "CBL");
+    return;
+  }
+  if (index >= DB15 && index <= DB26) {
+    std::snprintf(out, out_size, "DB%u", static_cast<unsigned int>(15U + index - DB15));
+    return;
+  }
+  if (index == CBL2) {
+    std::snprintf(out, out_size, "CBL2");
+    return;
+  }
+  std::snprintf(out, out_size, "B%u", static_cast<unsigned int>(index));
 }
 
 }  // namespace
@@ -67,7 +101,8 @@ void MhiAcCtrl::apply_external_room_temperature_(float value) {
   this->last_external_room_temperature_c_ = value;
   this->notify_command_worker_();
 
-  ESP_LOGD(DIAG_TAG, "external room temperature staged: %.2fC raw=0x%02x", value, static_cast<unsigned int>(raw));
+  ESP_LOGD(DIAG_TAG, "external room temperature staged: %.2fC raw=0x%02x", value,
+           static_cast<unsigned int>(raw));
 }
 
 void MhiAcCtrl::clear_external_room_temperature_() {
@@ -111,6 +146,260 @@ void MhiAcCtrl::check_external_room_temperature_timeout_() {
   ESP_LOGD(DIAG_TAG, "external room temperature timed out after %ds", this->room_temp_api_timeout_s_);
 }
 
+bool MhiAcCtrl::arm_protocol_trace(const std::string& label) {
+  MhiProtocolTraceSemanticState requested{};
+  const uint32_t pending_mask = this->protocol_trace_pending_mask_();
+  bool started = false;
+  bool busy = false;
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  started = this->protocol_trace_.start_capture(0U, requested, pending_mask,
+                                                millis(), micros(), label.c_str());
+  busy = this->protocol_trace_.active() || this->protocol_trace_.ready() || this->protocol_trace_.exporting();
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+
+  if (started) {
+    ESP_LOGI(TRACE_TAG, "protocol trace armed label=%s; change one setting with the original controller",
+             label.c_str());
+  } else {
+    ESP_LOGW(TRACE_TAG, "protocol trace arm rejected label=%s enabled=%s busy=%s", label.c_str(),
+             this->protocol_trace_config_.enabled ? "YES" : "NO", busy ? "YES" : "NO");
+  }
+  return started;
+}
+
+bool MhiAcCtrl::mark_protocol_trace_result(const std::string& label) {
+  bool recorded = false;
+  const uint32_t pending_mask = this->protocol_trace_pending_mask_();
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  recorded = this->protocol_trace_.mark_physical_result(label.c_str(), micros(), pending_mask);
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+  if (!recorded) {
+    ESP_LOGW(TRACE_TAG, "protocol trace marker ignored because no capture is active: %s", label.c_str());
+  }
+  return recorded;
+}
+
+void MhiAcCtrl::dump_protocol_trace() {
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  this->protocol_trace_.force_complete(micros());
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+  this->enable_loop_soon_any_context();
+}
+
+void MhiAcCtrl::trace_command_request_(uint32_t command_mask, const MhiCommandState& command,
+                                       const char* label) {
+  constexpr uint32_t kUserSettingMask =
+      MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN |
+      MHI_COMMAND_TARGET_TEMP | MHI_COMMAND_VERTICAL_VANE |
+      MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
+  if (!this->protocol_trace_config_.enabled ||
+      (command_mask & kUserSettingMask) == 0U) {
+    return;
+  }
+  const MhiProtocolTraceSemanticState semantic =
+      MhiProtocolTraceRecorder::semantic_from_command(command, command_mask);
+  const uint32_t pending_mask = this->protocol_trace_pending_mask_();
+  bool started = false;
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  started = this->protocol_trace_.start_capture(command_mask, semantic, pending_mask,
+                                                millis(), micros(), label);
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+  if (!started) {
+    ESP_LOGW(TRACE_TAG,
+             "automatic protocol capture skipped mask=0x%08lx because a prior capture is active or awaiting export",
+             static_cast<unsigned long>(command_mask));
+  }
+}
+
+uint32_t MhiAcCtrl::protocol_trace_pending_mask_() const {
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  const uint32_t pending_mask = this->command_coordinator_.pending_mask();
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+  return pending_mask;
+}
+
+void MhiAcCtrl::poll_protocol_trace_() {
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  this->protocol_trace_.poll(millis(), micros());
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+}
+
+void MhiAcCtrl::export_protocol_trace_() {
+  bool export_ready = false;
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  export_ready = this->protocol_trace_.begin_export();
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+  if (!export_ready) {
+    return;
+  }
+
+  const auto stats = this->protocol_trace_.stats();
+  const auto summary = this->protocol_trace_.summary();
+  ESP_LOGI(
+      TRACE_TAG,
+      "TRACE_BEGIN id=%lu label=%s command_mask=0x%08lx generation=%lu reason=%s "
+      "assessment=%s records=%u started=%lu completed=%lu busy=%lu dropped=%lu",
+      static_cast<unsigned long>(this->protocol_trace_.capture_id()),
+      this->protocol_trace_.capture_label(),
+      static_cast<unsigned long>(this->protocol_trace_.capture_command_mask()),
+      static_cast<unsigned long>(this->protocol_trace_.capture_generation()),
+      MhiProtocolTraceRecorder::completion_reason_name(
+          this->protocol_trace_.completion_reason()),
+      MhiProtocolTraceRecorder::assessment_name(summary.assessment),
+      static_cast<unsigned int>(this->protocol_trace_.record_count()),
+      static_cast<unsigned long>(stats.captures_started),
+      static_cast<unsigned long>(stats.captures_completed),
+      static_cast<unsigned long>(stats.busy_rejections),
+      static_cast<unsigned long>(stats.records_dropped));
+
+  ESP_LOGI(
+      TRACE_TAG,
+      "TRACE_SUMMARY tx_attempts=%lu tx_successes=%lu tx_failures=%lu rx_after_tx=%lu "
+      "rx_waiting_completion=%lu deferred_overwrites=%lu raw_changes=%lu "
+      "semantic_changes=%lu candidates=%lu direction_errors=%lu "
+      "checksum_errors=%lu decoder_failures=%lu confirmations=%lu timeouts=%lu "
+      "staged_timeout=%s same_transaction_rx=%s on_wire_mismatch=%s stable=%s "
+      "requested_seen=%s late=%s",
+      static_cast<unsigned long>(summary.tx_attempts),
+      static_cast<unsigned long>(summary.tx_successes),
+      static_cast<unsigned long>(summary.tx_failures),
+      static_cast<unsigned long>(summary.rx_frames_after_tx),
+      static_cast<unsigned long>(summary.rx_while_waiting_for_completion),
+      static_cast<unsigned long>(summary.deferred_mosi_overwrites),
+      static_cast<unsigned long>(summary.raw_changes),
+      static_cast<unsigned long>(summary.semantic_changes),
+      static_cast<unsigned long>(summary.command_candidates),
+      static_cast<unsigned long>(summary.direction_errors),
+      static_cast<unsigned long>(summary.checksum_errors),
+      static_cast<unsigned long>(summary.decoder_failures),
+      static_cast<unsigned long>(summary.confirmations),
+      static_cast<unsigned long>(summary.confirmation_timeouts),
+      summary.staged_timeout_seen ? "YES" : "NO",
+      summary.same_transaction_rx_seen ? "YES" : "NO",
+      summary.on_wire_frame_mismatch ? "YES" : "NO",
+      summary.stable_status_seen ? "YES" : "NO",
+      summary.requested_state_seen ? "YES" : "NO",
+      summary.late_confirmation ? "YES" : "NO");
+
+  ESP_LOGI(
+      TRACE_TAG,
+      "TRACE_TIMING request_to_stage_us=%lu stage_to_wire_us=%lu tx_to_first_rx_us=%lu "
+      "tx_to_raw_change_us=%lu tx_to_semantic_change_us=%lu tx_to_confirmation_us=%lu "
+      "tx_to_timeout_us=%lu",
+      static_cast<unsigned long>(summary.request_to_stage_us),
+      static_cast<unsigned long>(summary.stage_to_wire_us),
+      static_cast<unsigned long>(summary.tx_to_first_rx_us),
+      static_cast<unsigned long>(summary.tx_to_first_raw_change_us),
+      static_cast<unsigned long>(summary.tx_to_first_semantic_change_us),
+      static_cast<unsigned long>(summary.tx_to_confirmation_us),
+      static_cast<unsigned long>(summary.tx_to_timeout_us));
+
+  for (std::size_t i = 0U; i < this->protocol_trace_.record_count(); i++) {
+    this->log_protocol_trace_record_(i, this->protocol_trace_.record(i));
+  }
+
+  ESP_LOGI(TRACE_TAG, "TRACE_END id=%lu",
+           static_cast<unsigned long>(this->protocol_trace_.capture_id()));
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  this->protocol_trace_.finish_export();
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
+}
+
+void MhiAcCtrl::log_protocol_trace_record_(
+    std::size_t index, const MhiProtocolTraceRecord& record) const {
+  ESP_LOGI(
+      TRACE_TAG,
+      "trace[%u] observed_us=%lu event_us=%lu elapsed_us=%lu processing_us=%lu "
+      "since_tx_us=%lu catalog_seq=%lu bus_seq=%lu event=%s dir=%s gen=%lu attempt=%u "
+      "mask=0x%08lx pending=0x%08lx success=%s signature=%s checksum=%s decoder=%s "
+      "candidate=%s requested_match=%s expected_len=%u actual_len=%u changed=0x%09llx label=%s",
+      static_cast<unsigned int>(index),
+      static_cast<unsigned long>(record.observed_at_us),
+      static_cast<unsigned long>(record.event_time_us),
+      static_cast<unsigned long>(record.elapsed_us),
+      static_cast<unsigned long>(record.processing_delay_us),
+      static_cast<unsigned long>(record.since_tx_us),
+      static_cast<unsigned long>(record.catalog_sequence),
+      static_cast<unsigned long>(record.bus_sequence),
+      MhiProtocolTraceRecorder::event_name(record.event),
+      MhiProtocolTraceRecorder::direction_name(record.direction),
+      static_cast<unsigned long>(record.command_generation),
+      static_cast<unsigned int>(record.tx_attempt),
+      static_cast<unsigned long>(record.command_mask),
+      static_cast<unsigned long>(record.confirmation_pending_mask),
+      record.success ? "YES" : "NO",
+      record.signature_valid ? "YES" : "NO",
+      record.checksum_valid ? "YES" : "NO",
+      record.decoder_valid ? "YES" : "NO",
+      record.command_candidate ? "YES" : "NO",
+      record.requested_state_match ? "YES" : "NO",
+      static_cast<unsigned int>(record.expected_len),
+      static_cast<unsigned int>(record.actual_len),
+      static_cast<unsigned long long>(record.changed_byte_mask), record.label);
+
+  if (record.frame.view().valid()) {
+    char raw[(kMhiMaxFrameBytes * 3U) + 1U]{};
+    std::size_t used = 0U;
+    for (std::size_t byte = 0U; byte < record.frame.len && used + 4U < sizeof(raw);
+         byte++) {
+      const int written = std::snprintf(
+          raw + used, sizeof(raw) - used, "%02x%s", record.frame.data[byte],
+          byte + 1U == record.frame.len ? "" : " ");
+      if (written <= 0) {
+        break;
+      }
+      used += static_cast<std::size_t>(written);
+    }
+
+    char changed[224]{};
+    std::size_t changed_used = 0U;
+    for (std::size_t byte = 0U; byte < record.frame.len; byte++) {
+      if ((record.changed_byte_mask & (1ULL << byte)) == 0U) {
+        continue;
+      }
+      char name[12]{};
+      trace_byte_name(byte, name, sizeof(name));
+      const int written = std::snprintf(
+          changed + changed_used, sizeof(changed) - changed_used, "%s%s",
+          changed_used == 0U ? "" : ",", name);
+      if (written <= 0 ||
+          static_cast<std::size_t>(written) >= sizeof(changed) - changed_used) {
+        break;
+      }
+      changed_used += static_cast<std::size_t>(written);
+    }
+    ESP_LOGI(TRACE_TAG, "trace[%u].raw len=%u bytes=%s changed_bytes=%s",
+             static_cast<unsigned int>(index),
+             static_cast<unsigned int>(record.frame.len), raw,
+             changed_used == 0U ? "none" : changed);
+  }
+
+  const auto& semantic = record.semantic;
+  if (semantic.valid_fields != 0U) {
+    ESP_LOGI(
+        TRACE_TAG,
+        "trace[%u].state fields=0x%08lx power=%u mode=%u fan=%u target=%.1f "
+        "vertical=%u vswing=%u horizontal=%u hswing=%u 3d=%u db16=0x%02x "
+        "db17=0x%02x room_raw=0x%02x",
+        static_cast<unsigned int>(index),
+        static_cast<unsigned long>(semantic.valid_fields), semantic.power ? 1U : 0U,
+        static_cast<unsigned int>(semantic.mode),
+        static_cast<unsigned int>(semantic.fan), semantic.target_temp_c,
+        static_cast<unsigned int>(semantic.vertical_vane),
+        semantic.vertical_swing ? 1U : 0U,
+        static_cast<unsigned int>(semantic.horizontal_vane),
+        semantic.horizontal_swing ? 1U : 0U,
+        semantic.three_d_auto ? 1U : 0U,
+        static_cast<unsigned int>(semantic.extended_louver_db16),
+        static_cast<unsigned int>(semantic.extended_louver_db17),
+        static_cast<unsigned int>(semantic.room_temp_override_raw));
+  }
+}
+
 uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   const uint32_t requested_mask = patch.pending_command_mask();
   if (requested_mask == 0U) {
@@ -143,12 +432,13 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
 
   if ((allowed_mask & MHI_COMMAND_HORIZONTAL_VANE) != 0U) {
     const bool duplicate_queued = command.horizontal_vane_set && command.horizontal_vane == patch.horizontal_vane;
-    const bool duplicate_pending =
-        (pending_mask & MHI_COMMAND_HORIZONTAL_VANE) != 0U && pending_intent.horizontal_vane == patch.horizontal_vane;
+    const bool duplicate_pending = (pending_mask & MHI_COMMAND_HORIZONTAL_VANE) != 0U &&
+                                   pending_intent.horizontal_vane == patch.horizontal_vane;
     const uint32_t other_extended_mask = queued_mask | pending_mask | allowed_mask;
     const bool three_d_busy = (other_extended_mask & MHI_COMMAND_THREE_D_AUTO) != 0U;
-    const bool already_confirmed = (superseded_mask & MHI_COMMAND_HORIZONTAL_VANE) == 0U && !three_d_busy &&
-                                   this->confirmed_extended_louver_matches_horizontal_(patch.horizontal_vane);
+    const bool already_confirmed =
+        (superseded_mask & MHI_COMMAND_HORIZONTAL_VANE) == 0U && !three_d_busy &&
+        this->confirmed_extended_louver_matches_horizontal_(patch.horizontal_vane);
 
     if (duplicate_queued || duplicate_pending || already_confirmed) {
       allowed_mask &= ~MHI_COMMAND_HORIZONTAL_VANE;
@@ -157,12 +447,13 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
 
   if ((allowed_mask & MHI_COMMAND_THREE_D_AUTO) != 0U) {
     const bool duplicate_queued = command.three_d_auto_set && command.three_d_auto == patch.three_d_auto;
-    const bool duplicate_pending =
-        (pending_mask & MHI_COMMAND_THREE_D_AUTO) != 0U && pending_intent.three_d_auto == patch.three_d_auto;
+    const bool duplicate_pending = (pending_mask & MHI_COMMAND_THREE_D_AUTO) != 0U &&
+                                   pending_intent.three_d_auto == patch.three_d_auto;
     const uint32_t other_extended_mask = queued_mask | pending_mask | allowed_mask;
     const bool horizontal_busy = (other_extended_mask & MHI_COMMAND_HORIZONTAL_VANE) != 0U;
-    const bool already_confirmed = (superseded_mask & MHI_COMMAND_THREE_D_AUTO) == 0U && !horizontal_busy &&
-                                   this->confirmed_extended_louver_matches_three_d_auto_(patch.three_d_auto);
+    const bool already_confirmed =
+        (superseded_mask & MHI_COMMAND_THREE_D_AUTO) == 0U && !horizontal_busy &&
+        this->confirmed_extended_louver_matches_three_d_auto_(patch.three_d_auto);
 
     if (duplicate_queued || duplicate_pending || already_confirmed) {
       allowed_mask &= ~MHI_COMMAND_THREE_D_AUTO;
@@ -178,6 +469,10 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   if (superseded_mask != 0U) {
     ESP_LOGD(DIAG_TAG, "command: superseded pending confirmation mask=0x%08lx",
              static_cast<unsigned long>(superseded_mask));
+  }
+
+  if (accepted_mask != 0U) {
+    this->trace_command_request_(accepted_mask, patch, "component_command");
   }
 
   if (accepted_mask != 0U || superseded_mask != 0U) {
@@ -326,6 +621,10 @@ void MhiAcCtrl::setup() {
   portENTER_CRITICAL(&this->worker_decoded_store_mux_);
   this->worker_decoded_store_.reset();
   portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  this->protocol_trace_.reset();
+  this->protocol_trace_.configure(this->protocol_trace_config_);
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
   this->frame_catalog_sequence_ = 0U;
   this->frame_sync_.set_mode(MhiFrameSyncMode::MOSI_ONLY);
   this->frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
@@ -354,12 +653,12 @@ void MhiAcCtrl::setup() {
 
   this->start_command_worker_();
 
-  ESP_LOGCONFIG(TAG, "RX mode: %s",
-                this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
-                                           : "synchronous main-loop sampling");
+  ESP_LOGCONFIG(TAG, "RX mode: %s", this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
+                                                               : "synchronous main-loop sampling");
   ESP_LOGCONFIG(TAG, "Command mode: %s",
                 this->command_worker_enabled_ ? "event-driven command worker" : "main-loop command coordinator");
   ESP_LOGCONFIG(TAG, "TX mode: transport-owned real-time transmission");
+  ESP_LOGCONFIG(TAG, "Protocol trace: %s", this->protocol_trace_config_.enabled ? "enabled" : "disabled");
 }
 
 void MhiAcCtrl::on_shutdown() {
@@ -434,6 +733,8 @@ void MhiAcCtrl::loop() {
 
   section_start_us = micros();
   this->check_command_confirmation_timeout_();
+  this->poll_protocol_trace_();
+  this->export_protocol_trace_();
   const uint32_t command_housekeeping_us = elapsed_us_(section_start_us);
 
   const uint32_t loop_us = elapsed_us_(loop_start_us);
@@ -459,9 +760,8 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
   ESP_LOGCONFIG(TAG, "  RX ready: %s", diag.rx_driver_ready ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  TX ready: %s", diag.tx_driver_ready ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  RX mode: %s",
-                this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
-                                           : "main-loop capture/sync/decode/apply");
+  ESP_LOGCONFIG(TAG, "  RX mode: %s", this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
+                                                               : "main-loop capture/sync/decode/apply");
   ESP_LOGCONFIG(TAG, "  Frame start idle: %lums", static_cast<unsigned long>(this->frame_start_idle_ms_));
   ESP_LOGCONFIG(TAG, "  RMT/SPI frame gap: %luus", static_cast<unsigned long>(this->rmt_spi_frame_gap_us_));
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
@@ -481,6 +781,16 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
   ESP_LOGCONFIG(TAG, "  Frame catalog: enabled latest-slot decode");
+  ESP_LOGCONFIG(TAG,
+                "  Protocol trace: enabled=%s window=%lums timeout_grace=%lums heartbeat=%lums "
+                "pre=%u post=%u max_records=%u auto_user_commands=YES",
+                this->protocol_trace_config_.enabled ? "YES" : "NO",
+                static_cast<unsigned long>(this->protocol_trace_config_.capture_window_ms),
+                static_cast<unsigned long>(this->protocol_trace_config_.post_timeout_grace_ms),
+                static_cast<unsigned long>(this->protocol_trace_config_.unchanged_heartbeat_ms),
+                static_cast<unsigned int>(this->protocol_trace_config_.pre_command_frames),
+                static_cast<unsigned int>(this->protocol_trace_config_.post_command_frames),
+                static_cast<unsigned int>(this->protocol_trace_config_.max_records));
 }
 
 void MhiAcCtrl::log_runtime_diagnostics_() {
@@ -679,27 +989,28 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(this->tx_background_interval_deferrals_),
            static_cast<unsigned long>(this->tx_background_confirmation_deferrals_));
 
-  ESP_LOGI(DIAG_TAG,
-           "runtime: command_worker enabled=%s running=%s classified_rx=%s wakes=%lu service_runs=%lu idle_polls=%lu "
-           "frames_staged=%lu completions=%lu rx_polls=%lu rx_batches=%lu rx_chunks=%lu rx_frames=%lu "
-           "rx_max_batch=%lu runtime_us=%lu/%lu notify_max=%lu stack_free_min=%lu",
-           this->command_worker_enabled_ ? "YES" : "NO",
-           this->command_worker_running_.load(std::memory_order_acquire) ? "YES" : "NO",
-           this->worker_handles_rx_() ? "YES" : "NO",
-           static_cast<unsigned long>(this->command_worker_wakes_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_service_runs_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_idle_polls_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_frames_staged_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_completions_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_rx_polls_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_rx_batches_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_rx_chunks_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_rx_frames_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_rx_max_batch_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_last_runtime_us_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_max_runtime_us_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_max_notify_batch_.load(std::memory_order_relaxed)),
-           static_cast<unsigned long>(this->command_worker_stack_high_water_bytes_.load(std::memory_order_relaxed)));
+  ESP_LOGI(
+      DIAG_TAG,
+      "runtime: command_worker enabled=%s running=%s classified_rx=%s wakes=%lu service_runs=%lu idle_polls=%lu "
+      "frames_staged=%lu completions=%lu rx_polls=%lu rx_batches=%lu rx_chunks=%lu rx_frames=%lu "
+      "rx_max_batch=%lu runtime_us=%lu/%lu notify_max=%lu stack_free_min=%lu",
+      this->command_worker_enabled_ ? "YES" : "NO",
+      this->command_worker_running_.load(std::memory_order_acquire) ? "YES" : "NO",
+      this->worker_handles_rx_() ? "YES" : "NO",
+      static_cast<unsigned long>(this->command_worker_wakes_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_service_runs_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_idle_polls_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_frames_staged_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_completions_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_rx_polls_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_rx_batches_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_rx_chunks_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_rx_frames_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_rx_max_batch_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_last_runtime_us_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_max_runtime_us_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_max_notify_batch_.load(std::memory_order_relaxed)),
+      static_cast<unsigned long>(this->command_worker_stack_high_water_bytes_.load(std::memory_order_relaxed)));
 
   ESP_LOGI(DIAG_TAG,
            "runtime: transport_queues rx_depth=%u rx_high_water=%u rx_overwritten=%lu completion_depth=%u "
@@ -793,15 +1104,17 @@ void MhiAcCtrl::start_command_worker_() {
   BaseType_t created = pdFALSE;
   if (this->command_worker_core_id_ >= 0) {
     created = xTaskCreatePinnedToCore(&MhiAcCtrl::command_worker_task_entry_, "mhi_command_worker", stack_size, this,
-                                      priority, &task_handle, static_cast<BaseType_t>(this->command_worker_core_id_));
+                                      priority, &task_handle,
+                                      static_cast<BaseType_t>(this->command_worker_core_id_));
   } else {
     created = xTaskCreate(&MhiAcCtrl::command_worker_task_entry_, "mhi_command_worker", stack_size, this, priority,
                           &task_handle);
   }
 
   if (created != pdPASS || task_handle == nullptr) {
-    ESP_LOGE(TAG, "Command worker start failed: stack=%lu priority=%lu core=%d", static_cast<unsigned long>(stack_size),
-             static_cast<unsigned long>(this->command_worker_priority_), this->command_worker_core_id_);
+    ESP_LOGE(TAG, "Command worker start failed: stack=%lu priority=%lu core=%d",
+             static_cast<unsigned long>(stack_size), static_cast<unsigned long>(this->command_worker_priority_),
+             this->command_worker_core_id_);
     this->command_worker_enabled_ = false;
     this->command_worker_classified_rx_enabled_ = false;
     this->command_worker_task_ = nullptr;
@@ -858,8 +1171,9 @@ void MhiAcCtrl::command_worker_task_loop_() {
 
     if (notified > 0U) {
       uint32_t previous_notify_max = this->command_worker_max_notify_batch_.load(std::memory_order_relaxed);
-      while (notified > previous_notify_max && !this->command_worker_max_notify_batch_.compare_exchange_weak(
-                                                   previous_notify_max, notified, std::memory_order_relaxed)) {
+      while (notified > previous_notify_max &&
+             !this->command_worker_max_notify_batch_.compare_exchange_weak(previous_notify_max, notified,
+                                                                           std::memory_order_relaxed)) {
       }
     }
 
@@ -877,8 +1191,8 @@ void MhiAcCtrl::command_worker_task_loop_() {
 
 #if INCLUDE_uxTaskGetStackHighWaterMark == 1
     if ((service_run & 0x3FU) == 0U) {
-      this->command_worker_stack_high_water_bytes_.store(static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr)),
-                                                         std::memory_order_relaxed);
+      this->command_worker_stack_high_water_bytes_.store(
+          static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr)), std::memory_order_relaxed);
     }
 #endif
 
@@ -944,16 +1258,21 @@ void MhiAcCtrl::service_command_pipeline_() {
   }
 
   const bool queued = this->transport_.queue_tx(envelope);
+  uint32_t trace_pending_mask = 0U;
 
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
   this->command_coordinator_.on_stage_result(envelope, command_before_build, this->state_.command(), queued, now);
+  trace_pending_mask = this->command_coordinator_.pending_mask();
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
 
   if (queued) {
+    portENTER_CRITICAL(&this->protocol_trace_mux_);
+    this->protocol_trace_.observe_tx_staged(envelope, micros(), trace_pending_mask);
+    portEXIT_CRITICAL(&this->protocol_trace_mux_);
     this->command_worker_frames_staged_.fetch_add(1U, std::memory_order_relaxed);
   }
 
@@ -981,12 +1300,17 @@ void MhiAcCtrl::drain_tx_completions_() {
       xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
     }
     const bool handled = this->command_coordinator_.on_tx_completion(completion, this->state_.command());
-    if (handled && completion.success && this->command_coordinator_.pending_mask() != 0U) {
+    const uint32_t trace_pending_mask = this->command_coordinator_.pending_mask();
+    if (handled && completion.success && trace_pending_mask != 0U) {
       clear_command_candidate = true;
     }
     if (this->command_mutex_ != nullptr) {
       xSemaphoreGive(this->command_mutex_);
     }
+
+    portENTER_CRITICAL(&this->protocol_trace_mux_);
+    this->protocol_trace_.observe_tx_completion(completion, micros(), trace_pending_mask);
+    portEXIT_CRITICAL(&this->protocol_trace_mux_);
 
     if (!completion.is_command()) {
       continue;
@@ -1080,23 +1404,24 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
 
   this->command_worker_rx_polls_.fetch_add(1U, std::memory_order_relaxed);
 
-  uint8_t buffer[kMhiMaxFrameBytes]{};
+  MhiCapturedFrame captured{};
   MhiFrameBuffer frame{};
   uint32_t chunks = 0U;
   uint32_t frames = 0U;
 
   for (std::size_t chunk = 0U; chunk < kMaxRxChunksPerWorkerPoll; chunk++) {
-    const std::size_t len = this->transport_.read_rx(buffer, sizeof(buffer));
-    if (len == 0U) {
+    if (!this->transport_.read_rx_frame(captured)) {
       break;
     }
 
     chunks++;
-    this->frame_sync_.push_bytes(buffer, len);
+    this->frame_sync_.push_bytes(captured.data.data(), captured.len);
 
     while (this->frame_sync_.pop_frame(frame)) {
+      const uint32_t observed_at_us = micros();
       this->diagnostics_.stats().on_valid_frame(millis());
-      this->ingest_rx_frame_(frame);
+      this->ingest_rx_frame_(frame, captured.sequence, captured.frame_end_us,
+                             observed_at_us);
       frames++;
     }
   }
@@ -1121,34 +1446,39 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
 }
 
 bool MhiAcCtrl::read_and_sync_rx_frame_() {
-  uint8_t buffer[kMhiMaxFrameBytes]{};
+  MhiCapturedFrame captured{};
   MhiFrameBuffer frame{};
 
   for (std::size_t chunk = 0U; chunk < kMaxRxChunksPerLoop; chunk++) {
-    const std::size_t len = this->transport_.read_rx(buffer, sizeof(buffer));
-    if (len == 0U) {
+    if (!this->transport_.read_rx_frame(captured)) {
       break;
     }
 
-    this->frame_sync_.push_bytes(buffer, len);
+    this->frame_sync_.push_bytes(captured.data.data(), captured.len);
 
     while (this->frame_sync_.pop_frame(frame)) {
+      const uint32_t observed_at_us = micros();
       this->diagnostics_.stats().on_valid_frame(millis());
-      this->ingest_rx_frame_(frame);
+      this->ingest_rx_frame_(frame, captured.sequence, captured.frame_end_us,
+                             observed_at_us);
     }
   }
 
   return this->decode_cataloged_frames_();
 }
 
-bool MhiAcCtrl::ingest_rx_frame_(const MhiFrameBuffer& frame) {
+bool MhiAcCtrl::ingest_rx_frame_(const MhiFrameBuffer& frame, uint32_t bus_sequence,
+                                 uint32_t frame_end_us, uint32_t observed_at_us) {
   // Resolve command state before entering the frame-catalog critical section.
   // A blocking FreeRTOS mutex must never be acquired while a spinlock is held.
-  const bool store_command_candidate = this->command_confirmation_pending_();
+  const uint32_t trace_pending_mask = this->protocol_trace_pending_mask_();
+  const bool store_command_candidate = trace_pending_mask != 0U;
+  const uint32_t now_ms = millis();
+  const uint32_t sequence = ++this->frame_catalog_sequence_;
 
   portENTER_CRITICAL(&this->frame_catalog_mux_);
   const MhiCatalogIngestResult result = this->frame_catalog_.ingest_mosi_frame(
-      frame.view(), ++this->frame_catalog_sequence_, millis(), store_command_candidate);
+      frame.view(), sequence, now_ms, store_command_candidate);
   portEXIT_CRITICAL(&this->frame_catalog_mux_);
 
   if (!result.stored) {
@@ -1157,9 +1487,21 @@ bool MhiAcCtrl::ingest_rx_frame_(const MhiFrameBuffer& frame) {
     return false;
   }
 
+  if (result.kind == MhiFrameKind::STATUS || result.kind == MhiFrameKind::EXTENDED_STATUS) {
+    MhiDecodedStatus trace_status{};
+    if (MhiStatusDecoder::decode_mosi(frame.view(), trace_status)) {
+      portENTER_CRITICAL(&this->protocol_trace_mux_);
+      const uint32_t trace_observed_at_us = observed_at_us != 0U ? observed_at_us : micros();
+      this->protocol_trace_.observe_mosi_status(
+          frame, trace_status, store_command_candidate, sequence, bus_sequence,
+          frame_end_us, now_ms, trace_observed_at_us, trace_pending_mask);
+      portEXIT_CRITICAL(&this->protocol_trace_mux_);
+    }
+  }
+
   if (result.overwritten) {
     ESP_LOGVV(DIAG_TAG, "catalog: overwritten kind=%s key=0x%04x sequence=%lu", mhi_frame_kind_to_string(result.kind),
-              static_cast<unsigned int>(result.opdata_key), static_cast<unsigned long>(this->frame_catalog_sequence_));
+              static_cast<unsigned int>(result.opdata_key), static_cast<unsigned long>(sequence));
   }
 
   return true;
@@ -1297,7 +1639,8 @@ bool MhiAcCtrl::decode_cataloged_frame_to_worker_store_(const MhiCatalogedFrame&
     portENTER_CRITICAL(&this->worker_decoded_store_mux_);
     this->worker_decoded_store_.store_status(decoded, cataloged_frame.frame, cataloged_frame.sequence,
                                              cataloged_frame.last_update_ms,
-                                             cataloged_frame.kind == MhiFrameKind::EXTENDED_STATUS, command_candidate);
+                                             cataloged_frame.kind == MhiFrameKind::EXTENDED_STATUS,
+                                             command_candidate);
     portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
     return true;
   }
@@ -1776,6 +2119,9 @@ void MhiAcCtrl::update_command_confirmation_(const MhiStatusState& status) {
 
   const uint32_t now = millis();
   this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now);
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  this->protocol_trace_.observe_confirmation(confirmed_mask, pending_mask, micros());
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
 
   if (pending_mask == 0U) {
     this->clear_command_candidate_();
@@ -1798,7 +2144,8 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
-  const uint32_t staged_timeout_mask = this->command_coordinator_.staged_timeout_mask(now, kStagedCommandWarningMs);
+  const uint32_t staged_timeout_mask =
+      this->command_coordinator_.staged_timeout_mask(now, kStagedCommandWarningMs);
   const MhiCommandTimeoutResult timeout = this->command_coordinator_.expire(now, this->state_.command());
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
@@ -1806,7 +2153,13 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
 
   if (staged_timeout_mask != 0U) {
     this->diagnostics_.stats().on_command_staged_timeout(staged_timeout_mask, now);
-    ESP_LOGW(DIAG_TAG, "command: staged but not transmitted after %lums mask=0x%08lx; waiting for AC bus clock",
+    const uint32_t trace_pending_mask = this->protocol_trace_pending_mask_();
+    portENTER_CRITICAL(&this->protocol_trace_mux_);
+    this->protocol_trace_.observe_staged_timeout(
+        staged_timeout_mask, micros(), trace_pending_mask);
+    portEXIT_CRITICAL(&this->protocol_trace_mux_);
+    ESP_LOGW(DIAG_TAG,
+             "command: staged but not transmitted after %lums mask=0x%08lx; waiting for AC bus clock",
              static_cast<unsigned long>(kStagedCommandWarningMs), static_cast<unsigned long>(staged_timeout_mask));
   }
 
@@ -1814,13 +2167,19 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
     return;
   }
 
+  const uint32_t trace_pending_mask = this->protocol_trace_pending_mask_();
+  portENTER_CRITICAL(&this->protocol_trace_mux_);
+  this->protocol_trace_.observe_confirmation_timeout(timeout.timed_out_mask,
+                                                      trace_pending_mask, micros());
+  portEXIT_CRITICAL(&this->protocol_trace_mux_);
   this->diagnostics_.stats().on_command_confirmation_timeout(timeout.timed_out_mask, now);
   this->clear_command_candidate_();
 
   if (timeout.retry_mask != 0U) {
     this->diagnostics_.stats().on_command_retry(timeout.retry_mask, now);
     this->notify_command_worker_();
-    ESP_LOGW(DIAG_TAG, "command: confirmation timeout attempt=%u mask=0x%08lx retry=0x%08lx superseded=0x%08lx",
+    ESP_LOGW(DIAG_TAG,
+             "command: confirmation timeout attempt=%u mask=0x%08lx retry=0x%08lx superseded=0x%08lx",
              static_cast<unsigned int>(timeout.attempt), static_cast<unsigned long>(timeout.timed_out_mask),
              static_cast<unsigned long>(timeout.retry_mask), static_cast<unsigned long>(timeout.superseded_mask));
     return;
@@ -1828,7 +2187,8 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
 
   if (timeout.exhausted_mask != 0U) {
     this->diagnostics_.stats().on_command_retry_exhausted(timeout.exhausted_mask, now);
-    ESP_LOGW(DIAG_TAG, "command: confirmation exhausted after %u attempts mask=0x%08lx superseded=0x%08lx",
+    ESP_LOGW(DIAG_TAG,
+             "command: confirmation exhausted after %u attempts mask=0x%08lx superseded=0x%08lx",
              static_cast<unsigned int>(timeout.attempt), static_cast<unsigned long>(timeout.exhausted_mask),
              static_cast<unsigned long>(timeout.superseded_mask));
   } else {

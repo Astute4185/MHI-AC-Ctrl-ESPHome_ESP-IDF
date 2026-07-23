@@ -26,6 +26,7 @@ CXX="${CXX:-g++}"
   tests/unit/test_command_coordinator.cpp \
   tests/unit/test_worker_policy.cpp \
   tests/unit/test_worker_decoded_store.cpp \
+  tests/unit/test_protocol_trace.cpp \
   tests/unit/test_frame_catalog.cpp \
   tests/unit/test_fan_profile.cpp \
   tests/unit/test_status_decoder.cpp \
@@ -45,6 +46,7 @@ CXX="${CXX:-g++}"
   components/MhiAcCtrl/mhi_frame_catalog.cpp \
   components/MhiAcCtrl/mhi_frame_classifier.cpp \
   components/MhiAcCtrl/mhi_opdata_decoder.cpp \
+  components/MhiAcCtrl/mhi_protocol_trace.cpp \
   components/MhiAcCtrl/mhi_publish_bridge.cpp \
   components/MhiAcCtrl/mhi_status_decoder.cpp \
   components/MhiAcCtrl/mhi_stats.cpp \
@@ -55,3 +57,4 @@ CXX="${CXX:-g++}"
 "${BUILD_DIR}/mhi_protocol_tests"
 
 python3 tests/unit/test_driver_selection.py
+python3 tests/unit/test_protocol_trace_parser.py

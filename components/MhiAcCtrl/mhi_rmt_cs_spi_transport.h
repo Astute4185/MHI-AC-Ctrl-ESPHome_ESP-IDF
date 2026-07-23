@@ -56,6 +56,7 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   bool setup(const MhiTransportPins& pins) override;
   void loop() override;
   void shutdown() override;
+  bool read_captured_frame(MhiCapturedFrame& frame) override;
   std::size_t read(uint8_t* dst, std::size_t max_len) override;
   bool send(const MhiTxEnvelope& envelope) override;
   bool take_tx_completion(MhiTxCompletion& completion) override;

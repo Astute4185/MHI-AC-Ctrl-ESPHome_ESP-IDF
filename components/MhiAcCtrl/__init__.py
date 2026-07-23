@@ -2,7 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import sensor
-from esphome.const import CONF_ID
+from esphome.const import CONF_ENABLED, CONF_ID
 
 from .driver_selection import (
     RX_DRIVERS,
@@ -30,6 +30,14 @@ CONF_COMMAND_WORKER_START_DELAY_MS = "command_worker_start_delay_ms"
 CONF_COMMAND_WORKER_STACK_SIZE = "command_worker_stack_size"
 CONF_COMMAND_WORKER_PRIORITY = "command_worker_priority"
 CONF_COMMAND_WORKER_CORE_ID = "command_worker_core_id"
+CONF_PROTOCOL_TRACE = "protocol_trace"
+CONF_CAPTURE_WINDOW_MS = "capture_window_ms"
+CONF_POST_TIMEOUT_GRACE_MS = "post_timeout_grace_ms"
+CONF_UNCHANGED_HEARTBEAT_MS = "unchanged_heartbeat_ms"
+CONF_PRE_COMMAND_FRAMES = "pre_command_frames"
+CONF_POST_COMMAND_FRAMES = "post_command_frames"
+CONF_MAX_RECORDS = "max_records"
+CONF_LABEL = "label"
 
 
 DEFAULT_TX_BACKGROUND_INTERVAL_MS = 250
@@ -48,6 +56,9 @@ MhiAcCtrl = mhi_ns.class_("MhiAcCtrl", cg.Component)
 SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Action)
 SetHorizontalVanesAction = mhi_ns.class_("SetHorizontalVanesAction", automation.Action)
 SetExternalRoomTemperatureAction = mhi_ns.class_("SetExternalRoomTemperatureAction", automation.Action)
+ArmProtocolTraceAction = mhi_ns.class_("ArmProtocolTraceAction", automation.Action)
+MarkProtocolTraceAction = mhi_ns.class_("MarkProtocolTraceAction", automation.Action)
+DumpProtocolTraceAction = mhi_ns.class_("DumpProtocolTraceAction", automation.Action)
 
 
 def _validate_transport_configuration(config):
@@ -84,6 +95,17 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_COMMAND_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
             cv.Optional(CONF_COMMAND_WORKER_PRIORITY, default=4): cv.int_range(min=1, max=10),
             cv.Optional(CONF_COMMAND_WORKER_CORE_ID, default=-1): cv.int_range(min=-1, max=1),
+            cv.Optional(CONF_PROTOCOL_TRACE): cv.Schema(
+                {
+                    cv.Optional(CONF_ENABLED, default=True): cv.boolean,
+                    cv.Optional(CONF_CAPTURE_WINDOW_MS, default=30000): cv.int_range(min=1000, max=60000),
+                    cv.Optional(CONF_POST_TIMEOUT_GRACE_MS, default=5000): cv.int_range(min=250, max=15000),
+                    cv.Optional(CONF_UNCHANGED_HEARTBEAT_MS, default=1000): cv.int_range(min=250, max=5000),
+                    cv.Optional(CONF_PRE_COMMAND_FRAMES, default=4): cv.int_range(min=0, max=8),
+                    cv.Optional(CONF_POST_COMMAND_FRAMES, default=64): cv.int_range(min=1, max=64),
+                    cv.Optional(CONF_MAX_RECORDS, default=64): cv.int_range(min=8, max=64),
+                }
+            ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_transport_configuration,
@@ -112,6 +134,15 @@ async def to_code(config):
     cg.add(var.set_command_worker_stack_size(config[CONF_COMMAND_WORKER_STACK_SIZE]))
     cg.add(var.set_command_worker_priority(config[CONF_COMMAND_WORKER_PRIORITY]))
     cg.add(var.set_command_worker_core_id(config[CONF_COMMAND_WORKER_CORE_ID]))
+    if CONF_PROTOCOL_TRACE in config:
+        trace = config[CONF_PROTOCOL_TRACE]
+        cg.add(var.set_protocol_trace_enabled(trace[CONF_ENABLED]))
+        cg.add(var.set_protocol_trace_capture_window_ms(trace[CONF_CAPTURE_WINDOW_MS]))
+        cg.add(var.set_protocol_trace_post_timeout_grace_ms(trace[CONF_POST_TIMEOUT_GRACE_MS]))
+        cg.add(var.set_protocol_trace_unchanged_heartbeat_ms(trace[CONF_UNCHANGED_HEARTBEAT_MS]))
+        cg.add(var.set_protocol_trace_pre_command_frames(trace[CONF_PRE_COMMAND_FRAMES]))
+        cg.add(var.set_protocol_trace_post_command_frames(trace[CONF_POST_COMMAND_FRAMES]))
+        cg.add(var.set_protocol_trace_max_records(trace[CONF_MAX_RECORDS]))
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))
@@ -182,3 +213,54 @@ async def set_external_room_temperature_to_code(config, action_id, template_arg,
     template_ = await cg.templatable(config[CONF_TEMPERATURE], args, float)
     cg.add(var.set_temperature(template_))
     return var
+
+
+@automation.register_action(
+    "climate.mhi.protocol_trace_arm",
+    ArmProtocolTraceAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
+            cv.Optional(CONF_LABEL, default="manual"): cv.string,
+        }
+    ),
+    synchronous=True,
+)
+async def protocol_trace_arm_to_code(config, action_id, template_arg, args):
+    mhi = await cg.get_variable(config[CONF_MHI_AC_CTRL_ID])
+    var = cg.new_Pvariable(action_id, template_arg, mhi)
+    cg.add(var.set_label(config[CONF_LABEL]))
+    return var
+
+
+@automation.register_action(
+    "climate.mhi.protocol_trace_marker",
+    MarkProtocolTraceAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
+            cv.Required(CONF_LABEL): cv.string,
+        }
+    ),
+    synchronous=True,
+)
+async def protocol_trace_marker_to_code(config, action_id, template_arg, args):
+    mhi = await cg.get_variable(config[CONF_MHI_AC_CTRL_ID])
+    var = cg.new_Pvariable(action_id, template_arg, mhi)
+    cg.add(var.set_label(config[CONF_LABEL]))
+    return var
+
+
+@automation.register_action(
+    "climate.mhi.protocol_trace_dump",
+    DumpProtocolTraceAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
+        }
+    ),
+    synchronous=True,
+)
+async def protocol_trace_dump_to_code(config, action_id, template_arg, args):
+    mhi = await cg.get_variable(config[CONF_MHI_AC_CTRL_ID])
+    return cg.new_Pvariable(action_id, template_arg, mhi)

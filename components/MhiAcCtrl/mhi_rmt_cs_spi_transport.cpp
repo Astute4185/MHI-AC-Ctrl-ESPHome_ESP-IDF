@@ -179,30 +179,38 @@ void MhiRmtCsSpiTransport::shutdown() {
 #endif
 }
 
-std::size_t MhiRmtCsSpiTransport::read(uint8_t* dst, std::size_t max_len) {
+bool MhiRmtCsSpiTransport::read_captured_frame(MhiCapturedFrame& frame) {
 #if !MHI_RMT_CS_SPI_SUPPORTED
-  (void)dst;
-  (void)max_len;
-  return 0U;
+  (void) frame;
+  return false;
 #else
-  if (!ready_.load(std::memory_order_acquire) || dst == nullptr || max_len == 0U) {
-    return 0U;
+  if (!ready_.load(std::memory_order_acquire)) {
+    return false;
   }
-
-  MhiCapturedFrame frame{};
 
   portENTER_CRITICAL(&mux_);
   const bool available = completed_frames_.pop(frame);
   portEXIT_CRITICAL(&mux_);
+  return available;
+#endif
+}
 
-  if (!available) {
+std::size_t MhiRmtCsSpiTransport::read(uint8_t* dst, std::size_t max_len) {
+  if (dst == nullptr || max_len == 0U) {
+    return 0U;
+  }
+
+  MhiCapturedFrame frame{};
+  if (!this->read_captured_frame(frame)) {
     return 0U;
   }
 
   if (frame.len > max_len) {
+#if MHI_RMT_CS_SPI_SUPPORTED
     portENTER_CRITICAL(&mux_);
     dropped_frames_++;
     portEXIT_CRITICAL(&mux_);
+#endif
     ESP_LOGW(TAG, "RX destination too small: frame=%u destination=%u; frame dropped",
              static_cast<unsigned int>(frame.len), static_cast<unsigned int>(max_len));
     return 0U;
@@ -210,7 +218,6 @@ std::size_t MhiRmtCsSpiTransport::read(uint8_t* dst, std::size_t max_len) {
 
   std::memcpy(dst, frame.data.data(), frame.len);
   return frame.len;
-#endif
 }
 
 bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
@@ -560,6 +567,9 @@ bool MhiRmtCsSpiTransport::queue_transaction_(TransactionSlot& slot) {
       completion.intent = slot.tx_envelope.intent;
       completion.success = false;
       completion.completed_at_ms = millis();
+      completion.completed_at_us = micros();
+      completion.expected_len = static_cast<uint16_t>(slot.tx_envelope.len);
+      completion.actual_len = 0U;
     }
 
     portENTER_CRITICAL(&mux_);
@@ -651,6 +661,11 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
   const bool command_completion = slot->tx_envelope.is_command();
   MhiTxCompletion completion{};
 
+  portENTER_CRITICAL(&mux_);
+  sequence = marker_sequence_;
+  frame_end_us = marker_frame_end_us_;
+  portEXIT_CRITICAL(&mux_);
+
   if (command_completion) {
     completion.generation = slot->tx_envelope.generation;
     completion.kind = slot->tx_envelope.kind;
@@ -658,11 +673,17 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
     completion.intent = slot->tx_envelope.intent;
     completion.success = valid_frame_len && received_bytes == slot->tx_envelope.len;
     completion.completed_at_ms = millis();
+    completion.completed_at_us = frame_end_us != 0U ? frame_end_us : micros();
+    completion.bus_sequence = sequence;
+    completion.frame_end_us = frame_end_us;
+    completion.expected_len = static_cast<uint16_t>(slot->tx_envelope.len);
+    completion.actual_len = static_cast<uint16_t>(received_bytes);
+    if (valid_frame_len) {
+      completion.set_transmitted_frame(slot->tx_buffer, received_bytes);
+    }
   }
 
   portENTER_CRITICAL(&mux_);
-  sequence = marker_sequence_;
-  frame_end_us = marker_frame_end_us_;
 
   if (valid_frame_len) {
     const uint32_t overwritten_before = completed_frames_.overwritten_frames();

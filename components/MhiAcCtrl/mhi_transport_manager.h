@@ -12,10 +12,11 @@
 #include "mhi_diag.h"
 #include "mhi_duplex_transport.h"
 #include "mhi_fast_gpio_rx_driver.h"
+#include "mhi_frame_queue.h"
 #include "mhi_rx_driver.h"
 #include "mhi_transport_pins.h"
-#include "mhi_tx_contract.h"
 #include "mhi_tx_driver.h"
+#include "mhi_tx_contract.h"
 #include "mhi_worker_policy.h"
 
 #ifdef USE_ESP_IDF
@@ -72,6 +73,7 @@ class MhiTransportManager {
   void loop();
   void shutdown();
 
+  bool read_rx_frame(MhiCapturedFrame& frame);
   std::size_t read_rx(uint8_t* dst, std::size_t max_len);
 
   // Stages an immutable TX envelope. Real-time transmission remains owned by
@@ -118,7 +120,6 @@ class MhiTransportManager {
  private:
   void resolve_drivers();
   void update_duplex_diagnostics_();
-  std::size_t read_rx_raw_(uint8_t* dst, std::size_t max_len);
   void queue_pending_tx_(const MhiTxEnvelope& envelope);
   bool pending_tx_available_() const;
   void clear_pending_tx_();
@@ -180,6 +181,7 @@ class MhiTransportManager {
   uint32_t rmt_spi_frame_gap_us_{1000U};
   uint32_t last_duplex_tx_completed_{0U};
   uint32_t last_duplex_tx_failures_{0U};
+  uint32_t synthetic_rx_sequence_{0U};
 
   MhiDiagnostics* diagnostics_{nullptr};
 };

@@ -23,6 +23,7 @@
 #include "mhi_frame_sync.h"
 #include "mhi_fan_profile.h"
 #include "mhi_opdata_decoder.h"
+#include "mhi_protocol_trace.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_status_decoder.h"
 #include "mhi_tx_builder.h"
@@ -235,6 +236,18 @@ void worker_decoded_store_keeps_command_candidate_separate();
 void worker_decoded_store_merges_distinct_opdata_fields();
 void worker_decoded_store_overwrites_only_repeated_opdata_field();
 void worker_decoded_store_unknown_ring_is_bounded();
+
+void protocol_trace_captures_baseline_tx_and_stable_feedback();
+void protocol_trace_manual_capture_waits_for_a_real_change();
+void protocol_trace_rejects_overlapping_captures_and_is_bounded();
+void protocol_trace_semantic_mapping_preserves_requested_fields();
+void protocol_trace_classifies_confirmation_logic_mismatch();
+void protocol_trace_replays_rx_observed_before_tx_completion();
+void protocol_trace_classifies_staged_command_not_clocked();
+void protocol_trace_distinguishes_missing_completion_from_no_bus_clock();
+void protocol_trace_classifies_on_wire_frame_mismatch();
+void protocol_trace_excludes_same_transaction_mosi_from_ack_timing();
+void protocol_trace_detects_late_confirmation();
 
 void frame_classifier_classifies_status_opdata_and_extended_status();
 void frame_catalog_overwrites_repeated_status_with_latest();

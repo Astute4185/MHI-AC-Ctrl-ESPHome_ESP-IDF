@@ -52,6 +52,18 @@ int main() {
   worker_decoded_store_overwrites_only_repeated_opdata_field();
   worker_decoded_store_unknown_ring_is_bounded();
 
+  protocol_trace_captures_baseline_tx_and_stable_feedback();
+  protocol_trace_manual_capture_waits_for_a_real_change();
+  protocol_trace_rejects_overlapping_captures_and_is_bounded();
+  protocol_trace_semantic_mapping_preserves_requested_fields();
+  protocol_trace_classifies_confirmation_logic_mismatch();
+  protocol_trace_replays_rx_observed_before_tx_completion();
+  protocol_trace_classifies_staged_command_not_clocked();
+  protocol_trace_distinguishes_missing_completion_from_no_bus_clock();
+  protocol_trace_classifies_on_wire_frame_mismatch();
+  protocol_trace_excludes_same_transaction_mosi_from_ack_timing();
+  protocol_trace_detects_late_confirmation();
+
   frame_classifier_classifies_status_opdata_and_extended_status();
   frame_catalog_overwrites_repeated_status_with_latest();
   frame_catalog_keeps_opdata_slots_separate_by_key();

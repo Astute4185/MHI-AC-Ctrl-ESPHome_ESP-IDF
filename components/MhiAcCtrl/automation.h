@@ -85,5 +85,75 @@ class SetExternalRoomTemperatureAction : public Action<Ts...> {
   MhiAcCtrl* parent_;
 };
 
+
+template <typename... Ts>
+class ArmProtocolTraceAction : public Action<Ts...> {
+ public:
+  explicit ArmProtocolTraceAction(MhiAcCtrl* parent) : parent_(parent) {}
+
+  void set_label(const std::string& label) { this->label_ = label; }
+
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 11, 0)
+  void play(const Ts&... x) override
+#else
+  void play(Ts... x) override
+#endif
+  {
+    (void) sizeof...(x);
+    if (this->parent_ != nullptr) {
+      this->parent_->arm_protocol_trace(this->label_);
+    }
+  }
+
+ protected:
+  MhiAcCtrl* parent_;
+  std::string label_{"manual"};
+};
+
+template <typename... Ts>
+class MarkProtocolTraceAction : public Action<Ts...> {
+ public:
+  explicit MarkProtocolTraceAction(MhiAcCtrl* parent) : parent_(parent) {}
+
+  void set_label(const std::string& label) { this->label_ = label; }
+
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 11, 0)
+  void play(const Ts&... x) override
+#else
+  void play(Ts... x) override
+#endif
+  {
+    (void) sizeof...(x);
+    if (this->parent_ != nullptr) {
+      this->parent_->mark_protocol_trace_result(this->label_);
+    }
+  }
+
+ protected:
+  MhiAcCtrl* parent_;
+  std::string label_{};
+};
+
+template <typename... Ts>
+class DumpProtocolTraceAction : public Action<Ts...> {
+ public:
+  explicit DumpProtocolTraceAction(MhiAcCtrl* parent) : parent_(parent) {}
+
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 11, 0)
+  void play(const Ts&... x) override
+#else
+  void play(Ts... x) override
+#endif
+  {
+    (void) sizeof...(x);
+    if (this->parent_ != nullptr) {
+      this->parent_->dump_protocol_trace();
+    }
+  }
+
+ protected:
+  MhiAcCtrl* parent_;
+};
+
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome

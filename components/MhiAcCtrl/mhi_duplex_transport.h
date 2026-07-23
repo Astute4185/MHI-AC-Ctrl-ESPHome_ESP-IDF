@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "mhi_frame_queue.h"
 #include "mhi_transport_pins.h"
 #include "mhi_tx_contract.h"
 
@@ -17,7 +18,11 @@ class IMhiDuplexTransport {
   virtual void loop() = 0;
   virtual void shutdown() {}
 
-  // Reads one completed MOSI frame into dst.
+  // Reads one completed MOSI frame. The metadata identifies the physical bus
+  // transaction and is used only by diagnostics/protocol verification.
+  virtual bool read_captured_frame(MhiCapturedFrame& frame) = 0;
+
+  // Compatibility byte-copy API used by callers that do not need metadata.
   virtual std::size_t read(uint8_t* dst, std::size_t max_len) = 0;
 
   // Stages one MISO frame for the next available bus transaction. A later

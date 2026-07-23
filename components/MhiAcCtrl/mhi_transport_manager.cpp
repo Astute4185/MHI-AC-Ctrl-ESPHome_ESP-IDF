@@ -307,35 +307,52 @@ void MhiTransportManager::shutdown() {
   tx_ready_ = false;
 }
 
-std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
-  const std::size_t len = this->read_rx_raw_(dst, max_len);
+bool MhiTransportManager::read_rx_frame(MhiCapturedFrame& frame) {
+  frame = {};
+  if (!rx_ready_) {
+    return false;
+  }
+
+  bool available = false;
+  if (duplex_ != nullptr) {
+    available = duplex_->read_captured_frame(frame);
+  } else if (rx_ != nullptr) {
+    const std::size_t len = rx_->read(frame.data.data(), frame.data.size());
+    if (len > 0U) {
+      frame.len = len;
+      frame.sequence = ++synthetic_rx_sequence_;
+      frame.frame_end_us = micros();
+      available = true;
+    }
+  }
 
   if (duplex_ == nullptr && auto_tx_flush_) {
     this->flush_tx_on_bus_marker();
   }
 
-  return len;
+  if (available && diagnostics_ != nullptr) {
+    const uint32_t now = millis();
+    diagnostics_->stats().on_rx_chunk(now);
+    diagnostics_->stats().on_rx_bytes(static_cast<uint32_t>(frame.len), now);
+  }
+
+  return available;
 }
 
-std::size_t MhiTransportManager::read_rx_raw_(uint8_t* dst, std::size_t max_len) {
-  if (!rx_ready_ || dst == nullptr || max_len == 0U) {
+std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
+  if (dst == nullptr || max_len == 0U) {
     return 0U;
   }
 
-  std::size_t len = 0U;
-  if (duplex_ != nullptr) {
-    len = duplex_->read(dst, max_len);
-  } else if (rx_ != nullptr) {
-    len = rx_->read(dst, max_len);
+  MhiCapturedFrame frame{};
+  if (!this->read_rx_frame(frame)) {
+    return 0U;
   }
-
-  if (len > 0U && diagnostics_ != nullptr) {
-    const uint32_t now = millis();
-    diagnostics_->stats().on_rx_chunk(now);
-    diagnostics_->stats().on_rx_bytes(static_cast<uint32_t>(len), now);
+  if (frame.len > max_len) {
+    return 0U;
   }
-
-  return len;
+  std::memcpy(dst, frame.data.data(), frame.len);
+  return frame.len;
 }
 
 bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
@@ -371,6 +388,9 @@ bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
       completion.intent = envelope.intent;
       completion.success = false;
       completion.completed_at_ms = millis();
+      completion.completed_at_us = micros();
+      completion.expected_len = static_cast<uint16_t>(envelope.len);
+      completion.actual_len = 0U;
       portENTER_CRITICAL(&tx_mux_);
       const bool stored = tx_completions_.push(completion);
       portEXIT_CRITICAL(&tx_mux_);
@@ -613,6 +633,14 @@ bool MhiTransportManager::flush_pending_tx_on_bus_marker_() {
     completion.intent = envelope.intent;
     completion.success = ok;
     completion.completed_at_ms = millis();
+    completion.completed_at_us = micros();
+    completion.bus_sequence = marker.sequence;
+    completion.frame_end_us = marker.frame_end_us;
+    completion.expected_len = static_cast<uint16_t>(envelope.len);
+    completion.actual_len = ok ? static_cast<uint16_t>(envelope.len) : 0U;
+    if (ok) {
+      completion.set_transmitted_frame(envelope);
+    }
   }
 
   portENTER_CRITICAL(&tx_mux_);

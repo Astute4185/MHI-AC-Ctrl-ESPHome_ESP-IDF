@@ -25,12 +25,13 @@
 #include "mhi_frame_catalog.h"
 #include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
+#include "mhi_protocol_trace.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_state.h"
 #include "mhi_status_decoder.h"
 #include "mhi_transport_manager.h"
-#include "mhi_tx_builder.h"
 #include "mhi_worker_decoded_store.h"
+#include "mhi_tx_builder.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -128,6 +129,50 @@ class MhiAcCtrl : public Component {
       this->command_worker_core_id_ = core_id;
     }
   }
+
+  void set_protocol_trace_enabled(bool enabled) {
+    this->protocol_trace_config_.enabled = enabled;
+  }
+
+  void set_protocol_trace_capture_window_ms(int capture_window_ms) {
+    if (capture_window_ms >= 1000) {
+      this->protocol_trace_config_.capture_window_ms = static_cast<uint32_t>(capture_window_ms);
+    }
+  }
+
+  void set_protocol_trace_post_timeout_grace_ms(int grace_ms) {
+    if (grace_ms >= 250) {
+      this->protocol_trace_config_.post_timeout_grace_ms = static_cast<uint32_t>(grace_ms);
+    }
+  }
+
+  void set_protocol_trace_unchanged_heartbeat_ms(int heartbeat_ms) {
+    if (heartbeat_ms >= 250) {
+      this->protocol_trace_config_.unchanged_heartbeat_ms = static_cast<uint32_t>(heartbeat_ms);
+    }
+  }
+
+  void set_protocol_trace_pre_command_frames(int frames) {
+    if (frames >= 0 && frames <= static_cast<int>(kMhiProtocolTraceMaxPreCommandFrames)) {
+      this->protocol_trace_config_.pre_command_frames = static_cast<uint8_t>(frames);
+    }
+  }
+
+  void set_protocol_trace_post_command_frames(int frames) {
+    if (frames > 0 && frames <= 64) {
+      this->protocol_trace_config_.post_command_frames = static_cast<uint8_t>(frames);
+    }
+  }
+
+  void set_protocol_trace_max_records(int records) {
+    if (records >= 8 && records <= static_cast<int>(kMhiProtocolTraceMaxRecords)) {
+      this->protocol_trace_config_.max_records = static_cast<uint8_t>(records);
+    }
+  }
+
+  bool arm_protocol_trace(const std::string& label);
+  bool mark_protocol_trace_result(const std::string& label);
+  void dump_protocol_trace();
 
   void set_room_temp_api_timeout(int timeout_s) {
     this->room_temp_api_timeout_s_ = timeout_s;
@@ -339,12 +384,13 @@ class MhiAcCtrl : public Component {
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
   bool read_and_sync_rx_frame_();
   bool service_classified_rx_pipeline_();
-  bool ingest_rx_frame_(const MhiFrameBuffer& frame);
+  bool ingest_rx_frame_(const MhiFrameBuffer& frame, uint32_t bus_sequence = 0U,
+                        uint32_t frame_end_us = 0U, uint32_t observed_at_us = 0U);
   bool decode_cataloged_frames_();
   bool decode_cataloged_frames_to_worker_store_();
   bool decode_cataloged_frame_(const MhiCatalogedFrame& cataloged_frame);
   bool decode_cataloged_frame_to_worker_store_(const MhiCatalogedFrame& cataloged_frame,
-                                               bool command_candidate = false);
+                                                 bool command_candidate = false);
   bool apply_worker_decoded_snapshots_();
   bool take_latest_extended_status_(MhiCatalogedFrame& out);
   bool take_latest_status_(MhiCatalogedFrame& out);
@@ -383,6 +429,11 @@ class MhiAcCtrl : public Component {
   void apply_external_room_temperature_(float value);
   void clear_external_room_temperature_();
   void check_external_room_temperature_timeout_();
+  void trace_command_request_(uint32_t command_mask, const MhiCommandState& command, const char* label);
+  uint32_t protocol_trace_pending_mask_() const;
+  void poll_protocol_trace_();
+  void export_protocol_trace_();
+  void log_protocol_trace_record_(std::size_t index, const MhiProtocolTraceRecord& record) const;
 
   static uint32_t elapsed_us_(uint32_t start_us);
   static uint8_t detect_chip_core_count_();
@@ -412,6 +463,9 @@ class MhiAcCtrl : public Component {
   portMUX_TYPE frame_catalog_mux_ = portMUX_INITIALIZER_UNLOCKED;
   MhiWorkerDecodedStore worker_decoded_store_{};
   portMUX_TYPE worker_decoded_store_mux_ = portMUX_INITIALIZER_UNLOCKED;
+  MhiProtocolTraceConfig protocol_trace_config_{};
+  MhiProtocolTraceRecorder protocol_trace_{};
+  portMUX_TYPE protocol_trace_mux_ = portMUX_INITIALIZER_UNLOCKED;
   MhiTransportManager transport_{};
   MhiDiagnostics diagnostics_{};
 

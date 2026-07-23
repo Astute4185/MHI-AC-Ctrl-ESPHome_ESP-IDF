@@ -26,8 +26,35 @@ MhiAcCtrl:
   rmt_spi_frame_gap_us: 1000
   command_worker: true
   command_worker_start_delay_ms: 0
+  protocol_trace:
+    enabled: true
+    capture_window_ms: 30000
+    post_timeout_grace_ms: 5000
+    unchanged_heartbeat_ms: 1000
+    pre_command_frames: 4
+    post_command_frames: 64
+    max_records: 64
 
 climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: MHI Climate
+
+button:
+  - platform: template
+    name: Arm protocol trace
+    on_press:
+      - climate.mhi.protocol_trace_arm:
+          mhi_ac_ctrl_id: mhi_ac
+          label: compile_test
+  - platform: template
+    name: Mark protocol trace
+    on_press:
+      - climate.mhi.protocol_trace_marker:
+          mhi_ac_ctrl_id: mhi_ac
+          label: physical_result
+  - platform: template
+    name: Dump protocol trace
+    on_press:
+      - climate.mhi.protocol_trace_dump:
+          mhi_ac_ctrl_id: mhi_ac
