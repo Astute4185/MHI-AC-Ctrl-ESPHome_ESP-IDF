@@ -22,7 +22,6 @@ if [[ "${SANITIZERS:-0}" == "1" ]]; then
     -fno-sanitize-recover=all
   )
 fi
-
 "${CXX}" \
   -std=c++17 \
   -Wall \
@@ -36,6 +35,7 @@ fi
   tests/unit/test_frame_sync.cpp \
   tests/unit/test_frame_queue.cpp \
   tests/unit/test_duplex_tx_mailbox.cpp \
+  tests/unit/test_rmt_cs_spi_mode.cpp \
   tests/unit/test_command_coordinator.cpp \
   tests/unit/test_worker_policy.cpp \
   tests/unit/test_worker_decoded_store.cpp \
@@ -64,7 +64,6 @@ fi
   components/MhiAcCtrl/mhi_tx_builder.cpp \
   components/MhiAcCtrl/mhi_worker_decoded_store.cpp \
   -o "${BUILD_DIR}/mhi_protocol_tests"
-
 "${BUILD_DIR}/mhi_protocol_tests"
 
 python3 tests/unit/test_driver_selection.py

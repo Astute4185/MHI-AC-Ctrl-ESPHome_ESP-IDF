@@ -1,0 +1,35 @@
+esphome:
+  name: mhi-redux-esp32-rmt-cs-spi-nodma-worker
+  friendly_name: MHI Redux ESP32 RMT-CS SPI Non-DMA Worker Compile Test
+
+esp32:
+  board: m5stack-atom
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+  baud_rate: 0
+
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [MhiAcCtrl]
+
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  # Original M5Stack Atom compile-test pins. Change for real hardware.
+  sck_pin: 22
+  mosi_pin: 19
+  miso_pin: 23
+  rx_driver: rmt_cs_spi_nodma
+  rmt_spi_frame_gap_us: 1000
+  command_worker: true
+  command_worker_start_delay_ms: 0
+
+climate:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    name: MHI Climate

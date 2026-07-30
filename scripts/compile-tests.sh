@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${REPO_ROOT}"
-
 ALL_CONFIGS=(
   "tests/components/MhiAcCtrl/test.esp32-s3-idf.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-frame33.yaml"
@@ -18,15 +17,18 @@ ALL_CONFIGS=(
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-cs-spi.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-cs-spi-frame33.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-cs-spi-command-worker.yaml"
+  "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-cs-spi-nodma.yaml"
   "tests/components/MhiAcCtrl/test.esp32-idf-external-clock-rx.yaml"
   "tests/components/MhiAcCtrl/test.esp32-idf-external-clock-rx-command-worker.yaml"
+  "tests/components/MhiAcCtrl/test.esp32-idf-rmt-cs-spi-nodma-command-worker.yaml"
   "tests/components/MhiAcCtrl/test.esp32-c3-idf.yaml"
 )
-
 SMOKE_CONFIGS=(
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-spi-rx-command-worker.yaml"
   "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-cs-spi-command-worker.yaml"
+  "tests/components/MhiAcCtrl/test.esp32-s3-idf-rmt-cs-spi-nodma.yaml"
   "tests/components/MhiAcCtrl/test.esp32-idf-external-clock-rx-command-worker.yaml"
+  "tests/components/MhiAcCtrl/test.esp32-idf-rmt-cs-spi-nodma-command-worker.yaml"
   "tests/components/MhiAcCtrl/test.esp32-c3-idf.yaml"
 )
 
@@ -37,7 +39,6 @@ validate_configs() {
     echo "Validating ${config}"
     esphome config "${config}" >/dev/null
   done
-
   echo "All ESPHome configurations are valid"
 }
 
