@@ -1,5 +1,5 @@
 esphome:
-  name: mhi-redux-esp32-rmt-cs-spi-nodma-worker
+  name: mhi-esp32-rmt-csspinodmaw
   friendly_name: MHI Redux ESP32 RMT-CS SPI Non-DMA Worker Compile Test
 
 esp32:

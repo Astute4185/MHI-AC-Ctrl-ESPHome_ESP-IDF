@@ -1,5 +1,5 @@
 esphome:
-  name: mhi-redux-s3-rmt-cs-spi-nodma
+  name: mhi-redux-s3-rmt-csspinodma
   friendly_name: MHI Redux S3 RMT-CS SPI Non-DMA Compile Test
 
 esp32:
