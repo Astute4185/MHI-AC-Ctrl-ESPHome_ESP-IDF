@@ -2,6 +2,11 @@
 
 #include "mhi_checksum.h"
 #include "mhi_defs.h"
+#include "mhi_louver_diag.h"
+
+#ifdef USE_ESP32
+#include "esphome/core/log.h"
+#endif
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -13,7 +18,6 @@ struct MhiOpdataRequest {
   uint8_t db9;
   uint32_t mask;
 };
-
 constexpr MhiOpdataRequest kMhiOpdataRequests[] = {
     {0xC0, 0x02, MHI_OPDATA_REQ_MODE},
     {0xC0, 0x05, MHI_OPDATA_REQ_TSETPOINT},
@@ -36,7 +40,6 @@ constexpr MhiOpdataRequest kMhiOpdataRequests[] = {
     {0x40, 0x13, MHI_OPDATA_REQ_OU_EEV1},
     {0xC0, 0x94, MHI_OPDATA_REQ_KWH},
 };
-
 constexpr uint32_t kNoFramesPerOpDataCycle = 400;
 constexpr uint8_t kMinEffectiveOpdataCount = 5;
 
@@ -55,7 +58,6 @@ uint8_t get_enabled_opdata_count(uint32_t mask) {
 
   return count;
 }
-
 const MhiOpdataRequest& get_enabled_opdata(uint32_t mask, uint8_t enabled_index) {
   uint8_t current = 0;
 
@@ -70,7 +72,6 @@ const MhiOpdataRequest& get_enabled_opdata(uint32_t mask, uint8_t enabled_index)
 
   return kMhiOpdataRequests[0];
 }
-
 uint8_t clamp_u8(float value, uint8_t min_value, uint8_t max_value) {
   if (value < static_cast<float>(min_value)) {
     return min_value;
@@ -81,8 +82,56 @@ uint8_t clamp_u8(float value, uint8_t min_value, uint8_t max_value) {
   return static_cast<uint8_t>(value);
 }
 
-}  // namespace
+#ifdef USE_ESP32
+static const char* const TAG_LOUVER_DIAG = "mhi.louver_diag";
+constexpr uint32_t kMhiLouverDiagCommandMask =
+    MHI_COMMAND_VERTICAL_VANE | MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
+unsigned int mhi_u8(uint8_t value) {
+  return static_cast<unsigned int>(value);
+}
+
+void mhi_format_binary(uint8_t value, char (&out)[9]) {
+  for (uint8_t index = 0; index < 8U; index++) {
+    out[index] = (value & static_cast<uint8_t>(1U << (7U - index))) != 0U ? '1' : '0';
+  }
+  out[8] = '\0';
+}
+
+void mhi_log_louver_command(const MhiFrameBuffer& frame, const MhiTxBuildResult& result) {
+  if ((result.encoded_command_mask & kMhiLouverDiagCommandMask) == 0U || frame.len != kMhiFrame33Bytes) {
+    return;
+  }
+
+  const auto snapshot =
+      mhi_decode_louver_diag_snapshot(frame.data[DB0], frame.data[DB1], frame.data[DB16], frame.data[DB17]);
+  char db0_bits[9];
+  char db1_bits[9];
+  char db16_bits[9];
+  char db17_bits[9];
+  mhi_format_binary(snapshot.db0, db0_bits);
+  mhi_format_binary(snapshot.db1, db1_bits);
+  mhi_format_binary(snapshot.db16, db16_bits);
+  mhi_format_binary(snapshot.db17, db17_bits);
+
+  ESP_LOGI(TAG_LOUVER_DIAG, "TX command mask=0x%08x db0=0x%02x(%s) db1=0x%02x(%s) db16=0x%02x(%s) db17=0x%02x(%s)",
+           static_cast<unsigned int>(result.encoded_command_mask), mhi_u8(snapshot.db0), db0_bits, mhi_u8(snapshot.db1),
+           db1_bits, mhi_u8(snapshot.db16), db16_bits, mhi_u8(snapshot.db17), db17_bits);
+  ESP_LOGI(TAG_LOUVER_DIAG,
+           "TX candidates vertical{db0&c0=0x%02x db1&b0=0x%02x raw=0x%02x swing=%s vane=%u} "
+           "horizontal{db16&07=0x%02x db17&01=%u raw=0x%02x swing=%s valid=%s vane=%u} "
+           "3d{db17&04=%u state=%s} db17_command_bits{db17&0a=0x%02x}",
+           mhi_u8(snapshot.vertical_db0_bits), mhi_u8(snapshot.vertical_db1_bits), mhi_u8(snapshot.vertical_raw),
+           snapshot.vertical_swing ? "YES" : "NO", mhi_u8(snapshot.vertical_vane),
+           mhi_u8(snapshot.horizontal_db16_bits), snapshot.horizontal_db17_bit != 0U ? 1U : 0U,
+           mhi_u8(snapshot.horizontal_raw), snapshot.horizontal_swing ? "YES" : "NO",
+           snapshot.horizontal_valid ? "YES" : "NO", mhi_u8(snapshot.horizontal_vane),
+           snapshot.three_d_auto_bit != 0U ? 1U : 0U, snapshot.three_d_auto ? "ON" : "OFF",
+           mhi_u8(snapshot.db17_command_bits));
+}
+#endif
+
+}  // namespace
 bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runtime, const MhiTxBuildConfig& config,
                                     MhiFrameBuffer& out) {
   MhiTxBuildResult ignored{};
@@ -92,7 +141,6 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
 bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runtime, const MhiTxBuildConfig& config,
                                     MhiFrameBuffer& out, MhiTxBuildResult& result) {
   result = {};
-
   if (config.frame_size != kMhiFrame20Bytes && config.frame_size != kMhiFrame33Bytes) {
     return false;
   }
@@ -105,11 +153,13 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
 
   apply_opdata_request(out, runtime, config.enabled_opdata_mask);
   apply_commands(out, command, runtime, config, result);
+#ifdef USE_ESP32
+  mhi_log_louver_command(out, result);
+#endif
   apply_checksums(out);
 
   return true;
 }
-
 void MhiTxBuilder::initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_size) {
   out.clear();
   out.len = frame_size;
@@ -124,7 +174,6 @@ void MhiTxBuilder::initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_
   out.data[DB11] = 0xFFU;
   out.data[DB12] = 0xFFU;
   out.data[DB13] = 0x0FU;
-
   if (frame_size == kMhiFrame33Bytes) {
     out.data[DB23] = 0xFFU;
     out.data[DB24] = 0xFFU;
@@ -135,7 +184,6 @@ void MhiTxBuilder::initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_
 void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, uint32_t enabled_opdata_mask) {
   const uint32_t normalized_mask = normalize_opdata_mask(enabled_opdata_mask);
   const uint8_t enabled_count = get_enabled_opdata_count(normalized_mask);
-
   const uint8_t effective_cycle_count =
       enabled_count == 0U ? kMinEffectiveOpdataCount
                           : (enabled_count < kMinEffectiveOpdataCount ? kMinEffectiveOpdataCount : enabled_count);
@@ -143,7 +191,6 @@ void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runti
   if ((runtime.frame_counter > (kNoFramesPerOpDataCycle / effective_cycle_count)) && runtime.double_frame) {
     runtime.frame_counter = 1U;
   }
-
   if (runtime.frame_counter++ <= 2U) {
     if (runtime.double_frame && runtime.error_opdata_count == 0U) {
       const uint8_t request_index =
@@ -153,7 +200,6 @@ void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runti
 
       out.data[DB6] = request.db6;
       out.data[DB9] = request.db9;
-
       runtime.opdata_index = static_cast<uint8_t>((request_index + 1U) % (enabled_count == 0U ? 1U : enabled_count));
     }
   } else {
@@ -168,7 +214,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
     out.data[DB0] = 0x00U;
     out.data[DB1] = 0x00U;
     out.data[DB2] = 0x00U;
-
     if (runtime.error_opdata_count > 0U) {
       out.data[DB6] = 0x80U;
       out.data[DB9] = 0xFFU;
@@ -182,7 +227,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       result.encoded_command_mask |= MHI_COMMAND_POWER;
       result.intent.mask |= MHI_COMMAND_POWER;
     }
-
     if (command.mode_set) {
       out.data[DB0] |= encode_mode(command.mode);
       result.intent.mode = command.mode;
@@ -190,7 +234,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       result.encoded_command_mask |= MHI_COMMAND_MODE;
       result.intent.mask |= MHI_COMMAND_MODE;
     }
-
     if (command.target_temp_set) {
       out.data[DB2] = encode_target_temp(command.target_temp_c);
       result.intent.target_temp_c = command.target_temp_c;
@@ -198,7 +241,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       result.encoded_command_mask |= MHI_COMMAND_TARGET_TEMP;
       result.intent.mask |= MHI_COMMAND_TARGET_TEMP;
     }
-
     if (command.fan_set) {
       out.data[DB1] = encode_fan(command.fan);
       result.intent.fan = command.fan;
@@ -209,7 +251,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
 
     if (command.vertical_vane_set) {
       result.intent.vertical_vane = command.vertical_vane;
-
       if (command.vertical_vane == 5U) {
         out.data[DB0] |= 0xC0U;
       } else if (command.vertical_vane >= 1U && command.vertical_vane <= 4U) {
@@ -221,7 +262,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       result.encoded_command_mask |= MHI_COMMAND_VERTICAL_VANE;
       result.intent.mask |= MHI_COMMAND_VERTICAL_VANE;
     }
-
     if (command.error_opdata_request) {
       out.data[DB6] = 0x80U;
       out.data[DB9] = 0x45U;
@@ -236,7 +276,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
     command.room_temp_override_set = false;
     result.encoded_command_mask |= MHI_COMMAND_ROOM_TEMP_OVERRIDE;
   }
-
   out.data[DB3] = runtime.room_temp_override_raw;
 
   if (out.len == kMhiFrame33Bytes) {
@@ -245,7 +284,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
 
     const bool use_preserved_louver =
         command.three_d_auto_set && !command.horizontal_vane_set && config.has_extended_louver_state;
-
     if (use_preserved_louver) {
       out.data[DB16] = config.extended_louver_db16;
       out.data[DB17] = config.extended_louver_db17;
@@ -257,7 +295,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
     if (command.horizontal_vane_set) {
       result.intent.horizontal_vane = command.horizontal_vane;
       result.intent.has_extended_louver_context = true;
-
       if (command.horizontal_vane == 8U) {
         // Horizontal swing is a composite extended-louver state. DB16 may be
         // returned by the AC with the previous/live position, so DB17 carries
@@ -267,7 +304,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
         out.data[DB16] = static_cast<uint8_t>(0x10U | (command.horizontal_vane - 1U));
         out.data[DB17] = 0x0AU;
       }
-
       command.horizontal_vane_set = false;
       result.encoded_command_mask |= MHI_COMMAND_HORIZONTAL_VANE;
       result.intent.mask |= MHI_COMMAND_HORIZONTAL_VANE;
@@ -279,13 +315,11 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       }
 
       out.data[DB17] = static_cast<uint8_t>((out.data[DB17] & ~0x04U) | (command.three_d_auto ? 0x04U : 0x00U));
-
       // Louver command-indicator bits (0x08 | 0x02) must be asserted for the
       // AC to accept the write. The previous conditional skipped this when
       // bit 0x01 was carried over from the preserved louver state, leaving
       // DB17 as 0x05 which the AC treats as a status echo, not a command.
       out.data[DB17] |= 0x0AU;
-
       result.intent.three_d_auto = command.three_d_auto;
       command.three_d_auto_set = false;
       result.encoded_command_mask |= MHI_COMMAND_THREE_D_AUTO;
@@ -296,7 +330,6 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       command.horizontal_vane_set = false;
       result.unsupported_command_mask |= MHI_COMMAND_HORIZONTAL_VANE;
     }
-
     if (command.three_d_auto_set) {
       command.three_d_auto_set = false;
       result.unsupported_command_mask |= MHI_COMMAND_THREE_D_AUTO;
@@ -308,7 +341,6 @@ void MhiTxBuilder::apply_checksums(MhiFrameBuffer& out) {
   uint16_t checksum = mhi_calc_checksum(out.data);
   out.data[CBH] = static_cast<uint8_t>((checksum >> 8U) & 0xFFU);
   out.data[CBL] = static_cast<uint8_t>(checksum & 0xFFU);
-
   if (out.len == kMhiFrame33Bytes) {
     checksum = mhi_calc_checksum_frame33(out.data);
     out.data[CBL2] = static_cast<uint8_t>(checksum & 0xFFU);
@@ -320,7 +352,6 @@ uint8_t MhiTxBuilder::encode_mode(uint8_t mode) {
   // 0=Auto, 1=Dry, 2=Cool, 3=Fan, 4=Heat.
   return static_cast<uint8_t>(0x20U | ((mode & 0x07U) << 2U));
 }
-
 uint8_t MhiTxBuilder::encode_fan(uint8_t fan) {
   // Preserve legacy fan command shape:
   // DB1[3] is the set bit, lower bits carry the old fan code.
@@ -332,6 +363,5 @@ uint8_t MhiTxBuilder::encode_target_temp(float target_temp_c) {
   const uint8_t half_degrees = clamp_u8((target_temp_c * 2.0f) + 0.5f, 0U, 0x7FU);
   return static_cast<uint8_t>(0x80U | half_degrees);
 }
-
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
