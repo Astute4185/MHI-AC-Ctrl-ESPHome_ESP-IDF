@@ -2,6 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import sensor
+from esphome.components.esp32 import include_builtin_idf_component
 from esphome.const import CONF_ID
 
 from .driver_selection import (
@@ -33,7 +34,6 @@ CONF_COMMAND_WORKER_STACK_SIZE = "command_worker_stack_size"
 CONF_COMMAND_WORKER_PRIORITY = "command_worker_priority"
 CONF_COMMAND_WORKER_CORE_ID = "command_worker_core_id"
 
-
 DEFAULT_TX_BACKGROUND_INTERVAL_MS = 250
 
 CONF_VANES_POSITION = "position"
@@ -46,7 +46,6 @@ AUTO_LOAD = ["binary_sensor", "select", "sensor", "switch", "text_sensor"]
 mhi_ns = cg.esphome_ns.namespace("mhi_ac_ctrl")
 MhiAcCtrl = mhi_ns.class_("MhiAcCtrl", cg.Component)
 
-
 SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Action)
 SetHorizontalVanesAction = mhi_ns.class_("SetHorizontalVanesAction", automation.Action)
 SetExternalRoomTemperatureAction = mhi_ns.class_("SetExternalRoomTemperatureAction", automation.Action)
@@ -54,7 +53,6 @@ SetExternalRoomTemperatureAction = mhi_ns.class_("SetExternalRoomTemperatureActi
 
 def _validate_transport_configuration(config):
     explicit_tx_driver = config.get(CONF_TX_DRIVER)
-
     try:
         resolve_tx_driver(config[CONF_RX_DRIVER], explicit_tx_driver)
     except DriverSelectionError as err:
@@ -99,9 +97,10 @@ def _default_tx_background_interval_ms(config):
 
 
 async def to_code(config):
+    include_builtin_idf_component("esp_driver_rmt")
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-
     cg.add(var.set_frame_size(config[CONF_FRAME_SIZE]))
     cg.add(var.set_room_temp_api_timeout(config[CONF_ROOM_TEMP_TIMEOUT]))
     cg.add(var.set_room_temperature_publish_interval_ms(config[CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL]))
