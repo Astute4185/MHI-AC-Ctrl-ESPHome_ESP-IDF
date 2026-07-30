@@ -427,6 +427,26 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
     return false;
   }
   spi_initialized_ = true;
+
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  if (mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(current_target(), config_.buffer_mode)) {
+    // ESP-IDF configures original-ESP32 slave mode 3 with ck_idle_edge=0 and
+    // ck_i_edge=0 for both DMA and CPU-FIFO transfers. On the FIFO path this
+    // samples MOSI on the falling launch edge, which is also when the MHI
+    // master changes data. Override the two clock-edge fields before the first
+    // transaction is queued so MOSI is sampled on the rising latch edge.
+    spi_dev_t* const hw = spi_periph_signal[host_].hw;
+    if (hw == nullptr) {
+      ESP_LOGE(TAG, "Unable to access SPI%u registers for FIFO mode-3 edge correction",
+               static_cast<unsigned int>(host_ + 1));
+      return false;
+    }
+    hw->pin.ck_idle_edge = 1;
+    hw->user.ck_i_edge = 1;
+    ESP_LOGW(TAG, "Applied original ESP32 FIFO mode-3 edge correction");
+  }
+#endif
+
   this->connect_internal_cs_(true);
   return true;
 }

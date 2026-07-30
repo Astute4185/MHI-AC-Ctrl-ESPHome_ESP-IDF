@@ -28,6 +28,13 @@ constexpr bool mhi_rmt_cs_spi_mode_supported(MhiRmtCsSpiTarget target, MhiRmtCsS
   return target == MhiRmtCsSpiTarget::ESP32 || target == MhiRmtCsSpiTarget::ESP32_S3;
 }
 
+// The original ESP32 GP-SPI slave peripheral needs a mode-3 receive-edge
+// override when the CPU FIFO path is used. ESP32-S3 and DMA-backed transports
+// retain the ESP-IDF-provided mode configuration.
+constexpr bool mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(MhiRmtCsSpiTarget target, MhiRmtCsSpiBufferMode mode) {
+  return target == MhiRmtCsSpiTarget::ESP32 && mode == MhiRmtCsSpiBufferMode::FIFO;
+}
+
 constexpr const char* mhi_rmt_cs_spi_driver_name(MhiRmtCsSpiBufferMode mode) {
   return mode == MhiRmtCsSpiBufferMode::DMA ? "rmt_cs_spi" : "rmt_cs_spi_nodma";
 }

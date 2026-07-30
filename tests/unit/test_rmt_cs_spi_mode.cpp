@@ -14,6 +14,15 @@ void rmt_cs_spi_mode_supports_fifo_on_esp32_and_s3() {
   EXPECT_TRUE(mhi_rmt_cs_spi_mode_supported(MhiRmtCsSpiTarget::ESP32_S3, MhiRmtCsSpiBufferMode::FIFO));
   EXPECT_FALSE(mhi_rmt_cs_spi_mode_supported(MhiRmtCsSpiTarget::UNSUPPORTED, MhiRmtCsSpiBufferMode::FIFO));
   EXPECT_FALSE(mhi_rmt_cs_spi_uses_dma(MhiRmtCsSpiBufferMode::FIFO));
+
+  EXPECT_TRUE(
+      mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(MhiRmtCsSpiTarget::ESP32, MhiRmtCsSpiBufferMode::FIFO));
+  EXPECT_FALSE(
+      mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(MhiRmtCsSpiTarget::ESP32_S3, MhiRmtCsSpiBufferMode::FIFO));
+  EXPECT_FALSE(
+      mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(MhiRmtCsSpiTarget::ESP32, MhiRmtCsSpiBufferMode::DMA));
+  EXPECT_FALSE(mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(MhiRmtCsSpiTarget::UNSUPPORTED,
+                                                        MhiRmtCsSpiBufferMode::FIFO));
 }
 
 void rmt_cs_spi_mode_exposes_distinct_driver_names() {
