@@ -106,10 +106,9 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
            "buffer=%s transfer=%u bytes "
            "frame=%u frame_gap=%luus task_core=%d task_priority=%lu task_stack=%lu",
            this->name(), pins_.sck, pins_.mosi, pins_.miso, mhi_rmt_cs_spi_buffer_mode_name(config_.buffer_mode),
-           static_cast<unsigned int>(kTransferBytes),
-           static_cast<unsigned int>(config_.frame_size_hint), static_cast<unsigned long>(config_.frame_gap_us),
-           config_.task_core_id, static_cast<unsigned long>(config_.task_priority),
-           static_cast<unsigned long>(config_.task_stack_size));
+           static_cast<unsigned int>(kTransferBytes), static_cast<unsigned int>(config_.frame_size_hint),
+           static_cast<unsigned long>(config_.frame_gap_us), config_.task_core_id,
+           static_cast<unsigned long>(config_.task_priority), static_cast<unsigned long>(config_.task_stack_size));
   return true;
 #endif
 }
@@ -388,9 +387,8 @@ void MhiRmtCsSpiTransport::task_entry_(void* arg) {
   vTaskDelete(nullptr);
 }
 bool MhiRmtCsSpiTransport::allocate_transaction_buffers_() {
-  const uint32_t capabilities = mhi_rmt_cs_spi_uses_dma(config_.buffer_mode)
-                                    ? MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL
-                                    : MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  const uint32_t capabilities = mhi_rmt_cs_spi_uses_dma(config_.buffer_mode) ? MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL
+                                                                             : MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   for (auto& slot : transaction_slots_) {
     slot.rx_buffer = static_cast<uint8_t*>(heap_caps_calloc(kTransferBytes, sizeof(uint8_t), capabilities));
     slot.tx_buffer = static_cast<uint8_t*>(heap_caps_calloc(kTransferBytes, sizeof(uint8_t), capabilities));
@@ -422,8 +420,7 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
   slave_config.queue_size = static_cast<int>(kTransactionQueueDepth);
   slave_config.mode = 3;
 
-  const spi_dma_chan_t dma_channel =
-      mhi_rmt_cs_spi_uses_dma(config_.buffer_mode) ? SPI_DMA_CH_AUTO : SPI_DMA_DISABLED;
+  const spi_dma_chan_t dma_channel = mhi_rmt_cs_spi_uses_dma(config_.buffer_mode) ? SPI_DMA_CH_AUTO : SPI_DMA_DISABLED;
   const esp_err_t result = spi_slave_initialize(host_, &bus_config, &slave_config, dma_channel);
   if (result != ESP_OK) {
     ESP_LOGE(TAG, "spi_slave_initialize failed: %s", esp_err_to_name(result));

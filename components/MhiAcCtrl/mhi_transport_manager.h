@@ -111,6 +111,7 @@ class MhiTransportManager {
   bool tx_ready() const {
     return tx_ready_;
   }
+
  private:
   void resolve_drivers();
   void update_duplex_diagnostics_();
