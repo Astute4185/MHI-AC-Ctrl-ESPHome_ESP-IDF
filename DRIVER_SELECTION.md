@@ -13,7 +13,8 @@ For split backends, the component automatically selects the normal TX driver. `t
 | `fast_gpio_rx` | `fast_gpio_tx` | Split RX/TX | **Stable** |
 | `external_clock_rx` | `fast_gpio_tx` | Split RX/TX | **Stable** |
 | `rmt_spi_rx` | `fast_gpio_tx` | Split RX/TX | **Stable** |
-| `rmt_cs_spi` | Integrated `rmt_cs_spi` TX | Shared full-duplex transport | **In testing** |
+| `rmt_cs_spi` | Integrated `rmt_cs_spi` TX | DMA-backed shared full-duplex transport | **In testing** |
+| `rmt_cs_spi_nodma` | Integrated `rmt_cs_spi_nodma` TX | FIFO-backed shared full-duplex transport | **In testing** |
 
 The default configuration is equivalent to:
 
@@ -58,25 +59,35 @@ Use `tx_driver: none` only when validating receive behaviour without controlling
 
 ### Full-duplex selection
 
+DMA-backed ESP32-S3 reference:
+
 ```yaml
 rx_driver: rmt_cs_spi
 ```
 
-`rmt_cs_spi` owns RMT, SPI2, SCK, MOSI, MISO, RX buffers, TX buffers, and the SPI owner task. It therefore rejects a separate TX override.
-
-Invalid:
+Cross-chip FIFO-backed test path:
 
 ```yaml
-rx_driver: rmt_cs_spi
+rx_driver: rmt_cs_spi_nodma
+```
+
+Both selections own RMT, SPI2, SCK, MOSI, MISO, RX buffers, TX buffers, and the SPI owner task. They therefore reject a separate TX override. No physical CS pin or additional CS YAML setting is required; the transport derives the transaction boundary from the RMT-detected clock gap and routes an internal CS state into the SPI peripheral.
+
+Invalid for either full-duplex selection:
+
+```yaml
+rx_driver: rmt_cs_spi_nodma
 tx_driver: fast_gpio_tx
 ```
 
 Also invalid:
 
 ```yaml
-rx_driver: rmt_cs_spi
+rx_driver: rmt_cs_spi_nodma
 tx_driver: none
 ```
+
+Use `rmt_cs_spi` only as the existing DMA-backed ESP32-S3 reference while comparison testing continues. Use `rmt_cs_spi_nodma` when testing the same architecture without DMA on either the original dual-core ESP32 or ESP32-S3.
 
 ### Command-worker compatibility
 
@@ -92,7 +103,7 @@ is the synchronous fallback, while:
 command_worker: true
 ```
 
-enables the first-stage event-driven command coordinator. For split drivers, completion is reported after `fast_gpio_tx` returns. For `rmt_cs_spi`, completion is reported after the SPI owner task receives the completed transaction result.
+enables the first-stage event-driven command coordinator. For split drivers, completion is reported after `fast_gpio_tx` returns. For either full-duplex RMT/CS/SPI selection, completion is reported after the SPI owner task receives the completed transaction result.
 
 The command worker does not drive MISO, wait on SCK edges, or own SPI. Classified RX processing will be added to this same worker later. The legacy `rx_worker` and `tx_worker` settings have been removed.
 
@@ -171,29 +182,68 @@ command_worker: false
 
 ### `rmt_cs_spi`
 
-ESP32-S3 full-duplex backend using RMT-derived internal chip select and a mode-3, LSB-first SPI slave transaction for simultaneous RX and TX.
+ESP32-S3 full-duplex reference backend using RMT-derived internal chip select and a mode-3, LSB-first SPI slave transaction with DMA.
 
 Strengths:
 
 - Hardware owns bit-level RX and TX timing.
 - Removes FastGPIO TX from the normal transaction path.
-- Uses DMA-aligned buffers for 20-byte and 33-byte frames.
-- Initial hardware results show clean frame capture, clean TX completion, command operation, and low buffering pressure.
+- Completed an approximately 32-hour classified-worker soak with clean transport health on ESP32-S3.
+- Provides the current comparison baseline for the FIFO-backed implementation.
 
 Trade-offs:
 
-- Experimental and currently under long-duration soak testing.
 - ESP32-S3 and ESP-IDF only.
+- DMA adds alignment, buffer-management, and chip-specific CS/reset behaviour that is not required by the MHI frame sizes.
 - Owns the complete bus transport and cannot be mixed with another TX driver.
-- The new command worker is optional and does not change SPI ownership or bus timing.
+- Retained as a reference during non-DMA validation rather than the preferred long-term design.
 
 Configuration:
 
 ```yaml
 rx_driver: rmt_cs_spi
 rmt_spi_frame_gap_us: 1000
-command_worker: false
+command_worker: true
 ```
+
+### `rmt_cs_spi_nodma`
+
+Full-duplex backend using the same RMT-derived transaction boundary and SPI slave state machine as `rmt_cs_spi`, but using the SPI FIFO with DMA disabled. It is available on the original dual-core ESP32 and ESP32-S3.
+
+Strengths:
+
+- One transport design can be tested on both ESP32 and ESP32-S3.
+- 20-byte and 33-byte MHI frames fit within the non-DMA SPI slave transaction capacity.
+- Avoids DMA alignment restrictions and original-ESP32 DMA CS/reset workarounds.
+- Initial original-ESP32 hardware testing produced 1,199 valid 33-byte frames with zero checksum failures, signature misses, synchronisation losses, dropped bytes, or TX failures. Exercised commands confirmed without timeouts or retries.
+- Loop and worker headroom remained substantial during the initial test.
+
+Trade-offs:
+
+- Still **In testing** pending the 24-hour original-ESP32 and ESP32-S3 soak.
+- The original ESP32 requires a driver-local mode-3 input-edge correction after SPI initialisation. Without that correction, transactions completed at the correct length but MOSI data was sampled incorrectly.
+- Owns the complete bus transport and cannot be mixed with another TX driver.
+
+Configuration:
+
+```yaml
+rx_driver: rmt_cs_spi_nodma
+rmt_spi_frame_gap_us: 1000
+command_worker: true
+```
+
+Do not add `tx_driver` and do not add a physical CS pin. Use the existing SCK, MOSI, and MISO configuration.
+
+### DMA versus FIFO position
+
+The MHI protocol uses 20-byte or 33-byte frames. The transport rounds the maximum buffer to 36 bytes, which remains below the SPI slave FIFO transaction limit. DMA therefore does not provide a functional requirement for frame capacity.
+
+Current engineering position:
+
+- Keep `rmt_cs_spi` as the DMA-backed ESP32-S3 reference until comparison testing completes.
+- Treat `rmt_cs_spi_nodma` as the replacement candidate on both original ESP32 and ESP32-S3.
+- Judge the two paths by protocol health, command confirmation, invalid transaction lengths, transport queue pressure, and loop timing rather than by DMA use itself.
+- If the non-DMA path completes the cross-chip soak cleanly, consolidate onto one supported FIFO-backed driver and retain the DMA path only as a temporary rollback option.
 
 ### `fast_gpio_tx`
 
@@ -223,8 +273,8 @@ Keep one consolidated row per ESP chip version. Add boards or modules to the `Va
 
 | ESP chip | Validated hardware | Recommended RX selection | Effective TX | Maturity | Technical position |
 |---|---|---|---|---|---|
-| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` | `fast_gpio_tx` | **Stable** | Current running non-S3 configuration. `fast_gpio_rx` remains the conservative fallback. |
-| ESP32-S3 | Current ESP32-S3 test unit; board/module model still to be recorded | `rmt_spi_rx`; `rmt_cs_spi` for active testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | Strongest runtime coverage. The split path has completed extended soak testing; the duplex path is in soak testing. |
+| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` for stable use; `rmt_cs_spi_nodma` for active testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi_nodma` | **Stable** for `external_clock_rx`; **In testing** for `rmt_cs_spi_nodma` | Initial non-DMA 33-byte RX/TX and command testing passed. A 24-hour soak is underway. `fast_gpio_rx` remains the conservative fallback. |
+| ESP32-S3 | Current ESP32-S3 test unit; board/module model still to be recorded | `rmt_spi_rx` for stable use; `rmt_cs_spi` and `rmt_cs_spi_nodma` for active comparison | `fast_gpio_tx`; integrated TX for both full-duplex drivers | **Stable** for `rmt_spi_rx`; **In testing** for both full-duplex drivers | The DMA path completed extended soak testing. The FIFO path is undergoing the same cross-chip 24-hour validation. |
 | ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` | `fast_gpio_tx` | **In development** | Compile coverage only. Single-core runtime reliability has not been established. |
 
 Do not infer compatibility from the general ESP32 family name. GPIO registers, core count, RMT revisions, SPI routing, DMA behaviour, and available peripherals differ by target.
@@ -313,7 +363,7 @@ Judge the command-worker path by functional outcomes:
 - Transport overwrite, queue, and drop counters remain clean.
 - `command_worker: false` remains a reliable fallback.
 
-The staged rollout and classified-RX integration are documented in [`COMMAND_WORKER_V2_PLAN.md`](COMMAND_WORKER_V2_PLAN.md). When `command_worker: true`, queue-backed RX drivers (`external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`) are drained and classified by that worker; `fast_gpio_rx` remains in the main loop.
+The staged rollout and classified-RX integration are documented in [`COMMAND_WORKER_V2_PLAN.md`](COMMAND_WORKER_V2_PLAN.md). When `command_worker: true`, queue-backed RX drivers (`external_clock_rx`, `rmt_spi_rx`, `rmt_cs_spi`, and `rmt_cs_spi_nodma`) are drained and classified by that worker; `fast_gpio_rx` remains in the main loop.
 
 ## Diagnostics
 
@@ -322,7 +372,7 @@ Runtime counters and health interpretation are documented separately in [`DIAGNO
 Use that guide for:
 
 - Common protocol-health counters
-- `rmt_spi_rx` and `rmt_cs_spi` transport counters
+- `rmt_spi_rx`, `rmt_cs_spi`, and `rmt_cs_spi_nodma` transport counters
 - Command-confirmation and opdata checks
 - Loop and command-worker measurements
 - Soak-test evidence and troubleshooting
@@ -364,6 +414,5 @@ known failures or limitations
 A hardware/driver combination should not be promoted from **In development** to **In testing** without clean runtime logs and successful command operation. Promotion to **Stable** requires extended runtime evidence and no planned material transport changes.
 
 ## Related findings
-
 - [`notes/FINDINGS_RMT_SPI_RX.md`](notes/FINDINGS_RMT_SPI_RX.md)
 - [`notes/FINDINGS_fastGpio&ExternalClock.md`](notes/FINDINGS_fastGpio&ExternalClock.md)
