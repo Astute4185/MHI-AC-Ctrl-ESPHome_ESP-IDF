@@ -47,7 +47,7 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
 #else
   this->cleanup_();
 
-  if (!mhi_rmt_cs_spi_mode_supported(current_target(), config_.buffer_mode)) {
+  if (!mhi_rmt_cs_spi_target_supported(current_target())) {
     ESP_LOGE(TAG, "%s is not supported on this ESP target", this->name());
     return false;
   }
@@ -103,12 +103,12 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
   ready_ = true;
   ESP_LOGW(TAG,
            "RMT-CS SPI duplex enabled: driver=%s host=SPI2 SCK=%d MOSI=%d MISO=%d mode=3 LSB-first "
-           "buffer=%s transfer=%u bytes "
+           "buffer=FIFO transfer=%u bytes "
            "frame=%u frame_gap=%luus task_core=%d task_priority=%lu task_stack=%lu",
-           this->name(), pins_.sck, pins_.mosi, pins_.miso, mhi_rmt_cs_spi_buffer_mode_name(config_.buffer_mode),
-           static_cast<unsigned int>(kTransferBytes), static_cast<unsigned int>(config_.frame_size_hint),
-           static_cast<unsigned long>(config_.frame_gap_us), config_.task_core_id,
-           static_cast<unsigned long>(config_.task_priority), static_cast<unsigned long>(config_.task_stack_size));
+           this->name(), pins_.sck, pins_.mosi, pins_.miso, static_cast<unsigned int>(kTransferBytes),
+           static_cast<unsigned int>(config_.frame_size_hint), static_cast<unsigned long>(config_.frame_gap_us),
+           config_.task_core_id, static_cast<unsigned long>(config_.task_priority),
+           static_cast<unsigned long>(config_.task_stack_size));
   return true;
 #endif
 }
@@ -387,14 +387,12 @@ void MhiRmtCsSpiTransport::task_entry_(void* arg) {
   vTaskDelete(nullptr);
 }
 bool MhiRmtCsSpiTransport::allocate_transaction_buffers_() {
-  const uint32_t capabilities = mhi_rmt_cs_spi_uses_dma(config_.buffer_mode) ? MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL
-                                                                             : MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  constexpr uint32_t capabilities = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   for (auto& slot : transaction_slots_) {
     slot.rx_buffer = static_cast<uint8_t*>(heap_caps_calloc(kTransferBytes, sizeof(uint8_t), capabilities));
     slot.tx_buffer = static_cast<uint8_t*>(heap_caps_calloc(kTransferBytes, sizeof(uint8_t), capabilities));
     if (slot.rx_buffer == nullptr || slot.tx_buffer == nullptr) {
-      ESP_LOGE(TAG, "Failed to allocate %u-byte %s transaction buffers", static_cast<unsigned int>(kTransferBytes),
-               mhi_rmt_cs_spi_buffer_mode_name(config_.buffer_mode));
+      ESP_LOGE(TAG, "Failed to allocate %u-byte FIFO transaction buffers", static_cast<unsigned int>(kTransferBytes));
       return false;
     }
   }
@@ -420,8 +418,7 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
   slave_config.queue_size = static_cast<int>(kTransactionQueueDepth);
   slave_config.mode = 3;
 
-  const spi_dma_chan_t dma_channel = mhi_rmt_cs_spi_uses_dma(config_.buffer_mode) ? SPI_DMA_CH_AUTO : SPI_DMA_DISABLED;
-  const esp_err_t result = spi_slave_initialize(host_, &bus_config, &slave_config, dma_channel);
+  const esp_err_t result = spi_slave_initialize(host_, &bus_config, &slave_config, SPI_DMA_DISABLED);
   if (result != ESP_OK) {
     ESP_LOGE(TAG, "spi_slave_initialize failed: %s", esp_err_to_name(result));
     return false;
@@ -429,12 +426,12 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
   spi_initialized_ = true;
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
-  if (mhi_rmt_cs_spi_needs_fifo_mode3_edge_fix(current_target(), config_.buffer_mode)) {
+  if (mhi_rmt_cs_spi_needs_mode3_edge_fix(current_target())) {
     // ESP-IDF configures original-ESP32 slave mode 3 with ck_idle_edge=0 and
-    // ck_i_edge=0 for both DMA and CPU-FIFO transfers. On the FIFO path this
-    // samples MOSI on the falling launch edge, which is also when the MHI
-    // master changes data. Override the two clock-edge fields before the first
-    // transaction is queued so MOSI is sampled on the rising latch edge.
+    // ck_i_edge=0 for CPU-FIFO transfers. This samples MOSI on the falling
+    // launch edge, which is also when the MHI master changes data. Override
+    // the two clock-edge fields before the first transaction is queued so MOSI
+    // is sampled on the rising latch edge.
     spi_dev_t* const hw = spi_periph_signal[host_].hw;
     if (hw == nullptr) {
       ESP_LOGE(TAG, "Unable to access SPI%u registers for FIFO mode-3 edge correction",

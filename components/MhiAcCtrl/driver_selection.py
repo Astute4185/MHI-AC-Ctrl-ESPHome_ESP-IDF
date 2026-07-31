@@ -5,7 +5,6 @@ RX_DRIVERS = (
     "external_clock_rx",
     "rmt_spi_rx",
     "rmt_cs_spi",
-    "rmt_cs_spi_nodma",
 )
 
 TX_DRIVERS = (
@@ -13,7 +12,7 @@ TX_DRIVERS = (
     "none",
 )
 
-DUPLEX_RX_DRIVERS = frozenset({"rmt_cs_spi", "rmt_cs_spi_nodma"})
+DUPLEX_RX_DRIVERS = frozenset({"rmt_cs_spi"})
 
 DEFAULT_TX_BY_RX = {
     "fast_gpio_rx": "fast_gpio_tx",

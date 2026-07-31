@@ -27,7 +27,7 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   pins_.mosi = mosi_pin;
   pins_.miso = miso_pin;
   rx_driver_name_ = rx_driver.empty() ? "fast_gpio_rx" : rx_driver;
-  const bool integrated_duplex = rx_driver_name_ == "rmt_cs_spi" || rx_driver_name_ == "rmt_cs_spi_nodma";
+  const bool integrated_duplex = rx_driver_name_ == "rmt_cs_spi";
   transport_driver_name_ = integrated_duplex ? rx_driver_name_ : "split";
   tx_driver_name_ = tx_driver.empty() ? (integrated_duplex ? rx_driver_name_ : "fast_gpio_tx") : tx_driver;
 
@@ -58,15 +58,7 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   MhiRmtCsSpiConfig rmt_cs_spi_config{};
   rmt_cs_spi_config.frame_size_hint = frame_size_hint;
   rmt_cs_spi_config.frame_gap_us = rmt_spi_frame_gap_us_;
-  rmt_cs_spi_config.buffer_mode = MhiRmtCsSpiBufferMode::DMA;
   rmt_cs_spi_.set_config(rmt_cs_spi_config);
-#endif
-#if MHI_ENABLE_RMT_CS_SPI_NODMA_TRANSPORT
-  MhiRmtCsSpiConfig rmt_cs_spi_nodma_config{};
-  rmt_cs_spi_nodma_config.frame_size_hint = frame_size_hint;
-  rmt_cs_spi_nodma_config.frame_gap_us = rmt_spi_frame_gap_us_;
-  rmt_cs_spi_nodma_config.buffer_mode = MhiRmtCsSpiBufferMode::FIFO;
-  rmt_cs_spi_nodma_.set_config(rmt_cs_spi_nodma_config);
 #endif
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxConfig external_clock_rx_config{};
@@ -97,23 +89,6 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
 }
 void MhiTransportManager::resolve_drivers() {
   duplex_ = nullptr;
-  if (rx_driver_name_ == "rmt_cs_spi_nodma") {
-#if MHI_ENABLE_RMT_CS_SPI_NODMA_TRANSPORT
-    transport_driver_name_ = "rmt_cs_spi_nodma";
-    tx_driver_name_ = "rmt_cs_spi_nodma";
-    duplex_ = &rmt_cs_spi_nodma_;
-    rx_ = nullptr;
-    tx_ = nullptr;
-    return;
-#else
-    ESP_LOGW(TAG,
-             "rmt_cs_spi_nodma is only built for ESP-IDF on ESP32 and ESP32-S3; falling back to split FastGPIO "
-             "transport");
-    transport_driver_name_ = "split";
-    rx_driver_name_ = "fast_gpio_rx";
-    tx_driver_name_ = "fast_gpio_tx";
-#endif
-  }
   if (rx_driver_name_ == "rmt_cs_spi") {
 #if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
     transport_driver_name_ = "rmt_cs_spi";
@@ -123,7 +98,9 @@ void MhiTransportManager::resolve_drivers() {
     tx_ = nullptr;
     return;
 #else
-    ESP_LOGW(TAG, "rmt_cs_spi is only built for ESP32-S3; falling back to split FastGPIO transport");
+    ESP_LOGW(TAG,
+             "rmt_cs_spi is only built for ESP-IDF on ESP32 and ESP32-S3; falling back to split "
+             "FastGPIO transport");
     transport_driver_name_ = "split";
     rx_driver_name_ = "fast_gpio_rx";
     tx_driver_name_ = "fast_gpio_tx";

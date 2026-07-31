@@ -13,6 +13,7 @@ from driver_selection import DriverSelectionError, resolve_tx_driver  # noqa: E4
 class DriverSelectionTests(unittest.TestCase):
     def test_fast_gpio_rx_defaults_to_fast_gpio_tx(self):
         self.assertEqual(resolve_tx_driver("fast_gpio_rx"), "fast_gpio_tx")
+
     def test_external_clock_rx_defaults_to_fast_gpio_tx(self):
         self.assertEqual(resolve_tx_driver("external_clock_rx"), "fast_gpio_tx")
 
@@ -28,13 +29,6 @@ class DriverSelectionTests(unittest.TestCase):
     def test_rmt_cs_spi_rejects_tx_override(self):
         with self.assertRaisesRegex(DriverSelectionError, "remove the tx_driver override"):
             resolve_tx_driver("rmt_cs_spi", "fast_gpio_tx")
-
-    def test_rmt_cs_spi_nodma_owns_both_directions(self):
-        self.assertEqual(resolve_tx_driver("rmt_cs_spi_nodma"), "rmt_cs_spi_nodma")
-
-    def test_rmt_cs_spi_nodma_rejects_tx_override(self):
-        with self.assertRaisesRegex(DriverSelectionError, "remove the tx_driver override"):
-            resolve_tx_driver("rmt_cs_spi_nodma", "fast_gpio_tx")
 
     def test_unknown_rx_has_no_implicit_tx(self):
         with self.assertRaisesRegex(DriverSelectionError, "No default TX driver"):

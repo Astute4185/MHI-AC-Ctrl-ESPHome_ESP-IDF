@@ -35,7 +35,6 @@ namespace mhi_ac_ctrl {
 struct MhiRmtCsSpiConfig {
   uint8_t frame_size_hint{20U};
   uint32_t frame_gap_us{1000U};
-  MhiRmtCsSpiBufferMode buffer_mode{MhiRmtCsSpiBufferMode::DMA};
   uint32_t task_stack_size{4096U};
   uint32_t task_priority{5U};
   int task_core_id{1};
@@ -61,7 +60,7 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   bool take_tx_completion(MhiTxCompletion& completion) override;
 
   const char* name() const override {
-    return mhi_rmt_cs_spi_driver_name(config_.buffer_mode);
+    return mhi_rmt_cs_spi_driver_name();
   }
   bool ready() const override {
     return ready_.load(std::memory_order_acquire);

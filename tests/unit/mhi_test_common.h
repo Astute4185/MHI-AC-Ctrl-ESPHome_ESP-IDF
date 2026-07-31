@@ -306,8 +306,8 @@ void tx_builder_encodes_quiet_fan_code_zero();
 void command_confirmation_confirms_quiet_fan_code_zero();
 void worker_policy_allows_queue_backed_rx_drivers();
 void worker_policy_keeps_synchronous_rx_in_main_loop();
-void rmt_cs_spi_mode_keeps_dma_s3_only();
-void rmt_cs_spi_mode_supports_fifo_on_esp32_and_s3();
-void rmt_cs_spi_mode_exposes_distinct_driver_names();
+void rmt_cs_spi_supports_esp32_and_s3();
+void rmt_cs_spi_exposes_single_driver_name();
+void rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
 
 }  // namespace mhi_unit_tests

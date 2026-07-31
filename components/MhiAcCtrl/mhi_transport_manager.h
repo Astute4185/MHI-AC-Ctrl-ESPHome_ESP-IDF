@@ -41,14 +41,13 @@
 #include "mhi_rmt_spi_rx_driver.h"
 #endif
 #if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
-#define MHI_ENABLE_RMT_CS_SPI_NODMA_TRANSPORT 1
+#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 1
 #include "mhi_rmt_cs_spi_transport.h"
 #else
-#define MHI_ENABLE_RMT_CS_SPI_NODMA_TRANSPORT 0
+#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 0
 #endif
 #define MHI_ENABLE_NATIVE_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 #define MHI_ENABLE_RMT_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
-#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -139,9 +138,6 @@ class MhiTransportManager {
 #endif
 #if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
   MhiRmtCsSpiTransport rmt_cs_spi_{};
-#endif
-#if MHI_ENABLE_RMT_CS_SPI_NODMA_TRANSPORT
-  MhiRmtCsSpiTransport rmt_cs_spi_nodma_{};
 #endif
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxDriver external_clock_rx_{};
