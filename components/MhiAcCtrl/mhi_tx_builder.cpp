@@ -240,56 +240,71 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
   out.data[DB3] = runtime.room_temp_override_raw;
 
   if (out.len == kMhiFrame33Bytes) {
-    out.data[DB16] = 0x00U;
-    out.data[DB17] = 0x00U;
+    const bool horizontal_requested = command.horizontal_vane_set;
+    const bool three_d_requested = command.three_d_auto_set;
+    const bool has_extended_request = horizontal_requested || three_d_requested;
+    if (has_extended_request) {
+      // DB16/DB17 are one composite register domain. Start from the last
+      // confirmed state, overlay only the requested fields, then encode the
+      // complete command. This prevents horizontal writes from clearing 3D
+      // Auto and prevents 3D writes from changing the horizontal state.
+      const bool has_preserved_context = config.has_extended_louver_state;
+      bool desired_horizontal_swing = false;
+      uint8_t desired_horizontal_vane = 1U;
+      bool desired_three_d_auto = false;
+      uint8_t preserved_swing_db16 = 0U;
 
-    const bool use_preserved_louver =
-        command.three_d_auto_set && !command.horizontal_vane_set && config.has_extended_louver_state;
-
-    if (use_preserved_louver) {
-      out.data[DB16] = config.extended_louver_db16;
-      out.data[DB17] = config.extended_louver_db17;
-      result.intent.horizontal_vane =
-          config.extended_louver_horizontal_swing ? 8U : config.extended_louver_horizontal_vane;
-      result.intent.has_extended_louver_context = true;
-    }
-
-    if (command.horizontal_vane_set) {
-      result.intent.horizontal_vane = command.horizontal_vane;
-      result.intent.has_extended_louver_context = true;
-
-      if (command.horizontal_vane == 8U) {
-        // Horizontal swing is a composite extended-louver state. DB16 may be
-        // returned by the AC with the previous/live position, so DB17 carries
-        // the authoritative swing flag while DB16 is left neutral in TX.
-        out.data[DB17] = 0x0BU;
-      } else if (command.horizontal_vane >= 1U && command.horizontal_vane <= 7U) {
-        out.data[DB16] = static_cast<uint8_t>(0x10U | (command.horizontal_vane - 1U));
-        out.data[DB17] = 0x0AU;
+      if (has_preserved_context) {
+        desired_horizontal_swing = config.extended_louver_horizontal_swing;
+        if (config.extended_louver_horizontal_vane >= 1U && config.extended_louver_horizontal_vane <= 7U) {
+          desired_horizontal_vane = config.extended_louver_horizontal_vane;
+        } else {
+          const uint8_t raw_position = static_cast<uint8_t>(config.extended_louver_db16 & 0x07U);
+          if (raw_position <= 6U) {
+            desired_horizontal_vane = static_cast<uint8_t>(raw_position + 1U);
+          }
+        }
+        desired_three_d_auto = config.extended_louver_three_d_auto;
+        preserved_swing_db16 = config.extended_louver_db16;
       }
 
-      command.horizontal_vane_set = false;
-      result.encoded_command_mask |= MHI_COMMAND_HORIZONTAL_VANE;
-      result.intent.mask |= MHI_COMMAND_HORIZONTAL_VANE;
-    }
-
-    if (command.three_d_auto_set) {
-      if (!use_preserved_louver && !result.intent.has_extended_louver_context) {
-        result.intent.horizontal_vane = 1U;
+      if (horizontal_requested) {
+        desired_horizontal_swing = command.horizontal_vane == 8U;
+        if (!desired_horizontal_swing && command.horizontal_vane >= 1U && command.horizontal_vane <= 7U) {
+          desired_horizontal_vane = command.horizontal_vane;
+        }
+        result.encoded_command_mask |= MHI_COMMAND_HORIZONTAL_VANE;
+        result.intent.mask |= MHI_COMMAND_HORIZONTAL_VANE;
+        command.horizontal_vane_set = false;
       }
 
-      out.data[DB17] = static_cast<uint8_t>((out.data[DB17] & ~0x04U) | (command.three_d_auto ? 0x04U : 0x00U));
+      if (three_d_requested) {
+        desired_three_d_auto = command.three_d_auto;
+        result.encoded_command_mask |= MHI_COMMAND_THREE_D_AUTO;
+        result.intent.mask |= MHI_COMMAND_THREE_D_AUTO;
+        command.three_d_auto_set = false;
+      }
 
-      // Louver command-indicator bits (0x08 | 0x02) must be asserted for the
-      // AC to accept the write. The previous conditional skipped this when
-      // bit 0x01 was carried over from the preserved louver state, leaving
-      // DB17 as 0x05 which the AC treats as a status echo, not a command.
-      out.data[DB17] |= 0x0AU;
+      if (desired_horizontal_swing) {
+        // MOSI feedback retains the previous fixed DB16 position while swing
+        // is active. Preserve it when known and use DB17 bit 0 as the
+        // authoritative swing state.
+        out.data[DB16] = preserved_swing_db16;
+      } else if (horizontal_requested || has_preserved_context) {
+        out.data[DB16] = static_cast<uint8_t>(0x10U | (desired_horizontal_vane - 1U));
+      } else {
+        // Preserve the pre-spike fallback for a 3D-only request received
+        // before the first extended-louver status has been learned.
+        out.data[DB16] = 0x00U;
+      }
+      out.data[DB17] = static_cast<uint8_t>(0x0AU | (desired_horizontal_swing ? 0x01U : 0x00U) |
+                                            (desired_three_d_auto ? 0x04U : 0x00U));
 
-      result.intent.three_d_auto = command.three_d_auto;
-      command.three_d_auto_set = false;
-      result.encoded_command_mask |= MHI_COMMAND_THREE_D_AUTO;
-      result.intent.mask |= MHI_COMMAND_THREE_D_AUTO;
+      result.intent.horizontal_vane = desired_horizontal_swing ? 8U : desired_horizontal_vane;
+      result.intent.three_d_auto = desired_three_d_auto;
+      // Companion-state confirmation is safe only when the preserved state is
+      // known, or when both halves were explicitly supplied in this command.
+      result.intent.has_extended_louver_context = horizontal_requested || has_preserved_context;
     }
   } else {
     if (command.horizontal_vane_set) {

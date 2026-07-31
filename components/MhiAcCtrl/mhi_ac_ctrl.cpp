@@ -1719,22 +1719,6 @@ bool MhiAcCtrl::extended_feedback_matches_pending_(const MhiDecodedStatus& decod
     if (!decoded_status.has_3d_auto || decoded_status.three_d_auto != intent.three_d_auto) {
       return false;
     }
-
-    if (intent.has_extended_louver_context) {
-      if (!decoded_status.has_horizontal_vane) {
-        return false;
-      }
-
-      if (intent.horizontal_vane == 8U) {
-        if (!decoded_status.horizontal_swing) {
-          return false;
-        }
-      } else if (intent.horizontal_vane >= 1U && intent.horizontal_vane <= 7U) {
-        if (decoded_status.horizontal_swing || decoded_status.horizontal_vane != intent.horizontal_vane) {
-          return false;
-        }
-      }
-    }
   }
 
   return (pending_mask & kNoPendingExtendedFeedbackMask) != 0U;
