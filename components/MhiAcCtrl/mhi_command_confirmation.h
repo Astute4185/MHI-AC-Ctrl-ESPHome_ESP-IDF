@@ -11,6 +11,10 @@ namespace mhi_ac_ctrl {
 
 constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 10000U;
 constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 20000U;
+// Diagnostic-spike policy: successful 3D feedback was observed in roughly
+// 100-170 ms. Retry within the same 15-second matrix case instead of allowing
+// a failed request to be superseded by the next case.
+constexpr uint32_t kMhiThreeDAutoConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiExtendedLouverSettleDelayMs = 3000U;
 
 struct MhiCommandExpiration {
@@ -36,7 +40,6 @@ class MhiCommandConfirmation {
     if (confirmable == 0U) {
       return;
     }
-
     this->pending_intent_ = intent;
     this->pending_intent_.mask = confirmable;
     this->pending_mask_ = confirmable;
@@ -53,20 +56,16 @@ class MhiCommandConfirmation {
     if ((this->pending_mask_ & MHI_COMMAND_POWER) != 0U && status.power == this->pending_intent_.power) {
       confirmed |= MHI_COMMAND_POWER;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_MODE) != 0U && status.power && status.mode == this->pending_intent_.mode) {
       confirmed |= MHI_COMMAND_MODE;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_FAN) != 0U && status.fan == expected_status_fan(this->pending_intent_.fan)) {
       confirmed |= MHI_COMMAND_FAN;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_TARGET_TEMP) != 0U &&
         float_matches(status.target_temp_c, this->pending_intent_.target_temp_c)) {
       confirmed |= MHI_COMMAND_TARGET_TEMP;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_VERTICAL_VANE) != 0U) {
       if (this->pending_intent_.vertical_vane == 5U && status.vanes_swing) {
         confirmed |= MHI_COMMAND_VERTICAL_VANE;
@@ -76,21 +75,15 @@ class MhiCommandConfirmation {
       }
     }
 
-    if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U && status.has_horizontal_vane) {
-      if (this->pending_intent_.horizontal_vane == 8U && status.horizontal_vane_swing) {
-        confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
-      } else if (this->pending_intent_.horizontal_vane >= 1U && this->pending_intent_.horizontal_vane <= 7U &&
-                 !status.horizontal_vane_swing && status.horizontal_vane == this->pending_intent_.horizontal_vane) {
-        confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
-      }
+    if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U &&
+        horizontal_matches_(status, this->pending_intent_.horizontal_vane) &&
+        companion_three_d_matches_(status, this->pending_intent_)) {
+      confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
     }
 
-    // 3D Auto can legitimately change the horizontal-louver context as part of
-    // the command. Confirm it from the decoded 3D Auto feedback bit itself;
-    // requiring the pre-command louver context caused accepted commands to
-    // remain pending until timeout.
     if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U && status.has_3d_auto &&
-        status.three_d_auto == this->pending_intent_.three_d_auto) {
+        status.three_d_auto == this->pending_intent_.three_d_auto &&
+        companion_horizontal_matches_(status, this->pending_intent_)) {
       confirmed |= MHI_COMMAND_THREE_D_AUTO;
     }
 
@@ -113,7 +106,6 @@ class MhiCommandConfirmation {
     }
 
     uint32_t superseded = 0U;
-
     if ((this->pending_mask_ & MHI_COMMAND_POWER) != 0U && patch.power_set &&
         patch.power != this->pending_intent_.power) {
       superseded |= MHI_COMMAND_POWER;
@@ -140,7 +132,6 @@ class MhiCommandConfirmation {
         patch.three_d_auto != this->pending_intent_.three_d_auto) {
       superseded |= MHI_COMMAND_THREE_D_AUTO;
     }
-
     this->clear_pending_mask_(superseded);
     return superseded;
   }
@@ -149,7 +140,6 @@ class MhiCommandConfirmation {
     if (this->pending_mask_ == 0U || this->staged_ms_ == 0U || now_ms < this->staged_ms_) {
       return 0U;
     }
-
     return now_ms - this->staged_ms_;
   }
 
@@ -159,9 +149,12 @@ class MhiCommandConfirmation {
       return expiration;
     }
 
-    const uint32_t timeout_ms = (this->pending_mask_ & (MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO)) != 0U
-                                    ? kMhiExtendedLouverConfirmationTimeoutMs
-                                    : kMhiCommandConfirmationTimeoutMs;
+    uint32_t timeout_ms = kMhiCommandConfirmationTimeoutMs;
+    if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U) {
+      timeout_ms = kMhiThreeDAutoConfirmationTimeoutMs;
+    } else if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U) {
+      timeout_ms = kMhiExtendedLouverConfirmationTimeoutMs;
+    }
 
     if ((now_ms - this->staged_ms_) < timeout_ms) {
       return expiration;
@@ -191,50 +184,66 @@ class MhiCommandConfirmation {
     }
 
     uint32_t duplicate = 0U;
-
     if ((this->pending_mask_ & MHI_COMMAND_POWER) != 0U && command.power_set &&
         command.power == this->pending_intent_.power) {
       duplicate |= MHI_COMMAND_POWER;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_MODE) != 0U && command.mode_set &&
         command.mode == this->pending_intent_.mode) {
       duplicate |= MHI_COMMAND_MODE;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_FAN) != 0U && command.fan_set && command.fan == this->pending_intent_.fan) {
       duplicate |= MHI_COMMAND_FAN;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_TARGET_TEMP) != 0U && command.target_temp_set &&
         float_matches(command.target_temp_c, this->pending_intent_.target_temp_c)) {
       duplicate |= MHI_COMMAND_TARGET_TEMP;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_VERTICAL_VANE) != 0U && command.vertical_vane_set &&
         command.vertical_vane == this->pending_intent_.vertical_vane) {
       duplicate |= MHI_COMMAND_VERTICAL_VANE;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U && command.horizontal_vane_set &&
         command.horizontal_vane == this->pending_intent_.horizontal_vane) {
       duplicate |= MHI_COMMAND_HORIZONTAL_VANE;
     }
-
     if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U && command.three_d_auto_set &&
         command.three_d_auto == this->pending_intent_.three_d_auto) {
       duplicate |= MHI_COMMAND_THREE_D_AUTO;
     }
-
     return duplicate;
   }
 
  private:
+  static bool horizontal_matches_(const MhiStatusState& status, uint8_t expected_horizontal_vane) {
+    if (!status.has_horizontal_vane) {
+      return false;
+    }
+    if (expected_horizontal_vane == 8U) {
+      return status.horizontal_vane_swing;
+    }
+    return expected_horizontal_vane >= 1U && expected_horizontal_vane <= 7U && !status.horizontal_vane_swing &&
+           status.horizontal_vane == expected_horizontal_vane;
+  }
+
+  static bool companion_three_d_matches_(const MhiStatusState& status, const MhiCommandIntent& intent) {
+    if (!intent.has_extended_louver_context) {
+      return true;
+    }
+    return status.has_3d_auto && status.three_d_auto == intent.three_d_auto;
+  }
+
+  static bool companion_horizontal_matches_(const MhiStatusState& status, const MhiCommandIntent& intent) {
+    if (!intent.has_extended_louver_context) {
+      return true;
+    }
+    return horizontal_matches_(status, intent.horizontal_vane);
+  }
+
   void clear_pending_mask_(uint32_t mask) {
     if (mask == 0U) {
       return;
     }
-
     this->pending_mask_ &= ~mask;
     this->pending_intent_.mask = this->pending_mask_;
     if (this->pending_mask_ == 0U) {
@@ -247,19 +256,15 @@ class MhiCommandConfirmation {
         encoded_command_mask &
         static_cast<uint32_t>(MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN | MHI_COMMAND_TARGET_TEMP |
                               MHI_COMMAND_VERTICAL_VANE | MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO);
-
     if ((mask & MHI_COMMAND_FAN) != 0U && !fan_command_confirmable(intent.fan)) {
       mask &= ~static_cast<uint32_t>(MHI_COMMAND_FAN);
     }
-
     if ((mask & MHI_COMMAND_VERTICAL_VANE) != 0U && !(intent.vertical_vane >= 1U && intent.vertical_vane <= 5U)) {
       mask &= ~static_cast<uint32_t>(MHI_COMMAND_VERTICAL_VANE);
     }
-
     if ((mask & MHI_COMMAND_HORIZONTAL_VANE) != 0U && !(intent.horizontal_vane >= 1U && intent.horizontal_vane <= 8U)) {
       mask &= ~static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE);
     }
-
     return mask;
   }
 
