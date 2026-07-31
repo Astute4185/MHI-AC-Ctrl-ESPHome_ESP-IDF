@@ -343,7 +343,7 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       result.intent.three_d_auto = desired_three_d_auto;
       // Companion-state confirmation is safe only when the preserved state is
       // known, or when both halves were explicitly supplied in this command.
-      result.intent.has_extended_louver_context = has_preserved_context || (horizontal_requested && three_d_requested);
+      result.intent.has_extended_louver_context = horizontal_requested || has_preserved_context;
     }
   } else {
     if (command.horizontal_vane_set) {

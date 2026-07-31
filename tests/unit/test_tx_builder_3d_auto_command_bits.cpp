@@ -84,7 +84,7 @@ void three_d_without_preserved_state_keeps_legacy_db16_fallback() {
   EXPECT_FALSE(result.intent.has_extended_louver_context);
 }
 
-void horizontal_without_preserved_state_does_not_claim_companion_context() {
+void horizontal_without_preserved_state_carries_transmitted_composite_context() {
   MhiCommandState command{};
   command.horizontal_vane_set = true;
   command.horizontal_vane = 4U;
@@ -98,7 +98,7 @@ void horizontal_without_preserved_state_does_not_claim_companion_context() {
   EXPECT_EQ(out.data[DB17], 0x0AU);
   EXPECT_EQ(result.intent.horizontal_vane, 4U);
   EXPECT_FALSE(result.intent.three_d_auto);
-  EXPECT_FALSE(result.intent.has_extended_louver_context);
+  EXPECT_TRUE(result.intent.has_extended_louver_context);
 }
 
 void horizontal_fixed_write_preserves_3d_auto_on() {
@@ -237,7 +237,7 @@ void tx_builder_3d_auto_command_bits_regression_suite() {
   horizontal_swing_3d_auto_on_uses_0x0f();
   horizontal_swing_3d_auto_off_uses_0x0b();
   three_d_without_preserved_state_keeps_legacy_db16_fallback();
-  horizontal_without_preserved_state_does_not_claim_companion_context();
+  horizontal_without_preserved_state_carries_transmitted_composite_context();
   horizontal_fixed_write_preserves_3d_auto_on();
   horizontal_swing_write_preserves_3d_auto_on_and_last_position();
   combined_horizontal_and_3d_command_encodes_one_composite_state();

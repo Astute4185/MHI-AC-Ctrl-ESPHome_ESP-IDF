@@ -227,14 +227,14 @@ class MhiCommandConfirmation {
   }
 
   static bool companion_three_d_matches_(const MhiStatusState& status, const MhiCommandIntent& intent) {
-    if (!intent.has_extended_louver_context) {
+    if (!intent.has_extended_louver_context || !status.has_3d_auto) {
       return true;
     }
-    return status.has_3d_auto && status.three_d_auto == intent.three_d_auto;
+    return status.three_d_auto == intent.three_d_auto;
   }
 
   static bool companion_horizontal_matches_(const MhiStatusState& status, const MhiCommandIntent& intent) {
-    if (!intent.has_extended_louver_context) {
+    if (!intent.has_extended_louver_context || !status.has_horizontal_vane) {
       return true;
     }
     return horizontal_matches_(status, intent.horizontal_vane);
