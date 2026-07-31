@@ -72,13 +72,15 @@ void status_decoder_ignores_unknown_horizontal_vane_feedback() {
   frame.len = kMhiFrame33Bytes;
 
   frame.data[DB16] = 0x07U;
-  frame.data[DB17] = 0x00U;
+  frame.data[DB17] = 0x04U;
 
   MhiDecodedStatus decoded{};
   EXPECT_TRUE(MhiStatusDecoder::decode_mosi(frame.view(), decoded));
 
   EXPECT_TRUE(decoded.valid);
   EXPECT_FALSE(decoded.has_horizontal_vane);
+  EXPECT_TRUE(decoded.has_3d_auto);
+  EXPECT_TRUE(decoded.three_d_auto);
 }
 
 }  // namespace mhi_unit_tests

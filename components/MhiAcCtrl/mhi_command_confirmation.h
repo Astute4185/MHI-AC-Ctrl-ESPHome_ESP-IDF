@@ -10,7 +10,8 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 10000U;
-constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 20000U;
+constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 3000U;
+constexpr uint32_t kMhiThreeDAutoConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiExtendedLouverSettleDelayMs = 3000U;
 
 struct MhiCommandExpiration {
@@ -76,19 +77,15 @@ class MhiCommandConfirmation {
       }
     }
 
-    if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U && status.has_horizontal_vane) {
-      if (this->pending_intent_.horizontal_vane == 8U && status.horizontal_vane_swing) {
-        confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
-      } else if (this->pending_intent_.horizontal_vane >= 1U && this->pending_intent_.horizontal_vane <= 7U &&
-                 !status.horizontal_vane_swing && status.horizontal_vane == this->pending_intent_.horizontal_vane) {
-        confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
-      }
+    if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U &&
+        horizontal_matches_(status, this->pending_intent_.horizontal_vane) &&
+        companion_three_d_matches_(status, this->pending_intent_)) {
+      confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
     }
 
-    // 3D Auto can legitimately change the horizontal-louver context as part of
-    // the command. Confirm it from the decoded 3D Auto feedback bit itself;
-    // requiring the pre-command louver context caused accepted commands to
-    // remain pending until timeout.
+    // 3D Auto is an independent DB17 bit (0x04). A 3D-only command must
+    // confirm from that bit alone; horizontal position/swing is preserved
+    // context, not part of the requested semantic state.
     if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U && status.has_3d_auto &&
         status.three_d_auto == this->pending_intent_.three_d_auto) {
       confirmed |= MHI_COMMAND_THREE_D_AUTO;
@@ -159,9 +156,12 @@ class MhiCommandConfirmation {
       return expiration;
     }
 
-    const uint32_t timeout_ms = (this->pending_mask_ & (MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO)) != 0U
-                                    ? kMhiExtendedLouverConfirmationTimeoutMs
-                                    : kMhiCommandConfirmationTimeoutMs;
+    uint32_t timeout_ms = kMhiCommandConfirmationTimeoutMs;
+    if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U) {
+      timeout_ms = kMhiThreeDAutoConfirmationTimeoutMs;
+    } else if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U) {
+      timeout_ms = kMhiExtendedLouverConfirmationTimeoutMs;
+    }
 
     if ((now_ms - this->staged_ms_) < timeout_ms) {
       return expiration;
@@ -230,6 +230,24 @@ class MhiCommandConfirmation {
   }
 
  private:
+  static bool horizontal_matches_(const MhiStatusState& status, uint8_t expected_horizontal_vane) {
+    if (!status.has_horizontal_vane) {
+      return false;
+    }
+    if (expected_horizontal_vane == 8U) {
+      return status.horizontal_vane_swing;
+    }
+    return expected_horizontal_vane >= 1U && expected_horizontal_vane <= 7U && !status.horizontal_vane_swing &&
+           status.horizontal_vane == expected_horizontal_vane;
+  }
+
+  static bool companion_three_d_matches_(const MhiStatusState& status, const MhiCommandIntent& intent) {
+    if (!intent.has_extended_louver_context || !status.has_3d_auto) {
+      return true;
+    }
+    return status.three_d_auto == intent.three_d_auto;
+  }
+
   void clear_pending_mask_(uint32_t mask) {
     if (mask == 0U) {
       return;

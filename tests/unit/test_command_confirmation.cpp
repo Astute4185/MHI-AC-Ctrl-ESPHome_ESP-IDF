@@ -246,6 +246,23 @@ void command_confirmation_confirms_horizontal_swing_feedback() {
   EXPECT_FALSE(confirmation.has_pending());
 }
 
+void command_confirmation_vertical_swing_ignores_retained_position() {
+  MhiCommandConfirmation confirmation{};
+
+  MhiCommandIntent intent{};
+  intent.mask = MHI_COMMAND_VERTICAL_VANE;
+  intent.vertical_vane = 5U;
+  confirmation.stage(intent, intent.mask, 1000U);
+
+  MhiStatusState status{};
+  status.valid = true;
+  status.vanes_swing = true;
+  status.vertical_vane = 3U;
+
+  EXPECT_EQ(confirmation.observe_status(status), static_cast<uint32_t>(MHI_COMMAND_VERTICAL_VANE));
+  EXPECT_FALSE(confirmation.has_pending());
+}
+
 void command_confirmation_confirms_3d_auto_feedback() {
   MhiCommandConfirmation confirmation{};
 
@@ -311,7 +328,7 @@ void command_confirmation_supersedes_older_pending_value() {
   EXPECT_FALSE(confirmation.has_pending());
 }
 
-void command_confirmation_uses_longer_timeout_for_extended_louver_commands() {
+void command_confirmation_uses_short_timeout_for_extended_louver_commands() {
   MhiCommandConfirmation confirmation{};
 
   MhiCommandIntent intent{};
@@ -320,11 +337,21 @@ void command_confirmation_uses_longer_timeout_for_extended_louver_commands() {
 
   confirmation.stage(intent, intent.mask, 1000U);
 
-  EXPECT_EQ(confirmation.expire(10999U).mask, 0U);
+  EXPECT_EQ(confirmation.expire(1000U + kMhiThreeDAutoConfirmationTimeoutMs - 1U).mask, 0U);
   EXPECT_TRUE(confirmation.has_pending());
-  EXPECT_EQ(confirmation.expire(20999U).mask, 0U);
+  EXPECT_EQ(confirmation.expire(1000U + kMhiThreeDAutoConfirmationTimeoutMs).mask,
+            static_cast<uint32_t>(MHI_COMMAND_THREE_D_AUTO));
+  EXPECT_FALSE(confirmation.has_pending());
+
+  intent = {};
+  intent.mask = MHI_COMMAND_HORIZONTAL_VANE;
+  intent.horizontal_vane = 4U;
+  confirmation.stage(intent, intent.mask, 5000U);
+
+  EXPECT_EQ(confirmation.expire(5000U + kMhiExtendedLouverConfirmationTimeoutMs - 1U).mask, 0U);
   EXPECT_TRUE(confirmation.has_pending());
-  EXPECT_EQ(confirmation.expire(21000U).mask, static_cast<uint32_t>(MHI_COMMAND_THREE_D_AUTO));
+  EXPECT_EQ(confirmation.expire(5000U + kMhiExtendedLouverConfirmationTimeoutMs).mask,
+            static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE));
   EXPECT_FALSE(confirmation.has_pending());
 }
 
