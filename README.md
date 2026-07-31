@@ -1,23 +1,30 @@
-# MHI-AC-Ctrl-ESPHome-Redux
+# MHI-AC-Ctrl-ESPHome-IDF
 
 ESPHome external component for controlling Mitsubishi Heavy Industries air conditioners over the MHI SPI-style bus using ESP32-class hardware.
 
-This Redux version is an ESP-IDF-focused rewrite/refactor of the existing MHI-AC-Ctrl ESPHome work. It keeps the ESPHome/Home Assistant integration model, but splits the protocol, transport, state, publishing, diagnostics, command confirmation, and transport-driver paths so changes can be made in smaller, safer pieces.
+This project is an ESP-IDF-focused rewrite and hardening of the existing MHI-AC-Ctrl ESPHome integration. It keeps the ESPHome and Home Assistant entity model while separating protocol decoding, transport, state, publication, diagnostics, command confirmation, and hardware-driver responsibilities.
 
-This is not a clean-room protocol project. It builds on the original community MHI-AC-Ctrl work, upstream ESPHome component behaviour, and public MHI trace/capture knowledge.
+The major rewrite and feature implementation phase is now substantially complete. The project has moved into compatibility validation, maintenance, and incremental protocol discovery rather than further architectural replacement.
+
+This is not a clean-room protocol project. It builds on the original community MHI-AC-Ctrl work, upstream ESPHome component behaviour, and public MHI trace and capture knowledge.
 
 ## Current status
 
-The currently validated runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. The conservative default remains `command_worker: false`; the combined command and classified-RX worker is opt-in while protocol mapping verification continues.
+The primary runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. Core climate, fan, vane, 3D Auto, command-confirmation, worker, diagnostics, and transport work is implemented and hardware-tested on the available units.
 
-- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative stable baseline.
-- `external_clock_rx` with `fast_gpio_tx` is the stable non-S3 split path currently running on an M5Stack Atom based on the original ESP32.
-- `rmt_spi_rx` with `fast_gpio_tx` is the stable hardware-assisted split path on ESP32-S3. It completed a roughly 47.5-hour soak with clean RX protocol health.
-- `rmt_cs_spi` is the FIFO-backed full-duplex path for both the original dual-core ESP32 and ESP32-S3. It owns RX and TX, uses RMT-derived internal chip select, and disables SPI DMA because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
-- The original ESP32 path applies a target-specific mode-3 receive-edge correction; ESP32-S3 uses the normal ESP-IDF mode configuration.
-- ESP32-C3 remains in development with compile coverage only; runtime operation is not validated.
+- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative default and fallback.
+- `external_clock_rx` with `fast_gpio_tx` is a validated split path on the original ESP32.
+- `rmt_spi_rx` with `fast_gpio_tx` is a validated hardware-assisted split path on ESP32-S3 and completed an approximately 47.5-hour soak with clean RX protocol health.
+- `rmt_cs_spi` is the consolidated FIFO-backed full-duplex path for the original dual-core ESP32 and ESP32-S3. It owns RX and TX, derives an internal chip-select boundary from the SCK idle gap, and uses `SPI_DMA_DISABLED` because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
+- The original ESP32 `rmt_cs_spi` path applies a target-specific mode-3 receive-edge correction. ESP32-S3 uses the normal ESP-IDF mode-3 configuration.
+- The command coordinator now confirms commands from returned MOSI state, suppresses duplicates, retries bounded failures, and supersedes stale horizontal/3D confirmation generations with the latest composite intent.
+- Vertical vane, horizontal vane, and 3D Auto mapping completed an 80-case hardware matrix with all requested combinations confirmed.
+- Four-speed and three-speed fan profiles are supported. Four-speed is the default and exposes Quiet as a distinct protocol state.
+- ESP32-C3 has compile coverage through the legacy FastGPIO path, but runtime operation is not yet validated.
 
-Implemented functionality includes 20-byte and 33-byte frames, command confirmation, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, common status sensors, opdata sensors, and transport diagnostics.
+The remaining work is primarily wider hardware compatibility testing, ESP32-C3 runtime validation, model-specific protocol discovery, documentation, and normal maintenance. No further major backend rewrite is currently planned.
+
+Implemented functionality includes 20-byte and 33-byte frames, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, command confirmation, duplicate suppression, latest-intent command coalescing, common status sensors, opdata sensors, room-temperature publication control, external temperature input, and detailed runtime diagnostics.
 
 ## Driver selection
 
@@ -25,28 +32,30 @@ Implemented functionality includes 20-byte and 33-byte frames, command confirmat
 
 ### Driver combinations
 
-| RX selection | Effective TX | Validation status |
+| RX selection | Effective TX | Status |
 |---|---|---|
-| `fast_gpio_rx` | `fast_gpio_tx` | **Stable** |
-| `external_clock_rx` | `fast_gpio_tx` | **Stable** |
-| `rmt_spi_rx` | `fast_gpio_tx` | **Stable** |
-| `rmt_cs_spi` | Integrated full-duplex TX | **In testing — FIFO-backed on ESP32 and ESP32-S3** |
+| `fast_gpio_rx` | `fast_gpio_tx` | **Stable baseline** |
+| `external_clock_rx` | `fast_gpio_tx` | **Validated on original ESP32** |
+| `rmt_spi_rx` | `fast_gpio_tx` | **Validated on ESP32-S3** |
+| `rmt_cs_spi` | Integrated full-duplex TX | **Validated on ESP32 and ESP32-S3** |
 
-`Stable` means the driver combination has completed hardware validation and little to no transport-level change is expected. `In testing` means the implementation is functional but still undergoing soak or compatibility testing. `In development` means it is not ready for normal use.
+`Stable baseline` identifies the conservative default path. `Validated` means the path has passed hardware operation and regression testing on the listed target, while broader board and air-conditioner compatibility evidence may still be collected. `In development` is reserved for targets without runtime validation.
 
-The stable split-driver results were obtained with `command_worker` disabled. The full-duplex `rmt_cs_spi` path supports classified worker-side RX decode and main-loop publication. Hardware testing on both ESP32 and ESP32-S3 established that the FIFO-backed implementation can provide complete-frame full-duplex operation without the DMA-specific alignment and buffer-management path.
+The split-driver paths remain available for compatibility and diagnostics. The full-duplex `rmt_cs_spi` path is now one FIFO-backed implementation across both supported chip families; the temporary non-DMA driver label and the DMA implementation have been removed.
+
+`command_worker` remains disabled by default for backward-compatible scheduling behaviour, but the worker-backed command lifecycle and classified RX path have been hardware-tested with queue-backed transports.
 
 ### Hardware driver guide
 
-| ESP chip | Validated hardware | Recommended RX selection | Effective TX | Status | Notes |
-|---|---|---|---|---|---|
-| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` for stable split use; `rmt_cs_spi` for full-duplex testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `external_clock_rx`; **In testing** for `rmt_cs_spi` | The FIFO-backed full-duplex path passed 33-byte RX/TX and command testing. The transport applies the original-ESP32 mode-3 input-edge correction internally. |
-| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_spi_rx` for stable split use; `rmt_cs_spi` for full-duplex testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | The same FIFO-backed RMT-CS SPI architecture is used on ESP32-S3 without the original-ESP32 edge override. |
-| ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` | `fast_gpio_tx` | **In development** | Compile coverage only. Single-core runtime behaviour has not been validated. |
+| ESP chip | Validated hardware | Recommended selection | Status | Notes |
+|---|---|---|---|---|
+| ESP32 | M5Stack Atom based on original ESP32 | `rmt_cs_spi` for full-duplex hardware-assisted operation; `external_clock_rx` or `fast_gpio_rx` as split/fallback paths | **Validated** | The FIFO-backed full-duplex path passed 33-byte RX/TX and command testing. The original-ESP32 mode-3 receive-edge correction is applied internally. |
+| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_cs_spi` for full-duplex operation; `rmt_spi_rx` with `fast_gpio_tx` as the validated split path | **Validated** | The 80-case louver/3D matrix and clean transport run used the FIFO-backed full-duplex architecture. |
+| ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` with `fast_gpio_tx` | **In development** | Representative compile coverage exists, including 20-byte frames and the three-speed fan profile. Runtime behaviour is not validated. |
 
-Add tested boards or modules to the matching chip row as results become available. Do not add a new row for every board; each ESP chip version should have one consolidated row.
+Add tested boards or modules to the matching chip row as results become available. Keep one consolidated row per ESP chip family rather than creating a row for every board.
 
-Minimal stable configuration:
+Conservative default configuration:
 
 ```yaml
 MhiAcCtrl:
@@ -58,21 +67,7 @@ MhiAcCtrl:
   rx_driver: fast_gpio_rx
 ```
 
-Preferred split ESP32-S3 configuration:
-
-```yaml
-MhiAcCtrl:
-  id: mhi_ac
-  frame_size: 33
-  sck_pin: 8
-  mosi_pin: 38
-  miso_pin: 39
-  rx_driver: rmt_spi_rx
-  rmt_spi_frame_gap_us: 1000
-  command_worker: false
-```
-
-FIFO-backed full-duplex configuration for ESP32 or ESP32-S3:
+Preferred FIFO-backed full-duplex configuration for ESP32 or ESP32-S3:
 
 ```yaml
 MhiAcCtrl:
@@ -84,19 +79,25 @@ MhiAcCtrl:
   rx_driver: rmt_cs_spi
   rmt_spi_frame_gap_us: 1000
   command_worker: true
-  command_worker_start_delay_ms: 0
 ```
 
-`rmt_cs_spi` owns RX and TX and rejects any `tx_driver` override. It uses the SPI CPU FIFO with DMA disabled on both supported chip families. No physical CS pin is required; RMT derives the transaction boundary from the SCK idle gap.
+`rmt_cs_spi` owns RX and TX and rejects a separate `tx_driver` override. No physical CS pin is required; RMT derives the internal transaction boundary from the SCK idle gap.
 
-For split drivers, the previous explicit configuration remains valid:
+Validated split ESP32-S3 configuration:
 
 ```yaml
-rx_driver: rmt_spi_rx
-tx_driver: fast_gpio_tx
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  sck_pin: 8
+  mosi_pin: 38
+  miso_pin: 39
+  rx_driver: rmt_spi_rx
+  tx_driver: fast_gpio_tx
+  rmt_spi_frame_gap_us: 1000
 ```
 
-See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, invalid combinations, and the process for adding new hardware validation results. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting.
+See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting.
 
 ## Hardware assumptions
 
@@ -176,26 +177,27 @@ The first reading is published immediately. Later changes smaller than `room_tem
 
 For a unit that alternates between `20.25°C` and `20.75°C`, the default `1.0°C` immediate delta rate limits the noise while still allowing a larger real change to be reported promptly. Set `room_temperature_immediate_delta: 0.0` to publish every changed reading immediately.
 
-
 ## Worker mode
 
-The new command pipeline is optional and disabled by default:
+The command worker is optional and disabled by default:
 
 ```yaml
 command_worker: false
 ```
 
-When enabled, one worker prepares immutable command frames, coordinates their lifecycle, and drains queue-backed RX transports. The selected transport still owns all real-time TX timing. Confirmation begins only after the transport reports that a command frame was actually clocked onto the bus.
+The default preserves the conservative main-loop scheduling model. Enable the worker when using a queue-backed transport and you want command coordination and classified RX processing outside the ESPHome main loop:
 
 ```yaml
 command_worker: true
 ```
 
-For `external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`, the worker performs RX draining, frame synchronisation, classification, and protocol decoding. Decoded status and opdata are committed to bounded latest-value snapshots. The ESPHome main loop applies those snapshots and performs all entity publication. `fast_gpio_rx` remains a main-loop RX path because its `read()` operation performs synchronous clock sampling.
+The worker prepares immutable command frames, coordinates command lifecycle and confirmation, and drains supported queue-backed RX transports. The selected transport still owns all real-time bus timing, and confirmation begins only after the transport reports that the command frame was actually clocked onto the bus.
+
+For `external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`, the worker can perform RX draining, frame synchronisation, classification, and protocol decoding. Decoded status and opdata are committed to bounded latest-value snapshots, while the ESPHome main loop applies those snapshots and publishes entities. `fast_gpio_rx` remains a main-loop RX path because its `read()` operation performs synchronous clock sampling.
 
 Separate `rx_worker` and `tx_worker` settings are no longer used.
 
-See [`COMMAND_WORKER_V2_PLAN.md`](COMMAND_WORKER_V2_PLAN.md) for the migration sequence and hardware acceptance gates. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md#command-worker-diagnostics) for the counters to monitor.
+See [`COMMAND_WORKER_V2_PLAN.md`](COMMAND_WORKER_V2_PLAN.md) for the design history and acceptance criteria. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md#command-worker-diagnostics) for worker counters and interpretation.
 
 ## Frame size
 
@@ -233,7 +235,7 @@ select:
       name: Fan Control Left Right
 ```
 
-Redux defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
+This version defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
 
 ```yaml
 MhiAcCtrl:
@@ -270,7 +272,6 @@ MhiAcCtrl:
 
 The three-speed profile exposes Auto, Low, Medium, and High. It presents received protocol values `0` and `1` as Low, while outgoing Low commands continue to use protocol value `1`.
 
-
 The selected profile controls climate traits, fan-select options, status publishing, TX command encoding, and command confirmation.
 
 Supported vertical vane options:
@@ -304,7 +305,17 @@ switch:
       name: 3D Auto
 ```
 
-3D Auto is currently experimental. The coordinator supports supersession and bounded retry, but the underlying DB16/DB17 command and feedback mapping is not yet considered proven. Hardware testing showed that an initial command could affect the unit while subsequent toggles did not behave consistently. Do not rely on this control until the raw-frame verification spike resolves whether 3D Auto is a persistent state bit, a momentary command, or a composite louver mode.
+3D Auto is supported on the 33-byte frame path. Hardware capture and the complete louver matrix confirmed that 3D Auto is `DB17` bit `0x04` and that horizontal vane plus 3D Auto form one composite `DB16`/`DB17` command domain.
+
+The command builder therefore preserves the companion state:
+
+- a horizontal-only change preserves the current 3D Auto bit;
+- a 3D-only change preserves the current horizontal position or swing state;
+- a newer cross-field request supersedes a stale pending generation and transmits the latest combined `0x60` intent immediately.
+
+The final hardware matrix confirmed all 80 vertical, horizontal, and 3D Auto combinations with no retry exhaustion and no pending confirmation at completion.
+
+See [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md) for the frame positions, complete mapping tables, confirmation rules, and hardware evidence.
 
 ## Binary sensors
 
@@ -439,15 +450,20 @@ See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for:
 
 ## Command confirmation and duplicate suppression
 
-Commands are staged and then confirmed against decoded MOSI feedback.
+Commands are staged, transmitted by the selected transport, and confirmed against authoritative decoded MOSI feedback.
 
 Implemented command safety behaviour:
 
-- Confirmed decoded state wins over requested state.
-- Duplicate confirmable commands are suppressed while the same command is pending.
-- Command timeouts are counted in diagnostics.
+- confirmed decoded state remains authoritative;
+- confirmation starts only after actual transport completion;
+- duplicate or already-confirmed requests are suppressed;
+- confirmation failures use bounded retry and expose timeout/retry counters;
+- swing confirmation checks the semantic swing bit and ignores retained fixed-position bits;
+- horizontal confirmation validates the requested horizontal state and its preserved 3D companion state;
+- 3D Auto confirmation checks `DB17` bit `0x04` independently;
+- newer horizontal or 3D intent supersedes a stale pending confirmation and coalesces the latest composite state.
 
-This prevents rapid Home Assistant/UI input changes from repeatedly restaging the same pending command.
+This prevents repeated Home Assistant input from generating redundant commands and prevents an obsolete horizontal/3D confirmation generation from leaking into a later request.
 
 ## Validation checklist
 
@@ -501,6 +517,17 @@ tests/fixtures/
 tests/components/
 ```
 
+The ESPHome compile suite uses four representative configurations rather than compiling every runtime permutation:
+
+| Compile target | Representative coverage |
+|---|---|
+| ESP32-C3 FastGPIO | Legacy FastGPIO RX/TX, 20-byte frames, three-speed fan profile |
+| ESP32 `rmt_cs_spi` | Original ESP32 FIFO full-duplex path and mode-3 edge correction |
+| ESP32-S3 `rmt_cs_spi` | ESP32-S3 FIFO full-duplex path and command worker |
+| ESP32-S3 `rmt_spi_rx` | Split hardware RX with legacy `fast_gpio_tx` |
+
+Driver defaults, invalid combinations, frame semantics, fan profiles, command coordination, and confirmation behaviour are covered by host unit tests. Hardware timing and transport stability remain hardware-test concerns rather than compile-test permutations.
+
 Run host tests:
 
 ```bash
@@ -525,24 +552,34 @@ Run lint:
 - Keep confirmed decoded state authoritative.
 - Keep `fast_gpio_rx` as the conservative default and fallback.
 - Treat `rx_driver` as the primary selector and auto-resolve TX for split drivers.
-- Preserve explicit `tx_driver` support for existing split configurations and RX-only diagnostics.
+- Preserve explicit `tx_driver` support for valid split configurations and RX-only diagnostics.
 - Give full-duplex transports exclusive ownership of RX and TX.
-- Keep `rmt_cs_spi` FIFO-backed on both ESP32 and ESP32-S3; 20-byte and 33-byte MHI transactions do not require DMA.
-- Keep `command_worker` opt-in while the new command-completion lifecycle is under hardware validation.
-- Use latest-state catalogue slots instead of general status FIFOs.
-- Keep transport changes separate from protocol, decoder, and sensor-parity changes.
+- Keep `rmt_cs_spi` FIFO-backed on ESP32 and ESP32-S3; the supported frame sizes do not require DMA.
+- Keep `command_worker` optional and default-off for compatibility, while maintaining full test coverage for the worker-backed lifecycle.
+- Use bounded latest-state catalogue slots rather than general status FIFOs.
+- Keep protocol, decoder, entity, and transport responsibilities isolated.
+- Require returned MOSI state before publishing a requested command as confirmed.
 
-## Roadmap
+## Project completion and remaining work
 
-- Complete extended cross-chip soak testing of the FIFO-backed `rmt_cs_spi` implementation on both the original ESP32 and ESP32-S3.
-- Compare protocol health, command confirmation, invalid transaction lengths, queue pressure, and loop timing across both chip families.
-- Run the protocol-code verification spike.
-- Capture one-setting-at-a-time MISO command deltas and returned MOSI feedback for power, mode, setpoint, fan, vertical vane, horizontal vane, and 3D Auto.
-- Resolve the 3D Auto defect only after determining whether its DB16/DB17 representation is a persistent bit, a momentary trigger, or a composite louver state.
-- Keep the stable default unchanged until both transport validation and semantic mapping validation are complete.
-- Validate mappings on more than one AC model before promoting model-sensitive features to stable.
-- Add hardware rows to the compatibility table only after compile, command, opdata, soak, and mapping evidence is available.
+The planned architecture and primary feature roadmap are substantially complete:
 
+- protocol, transport, state, publication, and diagnostics are separated;
+- 20-byte and 33-byte frame paths are supported;
+- FastGPIO, external-clock, split RMT/SPI, and full-duplex RMT-CS SPI transports are implemented;
+- DMA has been removed from the full-duplex SPI path;
+- command confirmation, retry, duplicate suppression, and latest-intent coalescing are implemented;
+- four-speed and three-speed fan profiles are supported;
+- vertical vane, horizontal vane, and 3D Auto mappings are hardware-validated;
+- host unit tests, sanitizers, lint checks, and representative cross-chip compile tests are integrated into CI.
+
+Remaining work is incremental:
+
+- validate ESP32-C3 at runtime;
+- collect compatibility evidence from additional boards and MHI air-conditioner models;
+- document model-specific opdata and any newly discovered protocol fields;
+- continue soak testing after material transport or coordinator changes;
+- handle bug fixes, ESPHome compatibility updates, and routine maintenance.
 
 ## Credits
 
