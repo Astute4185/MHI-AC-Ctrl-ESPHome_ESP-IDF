@@ -183,7 +183,7 @@ void horizontal_confirmation_requires_preserved_3d_state() {
   EXPECT_FALSE(confirmation.has_pending());
 }
 
-void three_d_confirmation_requires_preserved_horizontal_state() {
+void three_d_confirmation_ignores_preserved_horizontal_state() {
   MhiCommandConfirmation confirmation{};
   MhiCommandIntent intent{};
   intent.mask = MHI_COMMAND_THREE_D_AUTO;
@@ -192,11 +192,7 @@ void three_d_confirmation_requires_preserved_horizontal_state() {
   intent.has_extended_louver_context = true;
   confirmation.stage(intent, MHI_COMMAND_THREE_D_AUTO, 100U);
 
-  auto status = make_extended_status(5U, false, true);
-  EXPECT_EQ(confirmation.observe_status(status), 0U);
-  EXPECT_TRUE(confirmation.has_pending());
-
-  status.horizontal_vane = 4U;
+  const auto status = make_extended_status(5U, false, true);
   EXPECT_EQ(confirmation.observe_status(status), static_cast<uint32_t>(MHI_COMMAND_THREE_D_AUTO));
   EXPECT_FALSE(confirmation.has_pending());
 }
@@ -242,7 +238,7 @@ void tx_builder_3d_auto_command_bits_regression_suite() {
   horizontal_swing_write_preserves_3d_auto_on_and_last_position();
   combined_horizontal_and_3d_command_encodes_one_composite_state();
   horizontal_confirmation_requires_preserved_3d_state();
-  three_d_confirmation_requires_preserved_horizontal_state();
+  three_d_confirmation_ignores_preserved_horizontal_state();
   swing_confirmation_ignores_retained_position();
   three_d_timeout_retries_inside_matrix_case();
 }

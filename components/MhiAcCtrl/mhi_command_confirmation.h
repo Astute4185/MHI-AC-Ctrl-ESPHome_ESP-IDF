@@ -10,7 +10,7 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 10000U;
-constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 20000U;
+constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 3000U;
 // Diagnostic-spike policy: successful 3D feedback was observed in roughly
 // 100-170 ms. Retry within the same 15-second matrix case instead of allowing
 // a failed request to be superseded by the next case.
@@ -81,9 +81,11 @@ class MhiCommandConfirmation {
       confirmed |= MHI_COMMAND_HORIZONTAL_VANE;
     }
 
+    // 3D Auto is an independent DB17 bit (0x04). A 3D-only command must
+    // confirm from that bit alone; horizontal position/swing is preserved
+    // context, not part of the requested semantic state.
     if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U && status.has_3d_auto &&
-        status.three_d_auto == this->pending_intent_.three_d_auto &&
-        companion_horizontal_matches_(status, this->pending_intent_)) {
+        status.three_d_auto == this->pending_intent_.three_d_auto) {
       confirmed |= MHI_COMMAND_THREE_D_AUTO;
     }
 
@@ -231,13 +233,6 @@ class MhiCommandConfirmation {
       return true;
     }
     return status.three_d_auto == intent.three_d_auto;
-  }
-
-  static bool companion_horizontal_matches_(const MhiStatusState& status, const MhiCommandIntent& intent) {
-    if (!intent.has_extended_louver_context || !status.has_horizontal_vane) {
-      return true;
-    }
-    return horizontal_matches_(status, intent.horizontal_vane);
   }
 
   void clear_pending_mask_(uint32_t mask) {

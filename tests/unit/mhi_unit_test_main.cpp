@@ -111,10 +111,11 @@ int main() {
   command_confirmation_detects_duplicate_pending_commands();
   command_confirmation_confirms_horizontal_vane_feedback();
   command_confirmation_confirms_horizontal_swing_feedback();
+  command_confirmation_vertical_swing_ignores_retained_position();
   command_confirmation_confirms_3d_auto_feedback();
   command_confirmation_accepts_3d_auto_when_louver_context_changes();
   command_confirmation_supersedes_older_pending_value();
-  command_confirmation_uses_longer_timeout_for_extended_louver_commands();
+  command_confirmation_uses_short_timeout_for_extended_louver_commands();
   command_confirmation_reports_pending_age_for_settle_window();
   command_confirmation_can_settle_extended_louver_pending_mask();
   command_state_clears_pending_mask();
