@@ -21,13 +21,11 @@
 #ifdef USE_ESP_IDF
 #include <sdkconfig.h>
 #endif
-
 #if defined(USE_ESP_IDF) && defined(CONFIG_IDF_TARGET_ESP32S3)
 #define MHI_ENABLE_EXPERIMENTAL_S3_DRIVER 1
 #else
 #define MHI_ENABLE_EXPERIMENTAL_S3_DRIVER 0
 #endif
-
 #if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
 #define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 1
 #define MHI_ENABLE_SPLIT_TX_DRIVER 1
@@ -38,20 +36,21 @@
 #define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 0
 #define MHI_ENABLE_SPLIT_TX_DRIVER 0
 #endif
-
 #if MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 #include "mhi_native_spi_rx_driver.h"
-#include "mhi_rmt_cs_spi_transport.h"
 #include "mhi_rmt_spi_rx_driver.h"
 #endif
-
+#if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
+#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 1
+#include "mhi_rmt_cs_spi_transport.h"
+#else
+#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 0
+#endif
 #define MHI_ENABLE_NATIVE_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 #define MHI_ENABLE_RMT_SPI_RX_DRIVER MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
-#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT MHI_ENABLE_EXPERIMENTAL_S3_DRIVER
 
 namespace esphome {
 namespace mhi_ac_ctrl {
-
 class MhiTransportManager {
  public:
   void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
@@ -59,7 +58,6 @@ class MhiTransportManager {
                  uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
                  uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
                  uint32_t external_clock_sample_delay_nops = 0U);
-
   void set_rmt_spi_frame_gap_us(uint32_t frame_gap_us) {
     rmt_spi_frame_gap_us_ = frame_gap_us;
   }
@@ -73,7 +71,6 @@ class MhiTransportManager {
   void shutdown();
 
   std::size_t read_rx(uint8_t* dst, std::size_t max_len);
-
   // Stages an immutable TX envelope. Real-time transmission remains owned by
   // the selected transport. Completion is reported only after the frame was
   // actually clocked onto the bus.
@@ -93,7 +90,6 @@ class MhiTransportManager {
   bool auto_tx_flush() const {
     return auto_tx_flush_;
   }
-
   void set_rx_byte_critical_sections(bool enabled);
   bool rx_byte_critical_sections() const;
   bool tx_uses_bus_marker() const;
@@ -129,7 +125,6 @@ class MhiTransportManager {
   std::string transport_driver_name_{"split"};
   std::string rx_driver_name_{"fast_gpio_rx"};
   std::string tx_driver_name_{"fast_gpio_tx"};
-
   MhiFastGpioRxDriver fast_gpio_rx_{};
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   MhiFastGpioTxDriver fast_gpio_tx_{};
@@ -147,7 +142,6 @@ class MhiTransportManager {
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxDriver external_clock_rx_{};
 #endif
-
   IMhiDuplexTransport* duplex_{nullptr};
   IMhiRxDriver* rx_{&fast_gpio_rx_};
 #if MHI_ENABLE_SPLIT_TX_DRIVER
@@ -159,7 +153,6 @@ class MhiTransportManager {
   bool rx_ready_{false};
   bool tx_ready_{false};
   bool auto_tx_flush_{true};
-
   portMUX_TYPE tx_mux_ = portMUX_INITIALIZER_UNLOCKED;
   MhiTxEnvelope pending_tx_envelope_{};
   MhiTxCompletionQueue<8U> tx_completions_{};
@@ -170,7 +163,6 @@ class MhiTransportManager {
   uint32_t last_consumed_bus_marker_sequence_{0U};
   uint32_t last_stale_bus_marker_sequence_{0U};
   uint32_t tx_backoff_until_ms_{0U};
-
   // Arm TX from a new RX frame-end marker, then make one blocking TX attempt
   // against the real next SCK burst. This avoids age-window retry storms while
   // still giving the AC-owned clock enough time to arrive.
@@ -180,7 +172,6 @@ class MhiTransportManager {
   uint32_t rmt_spi_frame_gap_us_{1000U};
   uint32_t last_duplex_tx_completed_{0U};
   uint32_t last_duplex_tx_failures_{0U};
-
   MhiDiagnostics* diagnostics_{nullptr};
 };
 

@@ -5,7 +5,6 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-
 #if MHI_RMT_CS_SPI_SUPPORTED
 #include <driver/gpio.h>
 #include <esp_err.h>
@@ -21,19 +20,37 @@ namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_rmt_cs_spi";
 
+#if MHI_RMT_CS_SPI_SUPPORTED
+namespace {
+
+constexpr MhiRmtCsSpiTarget current_target() {
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  return MhiRmtCsSpiTarget::ESP32;
+#else
+  return MhiRmtCsSpiTarget::ESP32_S3;
+#endif
+}
+
+}  // namespace
+#endif
+
 MhiRmtCsSpiTransport::~MhiRmtCsSpiTransport() {
   this->shutdown();
 }
 
 bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
   pins_ = pins;
-
 #if !MHI_RMT_CS_SPI_SUPPORTED
-  ESP_LOGE(TAG, "rmt_cs_spi requires ESP-IDF on ESP32-S3");
+  ESP_LOGE(TAG, "%s requires ESP-IDF on ESP32 or ESP32-S3", this->name());
   ready_ = false;
   return false;
 #else
   this->cleanup_();
+
+  if (!mhi_rmt_cs_spi_target_supported(current_target())) {
+    ESP_LOGE(TAG, "%s is not supported on this ESP target", this->name());
+    return false;
+  }
 
   if (!this->validate_config_()) {
     return false;
@@ -49,7 +66,6 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
   transaction_queue_errors_ = 0U;
   dropped_frames_ = 0U;
   last_diag_log_ms_ = 0U;
-
   portENTER_CRITICAL(&mux_);
   completed_frames_.clear();
   tx_mailbox_.clear();
@@ -69,7 +85,6 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
     this->cleanup_();
     return false;
   }
-
   if (!this->start_task_()) {
     this->cleanup_();
     return false;
@@ -82,20 +97,18 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
     this->cleanup_();
     return false;
   }
-
   // The transaction is queued while CS is inactive. Pull internal CS active
   // only after SPI, RMT, and the owner task are ready.
   this->connect_internal_cs_(false);
   ready_ = true;
-
   ESP_LOGW(TAG,
-           "RMT-CS SPI duplex enabled: host=SPI2 SCK=%d MOSI=%d MISO=%d mode=3 LSB-first DMA=%u bytes "
+           "RMT-CS SPI duplex enabled: driver=%s host=SPI2 SCK=%d MOSI=%d MISO=%d mode=3 LSB-first "
+           "buffer=FIFO transfer=%u bytes "
            "frame=%u frame_gap=%luus task_core=%d task_priority=%lu task_stack=%lu",
-           pins_.sck, pins_.mosi, pins_.miso, static_cast<unsigned int>(kDmaTransferBytes),
+           this->name(), pins_.sck, pins_.mosi, pins_.miso, static_cast<unsigned int>(kTransferBytes),
            static_cast<unsigned int>(config_.frame_size_hint), static_cast<unsigned long>(config_.frame_gap_us),
            config_.task_core_id, static_cast<unsigned long>(config_.task_priority),
            static_cast<unsigned long>(config_.task_stack_size));
-
   return true;
 #endif
 }
@@ -111,7 +124,6 @@ void MhiRmtCsSpiTransport::loop() {
     return;
   }
   last_diag_log_ms_ = now;
-
   uint32_t boundaries = 0U;
   uint32_t rearm_errors = 0U;
   uint32_t completed_transactions = 0U;
@@ -130,7 +142,6 @@ void MhiRmtCsSpiTransport::loop() {
   std::size_t completion_depth = 0U;
   std::size_t completion_high_water = 0U;
   uint32_t completion_dropped = 0U;
-
   portENTER_CRITICAL(&mux_);
   boundaries = rmt_boundaries_;
   rearm_errors = rmt_rearm_errors_;
@@ -151,7 +162,6 @@ void MhiRmtCsSpiTransport::loop() {
   completion_high_water = tx_completions_.high_water_mark();
   completion_dropped = tx_completions_.dropped();
   portEXIT_CRITICAL(&mux_);
-
   ESP_LOGI(TAG,
            "runtime: boundaries=%lu completed=%lu tx_completed=%lu tx_failures=%lu frame20=%lu frame33=%lu "
            "invalid_len=%lu result_errors=%lu queue_errors=%lu rmt_rearm_errors=%lu buffered_frames=%u "
@@ -170,7 +180,6 @@ void MhiRmtCsSpiTransport::loop() {
            task_running_.load(std::memory_order_acquire) ? "YES" : "NO");
 #endif
 }
-
 void MhiRmtCsSpiTransport::shutdown() {
 #if MHI_RMT_CS_SPI_SUPPORTED
   this->cleanup_();
@@ -190,7 +199,6 @@ std::size_t MhiRmtCsSpiTransport::read(uint8_t* dst, std::size_t max_len) {
   }
 
   MhiCapturedFrame frame{};
-
   portENTER_CRITICAL(&mux_);
   const bool available = completed_frames_.pop(frame);
   portEXIT_CRITICAL(&mux_);
@@ -207,7 +215,6 @@ std::size_t MhiRmtCsSpiTransport::read(uint8_t* dst, std::size_t max_len) {
              static_cast<unsigned int>(frame.len), static_cast<unsigned int>(max_len));
     return 0U;
   }
-
   std::memcpy(dst, frame.data.data(), frame.len);
   return frame.len;
 #endif
@@ -228,7 +235,6 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
   return staged;
 #endif
 }
-
 bool MhiRmtCsSpiTransport::take_tx_completion(MhiTxCompletion& completion) {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   (void)completion;
@@ -240,7 +246,6 @@ bool MhiRmtCsSpiTransport::take_tx_completion(MhiTxCompletion& completion) {
   return available;
 #endif
 }
-
 uint32_t MhiRmtCsSpiTransport::completed_tx_frames() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -252,7 +257,6 @@ uint32_t MhiRmtCsSpiTransport::completed_tx_frames() const {
   return value;
 #endif
 }
-
 uint32_t MhiRmtCsSpiTransport::tx_failures() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -264,7 +268,6 @@ uint32_t MhiRmtCsSpiTransport::tx_failures() const {
   return value;
 #endif
 }
-
 std::size_t MhiRmtCsSpiTransport::tx_completion_queue_depth() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -275,7 +278,6 @@ std::size_t MhiRmtCsSpiTransport::tx_completion_queue_depth() const {
   return value;
 #endif
 }
-
 std::size_t MhiRmtCsSpiTransport::tx_completion_queue_high_water() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -286,7 +288,6 @@ std::size_t MhiRmtCsSpiTransport::tx_completion_queue_high_water() const {
   return value;
 #endif
 }
-
 uint32_t MhiRmtCsSpiTransport::tx_completion_queue_dropped() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -297,7 +298,6 @@ uint32_t MhiRmtCsSpiTransport::tx_completion_queue_dropped() const {
   return value;
 #endif
 }
-
 std::size_t MhiRmtCsSpiTransport::rx_queue_depth() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -308,7 +308,6 @@ std::size_t MhiRmtCsSpiTransport::rx_queue_depth() const {
   return value;
 #endif
 }
-
 std::size_t MhiRmtCsSpiTransport::rx_queue_high_water() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -319,7 +318,6 @@ std::size_t MhiRmtCsSpiTransport::rx_queue_high_water() const {
   return value;
 #endif
 }
-
 uint32_t MhiRmtCsSpiTransport::rx_queue_overwritten() const {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   return 0U;
@@ -330,7 +328,6 @@ uint32_t MhiRmtCsSpiTransport::rx_queue_overwritten() const {
   return value;
 #endif
 }
-
 #if MHI_RMT_CS_SPI_SUPPORTED
 bool MhiRmtCsSpiTransport::validate_config_() const {
   if (pins_.sck < 0 || pins_.mosi < 0 || pins_.miso < 0) {
@@ -342,7 +339,6 @@ bool MhiRmtCsSpiTransport::validate_config_() const {
     ESP_LOGE(TAG, "RMT-CS SPI setup failed: SCK, MOSI, and MISO must use different GPIOs");
     return false;
   }
-
   if (config_.frame_size_hint != kMhiFrame20Bytes && config_.frame_size_hint != kMhiFrame33Bytes) {
     ESP_LOGE(TAG, "RMT-CS SPI setup failed: unsupported frame size hint=%u",
              static_cast<unsigned int>(config_.frame_size_hint));
@@ -354,7 +350,6 @@ bool MhiRmtCsSpiTransport::validate_config_() const {
              static_cast<unsigned long>(config_.frame_gap_us));
     return false;
   }
-
   if (config_.task_stack_size < 4096U || config_.task_priority == 0U || config_.task_core_id < -1 ||
       config_.task_core_id > 1) {
     ESP_LOGE(TAG, "RMT-CS SPI setup failed: invalid task config stack=%lu priority=%lu core=%d",
@@ -365,7 +360,6 @@ bool MhiRmtCsSpiTransport::validate_config_() const {
 
   return true;
 }
-
 bool IRAM_ATTR MhiRmtCsSpiTransport::rmt_receive_done_callback_(rmt_channel_handle_t channel,
                                                                 const rmt_rx_done_event_data_t* event_data,
                                                                 void* user_context) {
@@ -377,7 +371,6 @@ bool IRAM_ATTR MhiRmtCsSpiTransport::rmt_receive_done_callback_(rmt_channel_hand
   if (user_context == nullptr) {
     return false;
   }
-
   auto* self = static_cast<MhiRmtCsSpiTransport*>(user_context);
   self->on_frame_boundary_from_isr_();
   return false;
@@ -393,23 +386,19 @@ void MhiRmtCsSpiTransport::task_entry_(void* arg) {
   self->task_loop_();
   vTaskDelete(nullptr);
 }
-
 bool MhiRmtCsSpiTransport::allocate_transaction_buffers_() {
+  constexpr uint32_t capabilities = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   for (auto& slot : transaction_slots_) {
-    slot.rx_buffer = static_cast<uint8_t*>(
-        heap_caps_calloc(kDmaTransferBytes, sizeof(uint8_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
-    slot.tx_buffer = static_cast<uint8_t*>(
-        heap_caps_calloc(kDmaTransferBytes, sizeof(uint8_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
-
+    slot.rx_buffer = static_cast<uint8_t*>(heap_caps_calloc(kTransferBytes, sizeof(uint8_t), capabilities));
+    slot.tx_buffer = static_cast<uint8_t*>(heap_caps_calloc(kTransferBytes, sizeof(uint8_t), capabilities));
     if (slot.rx_buffer == nullptr || slot.tx_buffer == nullptr) {
-      ESP_LOGE(TAG, "Failed to allocate %u-byte DMA transaction buffers", static_cast<unsigned int>(kDmaTransferBytes));
+      ESP_LOGE(TAG, "Failed to allocate %u-byte FIFO transaction buffers", static_cast<unsigned int>(kTransferBytes));
       return false;
     }
   }
 
   return true;
 }
-
 bool MhiRmtCsSpiTransport::setup_spi_() {
   spi_bus_config_t bus_config{};
   bus_config.mosi_io_num = pins_.mosi;
@@ -421,22 +410,40 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
   bus_config.data5_io_num = -1;
   bus_config.data6_io_num = -1;
   bus_config.data7_io_num = -1;
-  bus_config.max_transfer_sz = static_cast<int>(kDmaTransferBytes);
+  bus_config.max_transfer_sz = static_cast<int>(kTransferBytes);
   bus_config.flags = SPICOMMON_BUSFLAG_GPIO_PINS | SPICOMMON_BUSFLAG_SLAVE;
-
   spi_slave_interface_config_t slave_config{};
   slave_config.spics_io_num = -1;
   slave_config.flags = SPI_SLAVE_BIT_LSBFIRST;
   slave_config.queue_size = static_cast<int>(kTransactionQueueDepth);
   slave_config.mode = 3;
 
-  const esp_err_t result = spi_slave_initialize(host_, &bus_config, &slave_config, SPI_DMA_CH_AUTO);
+  const esp_err_t result = spi_slave_initialize(host_, &bus_config, &slave_config, SPI_DMA_DISABLED);
   if (result != ESP_OK) {
     ESP_LOGE(TAG, "spi_slave_initialize failed: %s", esp_err_to_name(result));
     return false;
   }
-
   spi_initialized_ = true;
+
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  if (mhi_rmt_cs_spi_needs_mode3_edge_fix(current_target())) {
+    // ESP-IDF configures original-ESP32 slave mode 3 with ck_idle_edge=0 and
+    // ck_i_edge=0 for CPU-FIFO transfers. This samples MOSI on the falling
+    // launch edge, which is also when the MHI master changes data. Override
+    // the two clock-edge fields before the first transaction is queued so MOSI
+    // is sampled on the rising latch edge.
+    spi_dev_t* const hw = spi_periph_signal[host_].hw;
+    if (hw == nullptr) {
+      ESP_LOGE(TAG, "Unable to access SPI%u registers for FIFO mode-3 edge correction",
+               static_cast<unsigned int>(host_ + 1));
+      return false;
+    }
+    hw->pin.ck_idle_edge = 1;
+    hw->user.ck_i_edge = 1;
+    ESP_LOGW(TAG, "Applied original ESP32 FIFO mode-3 edge correction");
+  }
+#endif
+
   this->connect_internal_cs_(true);
   return true;
 }
@@ -447,7 +454,6 @@ bool MhiRmtCsSpiTransport::setup_rmt_() {
   channel_config.clk_src = RMT_CLK_SRC_DEFAULT;
   channel_config.resolution_hz = 1000000U;
   channel_config.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
-
   esp_err_t result = rmt_new_rx_channel(&channel_config, &rmt_channel_);
   if (result != ESP_OK) {
     ESP_LOGE(TAG, "rmt_new_rx_channel failed: %s", esp_err_to_name(result));
@@ -456,7 +462,6 @@ bool MhiRmtCsSpiTransport::setup_rmt_() {
 
   rmt_rx_event_callbacks_t callbacks{};
   callbacks.on_recv_done = &MhiRmtCsSpiTransport::rmt_receive_done_callback_;
-
   result = rmt_rx_register_event_callbacks(rmt_channel_, &callbacks, this);
   if (result != ESP_OK) {
     ESP_LOGE(TAG, "rmt_rx_register_event_callbacks failed: %s", esp_err_to_name(result));
@@ -469,7 +474,6 @@ bool MhiRmtCsSpiTransport::setup_rmt_() {
     return false;
   }
   rmt_enabled_ = true;
-
   rmt_receive_config_ = {};
   rmt_receive_config_.signal_range_min_ns = 1000U;
   rmt_receive_config_.signal_range_max_ns = config_.frame_gap_us * 1000U;
@@ -483,14 +487,12 @@ bool MhiRmtCsSpiTransport::setup_glitch_filter_() {
   gpio_pin_glitch_filter_config_t filter_config{};
   filter_config.clk_src = GLITCH_FILTER_CLK_SRC_DEFAULT;
   filter_config.gpio_num = static_cast<gpio_num_t>(pins_.sck);
-
   esp_err_t result = gpio_new_pin_glitch_filter(&filter_config, &glitch_filter_);
   if (result != ESP_OK) {
     ESP_LOGW(TAG, "gpio_new_pin_glitch_filter failed; continuing without filter: %s", esp_err_to_name(result));
     glitch_filter_ = nullptr;
     return false;
   }
-
   result = gpio_glitch_filter_enable(glitch_filter_);
   if (result != ESP_OK) {
     ESP_LOGW(TAG, "gpio_glitch_filter_enable failed; continuing without filter: %s", esp_err_to_name(result));
@@ -509,7 +511,6 @@ bool MhiRmtCsSpiTransport::start_task_() {
   stop_requested_ = false;
   task_running_ = false;
   task_handle_ = nullptr;
-
   BaseType_t created = pdFALSE;
   if (config_.task_core_id >= 0) {
     created = xTaskCreatePinnedToCore(&MhiRmtCsSpiTransport::task_entry_, "mhi_spi_transport", config_.task_stack_size,
@@ -519,7 +520,6 @@ bool MhiRmtCsSpiTransport::start_task_() {
     created = xTaskCreate(&MhiRmtCsSpiTransport::task_entry_, "mhi_spi_transport", config_.task_stack_size, this,
                           static_cast<UBaseType_t>(config_.task_priority), &task_handle_);
   }
-
   if (created != pdPASS || task_handle_ == nullptr) {
     ESP_LOGE(TAG, "Transport task start failed: stack=%lu priority=%lu core=%d",
              static_cast<unsigned long>(config_.task_stack_size), static_cast<unsigned long>(config_.task_priority),
@@ -530,26 +530,23 @@ bool MhiRmtCsSpiTransport::start_task_() {
 
   return true;
 }
-
 bool MhiRmtCsSpiTransport::queue_transaction_(TransactionSlot& slot) {
   if (slot.rx_buffer == nullptr || slot.tx_buffer == nullptr) {
     return false;
   }
 
-  std::memset(slot.rx_buffer, 0, kDmaTransferBytes);
-  std::memset(slot.tx_buffer, 0, kDmaTransferBytes);
+  std::memset(slot.rx_buffer, 0, kTransferBytes);
+  std::memset(slot.tx_buffer, 0, kTransferBytes);
   slot.tx_envelope = {};
 
   portENTER_CRITICAL(&mux_);
-  tx_mailbox_.take(slot.tx_buffer, kDmaTransferBytes, slot.tx_envelope);
+  tx_mailbox_.take(slot.tx_buffer, kTransferBytes, slot.tx_envelope);
   portEXIT_CRITICAL(&mux_);
-
   slot.transaction = {};
-  slot.transaction.length = kDmaTransferBytes * 8U;
+  slot.transaction.length = kTransferBytes * 8U;
   slot.transaction.rx_buffer = slot.rx_buffer;
   slot.transaction.tx_buffer = slot.tx_buffer;
   slot.transaction.user = &slot;
-
   const esp_err_t result = spi_slave_queue_trans(host_, &slot.transaction, pdMS_TO_TICKS(20));
   if (result != ESP_OK) {
     MhiTxCompletion completion{};
@@ -561,7 +558,6 @@ bool MhiRmtCsSpiTransport::queue_transaction_(TransactionSlot& slot) {
       completion.success = false;
       completion.completed_at_ms = millis();
     }
-
     portENTER_CRITICAL(&mux_);
     transaction_queue_errors_++;
     if (slot.tx_envelope.valid()) {
@@ -580,7 +576,6 @@ bool MhiRmtCsSpiTransport::queue_transaction_(TransactionSlot& slot) {
 
 void MhiRmtCsSpiTransport::task_loop_() {
   task_running_ = true;
-
   while (!stop_requested_.load(std::memory_order_acquire)) {
     spi_slave_transaction_t* completed = nullptr;
     const esp_err_t result = spi_slave_get_trans_result(host_, &completed, pdMS_TO_TICKS(100));
@@ -588,7 +583,6 @@ void MhiRmtCsSpiTransport::task_loop_() {
     if (result == ESP_ERR_TIMEOUT) {
       continue;
     }
-
     if (result != ESP_OK) {
       portENTER_CRITICAL(&mux_);
       transaction_result_errors_++;
@@ -604,7 +598,6 @@ void MhiRmtCsSpiTransport::task_loop_() {
     if (stop_requested_.load(std::memory_order_acquire)) {
       break;
     }
-
     if (completed == nullptr || completed->user == nullptr) {
       ready_ = false;
       break;
@@ -622,14 +615,12 @@ void MhiRmtCsSpiTransport::task_loop_() {
   }
 
   task_running_.store(false, std::memory_order_release);
-
   // Publish task completion before self-deleting. cleanup_() treats a null
   // handle as the ownership hand-off point and may then release SPI/RMT.
   portENTER_CRITICAL(&mux_);
   task_handle_ = nullptr;
   portEXIT_CRITICAL(&mux_);
 }
-
 void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_t* completed) {
   if (completed == nullptr || completed->user == nullptr) {
     portENTER_CRITICAL(&mux_);
@@ -638,19 +629,16 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
     ESP_LOGW(TAG, "Completed SPI transaction did not identify its transaction slot");
     return;
   }
-
   auto* slot = static_cast<TransactionSlot*>(completed->user);
   const std::size_t received_bits = completed->trans_len;
   const bool whole_bytes = (received_bits % 8U) == 0U;
   const std::size_t received_bytes = whole_bytes ? received_bits / 8U : 0U;
   const bool valid_frame_len =
       whole_bytes && (received_bytes == kMhiFrame20Bytes || received_bytes == kMhiFrame33Bytes);
-
   uint32_t sequence = 0U;
   uint32_t frame_end_us = 0U;
   const bool command_completion = slot->tx_envelope.is_command();
   MhiTxCompletion completion{};
-
   if (command_completion) {
     completion.generation = slot->tx_envelope.generation;
     completion.kind = slot->tx_envelope.kind;
@@ -663,13 +651,11 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
   portENTER_CRITICAL(&mux_);
   sequence = marker_sequence_;
   frame_end_us = marker_frame_end_us_;
-
   if (valid_frame_len) {
     const uint32_t overwritten_before = completed_frames_.overwritten_frames();
     completed_frames_.push(slot->rx_buffer, received_bytes, sequence, frame_end_us);
     const uint32_t overwritten_after = completed_frames_.overwritten_frames();
     dropped_frames_ += overwritten_after - overwritten_before;
-
     completed_transactions_++;
     if (received_bytes == kMhiFrame20Bytes) {
       frames_20_++;
@@ -687,7 +673,6 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
     } else {
       tx_failures_++;
     }
-
     if (command_completion) {
       if (!tx_completions_.push(completion)) {
         tx_failures_++;
@@ -708,7 +693,6 @@ void MhiRmtCsSpiTransport::cleanup_() {
   if (spi_initialized_) {
     this->connect_internal_cs_(true);
   }
-
 #if SOC_GPIO_SUPPORT_PIN_GLITCH_FILTER
   if (glitch_filter_ != nullptr) {
     gpio_glitch_filter_disable(glitch_filter_);
@@ -725,7 +709,6 @@ void MhiRmtCsSpiTransport::cleanup_() {
     rmt_del_channel(rmt_channel_);
     rmt_channel_ = nullptr;
   }
-
   TaskHandle_t task_to_delete = nullptr;
   for (uint8_t attempt = 0U; attempt < 25U; attempt++) {
     portENTER_CRITICAL(&mux_);
@@ -742,7 +725,6 @@ void MhiRmtCsSpiTransport::cleanup_() {
   task_to_delete = task_handle_;
   task_handle_ = nullptr;
   portEXIT_CRITICAL(&mux_);
-
   if (task_to_delete != nullptr) {
     // The task did not leave spi_slave_get_trans_result() within the bounded
     // shutdown window. Force deletion before freeing the peripheral.
@@ -754,7 +736,6 @@ void MhiRmtCsSpiTransport::cleanup_() {
     spi_slave_free(host_);
     spi_initialized_ = false;
   }
-
   for (auto& slot : transaction_slots_) {
     if (slot.rx_buffer != nullptr) {
       heap_caps_free(slot.rx_buffer);
@@ -767,7 +748,6 @@ void MhiRmtCsSpiTransport::cleanup_() {
     slot.transaction = {};
     slot.tx_envelope = {};
   }
-
   portENTER_CRITICAL(&mux_);
   completed_frames_.clear();
   tx_mailbox_.clear();
@@ -778,19 +758,16 @@ void MhiRmtCsSpiTransport::cleanup_() {
 
   stop_requested_ = false;
 }
-
 void MhiRmtCsSpiTransport::connect_internal_cs_(bool inactive_high) {
   const uint32_t signal = spi_periph_signal[host_].spics_in;
   const uint32_t source = inactive_high ? GPIO_MATRIX_CONST_ONE_INPUT : GPIO_MATRIX_CONST_ZERO_INPUT;
   esp_rom_gpio_connect_in_signal(source, signal, false);
 }
-
 void IRAM_ATTR MhiRmtCsSpiTransport::on_frame_boundary_from_isr_() {
   // End the current full-duplex SPI transaction. The owner task queues the
   // next descriptor during the frame gap and then asserts internal CS again.
   const uint32_t signal = spi_periph_signal[host_].spics_in;
   esp_rom_gpio_connect_in_signal(GPIO_MATRIX_CONST_ONE_INPUT, signal, false);
-
   portENTER_CRITICAL_ISR(&mux_);
   marker_sequence_++;
   marker_frame_end_us_ = static_cast<uint32_t>(esp_timer_get_time());

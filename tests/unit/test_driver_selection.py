@@ -34,6 +34,5 @@ class DriverSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(DriverSelectionError, "No default TX driver"):
             resolve_tx_driver("unknown_rx")
 
-
 if __name__ == "__main__":
     unittest.main()

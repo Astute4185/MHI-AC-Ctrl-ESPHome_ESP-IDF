@@ -11,9 +11,10 @@ This is not a clean-room protocol project. It builds on the original community M
 The currently validated runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. The conservative default remains `command_worker: false`; the combined command and classified-RX worker is opt-in while protocol mapping verification continues.
 
 - `fast_gpio_rx` with `fast_gpio_tx` remains the conservative stable baseline.
-- `external_clock_rx` with `fast_gpio_tx` is the stable non-S3 path currently running on an M5Stack Atom based on the original ESP32.
+- `external_clock_rx` with `fast_gpio_tx` is the stable non-S3 split path currently running on an M5Stack Atom based on the original ESP32.
 - `rmt_spi_rx` with `fast_gpio_tx` is the stable hardware-assisted split path on ESP32-S3. It completed a roughly 47.5-hour soak with clean RX protocol health.
-- `rmt_cs_spi` with `command_worker: true` completed an approximately 32-hour classified-worker soak on ESP32-S3. More than 2.3 million frames were received with zero checksum failures, sync losses, dropped bytes, RX overwrites, completion drops, SPI queue errors, or RMT rearm errors. The transport and worker architecture therefore pass the initial extended soak, but the driver remains **In testing** until semantic command/status mappings are verified.
+- `rmt_cs_spi` is the FIFO-backed full-duplex path for both the original dual-core ESP32 and ESP32-S3. It owns RX and TX, uses RMT-derived internal chip select, and disables SPI DMA because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
+- The original ESP32 path applies a target-specific mode-3 receive-edge correction; ESP32-S3 uses the normal ESP-IDF mode configuration.
 - ESP32-C3 remains in development with compile coverage only; runtime operation is not validated.
 
 Implemented functionality includes 20-byte and 33-byte frames, command confirmation, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, common status sensors, opdata sensors, and transport diagnostics.
@@ -29,19 +30,18 @@ Implemented functionality includes 20-byte and 33-byte frames, command confirmat
 | `fast_gpio_rx` | `fast_gpio_tx` | **Stable** |
 | `external_clock_rx` | `fast_gpio_tx` | **Stable** |
 | `rmt_spi_rx` | `fast_gpio_tx` | **Stable** |
-| `rmt_cs_spi` | Integrated full-duplex TX | **In testing — extended worker soak passed; 3D Auto Confirmation Tracing outstanding** |
+| `rmt_cs_spi` | Integrated full-duplex TX | **In testing — FIFO-backed on ESP32 and ESP32-S3** |
 
 `Stable` means the driver combination has completed hardware validation and little to no transport-level change is expected. `In testing` means the implementation is functional but still undergoing soak or compatibility testing. `In development` means it is not ready for normal use.
 
-The stable split-driver results were obtained with `command_worker` disabled. The extended `rmt_cs_spi` soak used `command_worker: true` with classified worker-side RX decode and main-loop publication.
-Future validation work is required before determining if this is a valid configuration.
+The stable split-driver results were obtained with `command_worker` disabled. The full-duplex `rmt_cs_spi` path supports classified worker-side RX decode and main-loop publication. Hardware testing on both ESP32 and ESP32-S3 established that the FIFO-backed implementation can provide complete-frame full-duplex operation without the DMA-specific alignment and buffer-management path.
 
 ### Hardware driver guide
 
 | ESP chip | Validated hardware | Recommended RX selection | Effective TX | Status | Notes |
 |---|---|---|---|---|---|
-| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` | `fast_gpio_tx` | **Stable** | Current running non-S3 configuration. Use `fast_gpio_rx` as the conservative fallback. |
-| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_spi_rx`; `rmt_cs_spi` for active testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | `rmt_spi_rx` completed extended soak testing. `rmt_cs_spi` plus the classified worker completed an approximately 32-hour soak with clean transport health. Defect found in 3D Auto confirmation that is under investigation. |
+| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` for stable split use; `rmt_cs_spi` for full-duplex testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `external_clock_rx`; **In testing** for `rmt_cs_spi` | The FIFO-backed full-duplex path passed 33-byte RX/TX and command testing. The transport applies the original-ESP32 mode-3 input-edge correction internally. |
+| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_spi_rx` for stable split use; `rmt_cs_spi` for full-duplex testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | The same FIFO-backed RMT-CS SPI architecture is used on ESP32-S3 without the original-ESP32 edge override. |
 | ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` | `fast_gpio_tx` | **In development** | Compile coverage only. Single-core runtime behaviour has not been validated. |
 
 Add tested boards or modules to the matching chip row as results become available. Do not add a new row for every board; each ESP chip version should have one consolidated row.
@@ -72,13 +72,13 @@ MhiAcCtrl:
   command_worker: false
 ```
 
-Full-duplex ESP32-S3 classified-worker test configuration:
+FIFO-backed full-duplex configuration for ESP32 or ESP32-S3:
 
 ```yaml
 MhiAcCtrl:
   id: mhi_ac
   frame_size: 33
-  sck_pin: 8
+  sck_pin: 8       # use pins appropriate to the selected board
   mosi_pin: 38
   miso_pin: 39
   rx_driver: rmt_cs_spi
@@ -87,7 +87,9 @@ MhiAcCtrl:
   command_worker_start_delay_ms: 0
 ```
 
-`rmt_cs_spi` owns RX and TX, so it rejects any `tx_driver` override. For split drivers, the previous explicit configuration remains valid:
+`rmt_cs_spi` owns RX and TX and rejects any `tx_driver` override. It uses the SPI CPU FIFO with DMA disabled on both supported chip families. No physical CS pin is required; RMT derives the transaction boundary from the SCK idle gap.
+
+For split drivers, the previous explicit configuration remains valid:
 
 ```yaml
 rx_driver: rmt_spi_rx
@@ -525,13 +527,15 @@ Run lint:
 - Treat `rx_driver` as the primary selector and auto-resolve TX for split drivers.
 - Preserve explicit `tx_driver` support for existing split configurations and RX-only diagnostics.
 - Give full-duplex transports exclusive ownership of RX and TX.
+- Keep `rmt_cs_spi` FIFO-backed on both ESP32 and ESP32-S3; 20-byte and 33-byte MHI transactions do not require DMA.
 - Keep `command_worker` opt-in while the new command-completion lifecycle is under hardware validation.
 - Use latest-state catalogue slots instead of general status FIFOs.
 - Keep transport changes separate from protocol, decoder, and sensor-parity changes.
 
 ## Roadmap
 
-- Treat the `rmt_cs_spi` plus classified-worker extended soak as passed and freeze the transport architecture unless a transport defect is reproduced.
+- Complete extended cross-chip soak testing of the FIFO-backed `rmt_cs_spi` implementation on both the original ESP32 and ESP32-S3.
+- Compare protocol health, command confirmation, invalid transaction lengths, queue pressure, and loop timing across both chip families.
 - Run the protocol-code verification spike.
 - Capture one-setting-at-a-time MISO command deltas and returned MOSI feedback for power, mode, setpoint, fan, vertical vane, horizontal vane, and 3D Auto.
 - Resolve the 3D Auto defect only after determining whether its DB16/DB17 representation is a persistent bit, a momentary trigger, or a composite louver state.

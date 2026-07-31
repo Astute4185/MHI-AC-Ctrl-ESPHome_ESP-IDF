@@ -115,7 +115,7 @@ jobs:
 
       - name: Compile representative configurations
         if: github.event_name == 'pull_request'
-        run: ./scripts/compile-tests.sh smoke
+        run: ./scripts/compile-tests.sh compile
 
       - name: Compile complete matrix
         if: github.event_name == 'workflow_dispatch'

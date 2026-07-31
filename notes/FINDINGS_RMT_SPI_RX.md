@@ -1,18 +1,23 @@
-# RMT-Generated-CS SPI RX Findings
+# RMT-Generated-CS SPI Transport Findings
 
 ## Scope
 
-This document records the implementation, hardware validation, worker experiments, and long-duration soak findings for the Redux `rmt_spi_rx` backend on ESP32-S3.
+This document records the implementation, hardware validation, worker experiments, and long-duration soak findings for the Redux RMT-generated-CS SPI transport.
 
-The backend combines:
+The work progressed through two related implementations:
+
+- the original ESP32-S3 `rmt_spi_rx` receive backend, using DMA-backed SPI capture with `fast_gpio_tx`;
+- the integrated `rmt_cs_spi` full-duplex transport, initially proven on ESP32-S3 and subsequently consolidated onto the SPI CPU FIFO for both the original dual-core ESP32 and ESP32-S3.
+
+The transport combines:
 
 - RMT observation of the external SCK signal;
 - inter-frame idle detection to synthesise an internal SPI chip-select boundary;
 - ESP-IDF SPI slave capture in mode 3, LSB-first;
-- DMA-backed complete-frame transactions;
-- the existing Redux frame synchroniser, latest-slot catalogue, decoders, state, publishing, diagnostics, and command-confirmation paths.
+- complete-frame hardware transactions through the SPI CPU FIFO;
+- the existing Redux frame synchroniser, latest-slot catalogue, decoders, state, publishing, diagnostics, command coordination, and confirmation paths.
 
-It remains an experimental backend, but the RX path has now completed a roughly 47.5-hour soak with clean protocol health.
+The original ESP32-S3 DMA RX-only path completed a roughly 47.5-hour soak with clean protocol health. The FIFO-backed full-duplex path then passed hardware validation on the original dual-core ESP32 and ESP32-S3, establishing that DMA is not required for the integrated transport.
 
 ## Acknowledgement and design source
 
@@ -53,7 +58,7 @@ The RMT/SPI design closes that gap:
 ```text
 RMT detects SCK idle gap
   -> toggles internal SPI CS through the GPIO matrix
-  -> SPI slave completes one DMA transaction
+  -> SPI slave completes one hardware transaction
   -> Redux receives one complete 20-byte or 33-byte frame
 ```
 
@@ -100,6 +105,14 @@ Completed application-frame depth: 2
 ```
 
 The application queue is not intended as a history FIFO. The component drains available frames aggressively into the existing latest-slot frame catalogue.
+
+The integrated full-duplex transport exposes one driver selection:
+
+```yaml
+rx_driver: rmt_cs_spi
+```
+
+The driver owns RX and TX. A separate `tx_driver` is not configured. The same `sck_pin`, `mosi_pin`, `miso_pin`, and `rmt_spi_frame_gap_us` configuration is used on ESP32 and ESP32-S3.
 
 ## Initial RX-only hardware result
 
@@ -293,6 +306,142 @@ This requires targeted diagnostics before changing capacity. The next step shoul
 
 Increasing the catalogue size without identifying the rejected keys may only hide the underlying classification or keying problem.
 
+## 2026-07-30 — DMA is not required for MHI frames
+
+The integrated transport was initially DMA-backed because the ESP32-S3 implementation was already working and provided complete-frame buffers with low CPU involvement.
+
+Further review and hardware testing showed that DMA is not required for this protocol.
+
+### Technical basis
+
+The largest supported MHI frame is 33 bytes. The transport rounds its working buffer to 36 bytes, which remains within the SPI slave FIFO transaction capacity.
+
+The hardware requirement is:
+
+```text
+external SCK sampling
+full-duplex MOSI/MISO shifting
+one complete 20-byte or 33-byte transaction
+actual transaction-length reporting
+```
+
+DMA does not provide a functional requirement that the FIFO path cannot satisfy at this frame size.
+
+Removing DMA removes:
+
+- DMA-capable buffer allocation and alignment restrictions;
+- DMA channel selection and reset handling;
+- DMA-specific CS preparation behaviour;
+- a second transport mode and public driver label.
+
+The RMT-generated internal CS boundary and SPI transaction state machine remain unchanged.
+
+### FIFO comparison and consolidation
+
+The FIFO implementation was first validated independently against the established ESP32-S3 path. It was made available on both:
+
+```text
+original dual-core ESP32
+ESP32-S3
+```
+
+After cross-chip functional validation, the FIFO implementation became the sole `rmt_cs_spi` implementation. The production driver now always uses `SPI_DMA_DISABLED` and internal 8-bit-capable buffers.
+
+### Original ESP32 mode-3 edge correction
+
+The first original-ESP32 FIFO test produced correctly bounded 33-byte transactions, but the captured MOSI bytes were invalid:
+
+```text
+candidate frames:       0
+valid frames:           0
+signature misses:       19,765
+representative bytes:   ff ff e0
+```
+
+RMT boundaries, transaction completion, queueing, and transaction lengths were otherwise working. The failure was isolated to the original ESP32 SPI slave's CPU-FIFO mode-3 sampling edge.
+
+The original ESP32 path therefore applies a target-specific correction after SPI initialisation:
+
+```text
+ck_idle_edge = 1
+ck_i_edge    = 1
+```
+
+This correction is internal to the transport. It does not change YAML configuration, frame-gap settings, protocol decoding, or the ESP32-S3 path.
+
+### Initial original-ESP32 FIFO result
+
+Target:
+
+```text
+Original dual-core ESP32 rev 1.1
+ESPHome 2026.7.2
+ESP-IDF 5.5.x
+33-byte frames
+SCK=33 MOSI=25 MISO=21
+rmt_cs_spi
+classified command worker enabled
+```
+
+Representative result after the edge correction:
+
+```text
+Redux RX bytes:                  39,567
+Redux RX chunks:                1,199
+Candidate frames:               1,199
+Valid frames:                   1,199
+Invalid frames:                 0
+Checksum failures:              0
+Signature misses:               0
+Sync losses:                    0
+Dropped bytes:                  0
+
+TX frames:                      239
+TX failures:                    0
+TX command frames:              4
+Command confirmations:          6
+Command confirmation timeouts:  0
+Retries:                        0
+Retry exhaustions:              0
+
+RMT/SPI boundaries:             1,202
+Completed transactions:         1,200
+33-byte frames:                 1,200
+Invalid transaction lengths:    2
+SPI result errors:              0
+SPI queue errors:               0
+RMT re-arm errors:              0
+RX overwritten:                 0
+Dropped frames:                 0
+
+Loop average:                   48 us
+Loop maximum:                   4,622 us
+Loop over-budget:               0
+```
+
+Power, mode, and temperature changes were transmitted and confirmed by returned MOSI state. Opdata continued to advance.
+
+Two TX mailbox overwrites occurred while commands were being changed rapidly. They did not correlate with a TX failure, confirmation timeout, retry, or stale pending command. The two invalid transaction lengths were not exposed to the protocol parser: all 1,199 candidate frames were valid.
+
+### Finding
+
+The evidence supports the following conclusion:
+
+```text
+DMA is not required for 20-byte or 33-byte MHI transactions.
+```
+
+The FIFO path:
+
+- preserves hardware-assisted full-duplex capture and transmission;
+- preserves RMT-derived transaction boundaries;
+- supports both original ESP32 and ESP32-S3;
+- avoids DMA-specific allocation and transaction-management complexity;
+- has sufficient performance headroom for the observed bus rate;
+- completed original-ESP32 and ESP32-S3 functional validation.
+
+The resulting production position is one supported FIFO-backed `rmt_cs_spi` driver on both targets, with no DMA mode or alternate public driver label.
+
 ## Worker experiment
 
 Both workers were then enabled as a stress experiment:
@@ -333,7 +482,7 @@ The failure is scheduling architecture:
 
 ```text
 Hardware producer:
-  deterministic SPI/DMA completion
+  deterministic SPI transaction completion
 
 Generic workers:
   poll, yield, and compete for scheduling
@@ -349,9 +498,9 @@ Therefore the queue depth should not simply be increased. A deeper FIFO would re
 The required distinction is:
 
 ```text
-DMA transaction queue:
+SPI transaction queue:
   keep depth 4
-  hardware readiness mechanism
+  hardware readiness mechanism for the SPI transaction path
 
 Completed-frame handoff:
   keep depth 2
@@ -368,7 +517,7 @@ A conventional application FIFO is not the desired architecture. Repeated steady
 
 ## Recommended configuration
 
-Current recommended experimental ESP32-S3 configuration:
+The historical ESP32-S3 RX-only configuration remains useful as the long-soak split-path reference:
 
 ```yaml
 MhiAcCtrl:
@@ -379,15 +528,29 @@ MhiAcCtrl:
   rx_driver: rmt_spi_rx
   tx_driver: fast_gpio_tx
   rmt_spi_frame_gap_us: 1000
-  rx_worker: false
-  tx_worker: false
+  command_worker: false
 ```
 
-The stable project default may remain FastGPIO for compatibility, but `rmt_spi_rx` is now the preferred experimental RX path on ESP32-S3 and has completed a roughly 47.5-hour clean RX soak.
+The integrated cross-chip full-duplex configuration is:
 
-## Future RTOS direction
+```yaml
+MhiAcCtrl:
+  frame_size: 33
+  sck_pin: 33
+  mosi_pin: 25
+  miso_pin: 21
+  rx_driver: rmt_cs_spi
+  rmt_spi_frame_gap_us: 1000
+  command_worker: true
+```
 
-The next scheduling improvement should not be larger queues or faster polling. It should be event-driven ownership.
+Use pins appropriate to the selected board. Do not configure a separate `tx_driver`; `rmt_cs_spi` owns both RX and TX. The implementation uses the SPI CPU FIFO with DMA disabled on both ESP32 and ESP32-S3.
+
+## RTOS ownership direction
+
+The earlier worker experiment established that larger queues and faster generic polling were not the correct solution. The integrated `rmt_cs_spi` transport now moves real-time transaction ownership into the transport and uses the classified command worker for downstream decode and command coordination.
+
+The remaining direction should continue to favour event-driven ownership rather than polling.
 
 Preferred RX shape:
 
@@ -427,9 +590,12 @@ checksum failures = 0
 signature misses = 0
 sync losses = 0
 command confirmation timeouts = 0
+retry exhaustions = 0
+completion drops = 0
+TX mailbox overwrites remain explainable and do not affect commands
 opdata continues to advance
 opdata rejected-key diagnostics remain explainable
-FastGPIO TX failure rate does not regress
+FastGPIO TX failure rate does not regress on the historical hybrid path
 Home Assistant state matches the AC
 ```
 
@@ -439,6 +605,8 @@ Longer-term work should compare the same hardware and workload across:
 fast_gpio_rx + fast_gpio_tx
 external_clock_rx + fast_gpio_tx
 rmt_spi_rx + fast_gpio_tx
+rmt_cs_spi on ESP32-S3
+rmt_cs_spi on original ESP32
 ```
 
-The current evidence indicates that `rmt_spi_rx` provides the cleanest receive path and shifts the remaining optimisation target to TX and event-driven task scheduling.
+The historical evidence established RMT-generated-CS SPI as the cleanest receive path. The 2026-07-30 result extends that finding: the same hardware-assisted architecture operates full-duplex through the SPI FIFO on both supported chip families without DMA.
