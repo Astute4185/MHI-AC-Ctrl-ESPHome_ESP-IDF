@@ -10,6 +10,7 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 constexpr uint8_t kMhiMaxCommandAttempts = 3U;
+constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 struct MhiCommandTimeoutResult {
   uint32_t timed_out_mask{0U};
@@ -31,7 +32,6 @@ class MhiCommandCoordinator {
 
   bool prepare_next(MhiCommandState& command, MhiTxRuntime& runtime, const MhiTxBuildConfig& config,
                     MhiFrameBuffer& frame, MhiTxBuildResult& result, MhiTxEnvelope& envelope);
-
   void on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
                        MhiCommandState& command, bool staged, uint32_t staged_at_ms = 0U);
 
@@ -40,7 +40,6 @@ class MhiCommandCoordinator {
   uint32_t observe_status(const MhiStatusState& status);
   uint32_t settle_pending_mask(uint32_t mask);
   uint32_t supersede_pending(const MhiCommandState& patch);
-
   MhiCommandTimeoutResult expire(uint32_t now_ms, MhiCommandState& command);
 
   uint32_t staged_timeout_mask(uint32_t now_ms, uint32_t timeout_ms);
@@ -80,6 +79,12 @@ class MhiCommandCoordinator {
  private:
   static void restore_command_mask_(MhiCommandState& destination, const MhiCommandState& source, uint32_t mask);
   static uint32_t restore_intent_mask_(MhiCommandState& destination, const MhiCommandIntent& intent, uint32_t mask);
+
+  // Returns the extended bits from confirm_mask that have become obsolete.
+  // The latest complete horizontal + 3D target is retained for the next build.
+  uint32_t coalesce_extended_supersession_(const MhiCommandIntent& intent, uint32_t confirm_mask,
+                                           const MhiCommandState& patch);
+  void apply_coalesced_extended_patch_(MhiCommandState& command);
   void reset_attempts_();
 
   MhiCommandConfirmation confirmation_{};
@@ -92,6 +97,9 @@ class MhiCommandCoordinator {
   uint8_t confirmation_attempt_{0U};
   uint32_t in_flight_staged_ms_{0U};
   bool staged_timeout_reported_{false};
+
+  MhiCommandState coalesced_extended_patch_{};
+  bool coalesced_extended_patch_pending_{false};
 };
 
 }  // namespace mhi_ac_ctrl

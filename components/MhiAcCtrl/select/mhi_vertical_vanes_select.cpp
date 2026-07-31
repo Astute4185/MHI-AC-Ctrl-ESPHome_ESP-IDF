@@ -31,6 +31,15 @@ void MhiVerticalVanesSelect::control(const std::string& value) {
     return;
   }
 
+  // Home Assistant can call select_option with the value that is already
+  // published. Do not create a new confirmation generation for a no-op. The
+  // command coordinator still suppresses a duplicate while the same command
+  // is pending; this covers the already-confirmed case seen in the matrix.
+  if (this->current_option() == value) {
+    ESP_LOGD(TAG, "Duplicate or already-confirmed vertical vanes request ignored: %s", value.c_str());
+    return;
+  }
+
   this->parent_->request_vertical_vane_command(static_cast<uint8_t>(index.value() + 1U));
 
   ESP_LOGD(TAG, "Vertical vanes command staged: %s; waiting for confirmed MOSI state", value.c_str());

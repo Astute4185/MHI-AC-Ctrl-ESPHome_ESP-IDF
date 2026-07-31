@@ -99,10 +99,11 @@ bool MhiStatusDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedStatus& o
       }
     }
 
-    if (decoded.has_horizontal_vane) {
-      decoded.has_3d_auto = true;
-      decoded.three_d_auto = (mosi[DB17] & 0x04U) != 0U;
-    }
+    // 3D Auto is DB17 bit 2 and is independent of DB16 horizontal
+    // position validity. Preserve it even when the retained horizontal
+    // position cannot be normalised to the public 1..7/swing model.
+    decoded.has_3d_auto = true;
+    decoded.three_d_auto = (mosi[DB17] & 0x04U) != 0U;
   }
 
   out = decoded;
