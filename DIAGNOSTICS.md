@@ -198,7 +198,7 @@ Interpretation:
 | `completions` | Command frames reported complete after a real bus transaction | Increases only for command-bearing TX envelopes |
 | `rx_polls` | Worker RX polling passes | Increases only when `classified_rx=YES` |
 | `rx_batches` | Polls that produced at least one valid frame | Should increase continuously on an active bus |
-| `rx_chunks` | Transport chunks drained by the worker | Tracks queue/DMA handoff activity |
+| `rx_chunks` | Transport chunks drained by the worker | Tracks transport queue handoff activity |
 | `rx_frames` | Valid frames synchronised and catalogued by the worker | Should broadly track common `valid_frames` |
 | `rx_max_batch` | Largest number of valid frames processed in one poll | Normally small; sustained growth indicates worker starvation |
 | `worker_decode status/extended` | Decoded status writes and latest-value overwrites | Overwrites are expected when repeated status arrives before main-loop apply |
