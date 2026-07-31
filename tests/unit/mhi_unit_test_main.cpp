@@ -1,12 +1,15 @@
 #include <iostream>
 #include "mhi_test_common.h"
 
+namespace mhi_unit_tests {
+void command_coordinator_extended_louver_supersession_suite();
+}
+
 int main() {
   using namespace mhi_unit_tests;
 
   checksum_accepts_valid_20_byte_frame();
   checksum_rejects_bad_20_byte_frame();
-
   frame_sync_discards_garbage_and_extracts_valid_frame();
   frame_sync_waits_for_partial_frame();
   frame_sync_records_resync_stats();
@@ -14,7 +17,6 @@ int main() {
   frame_sync_33_byte_mode_consumes_full_frame_without_tail_resync_noise();
   frame_queue_preserves_complete_frames();
   frame_queue_overwrites_oldest_complete_frame();
-
   duplex_tx_mailbox_stages_and_consumes_20_byte_frame();
   duplex_tx_mailbox_latest_stage_replaces_unclaimed_frame();
   duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data();
@@ -40,6 +42,7 @@ int main() {
   command_coordinator_does_not_confirm_old_value_when_newer_request_is_queued();
   command_coordinator_retries_only_remaining_fields_and_caps_attempts();
   command_coordinator_reports_staged_timeout_once();
+  command_coordinator_extended_louver_supersession_suite();
   tx_completion_queue_preserves_order_and_rejects_overflow();
   worker_decoded_store_latest_status_overwrites_stale_status();
   worker_decoded_store_keeps_command_candidate_separate();
@@ -56,7 +59,6 @@ int main() {
   fan_profile_three_speed_collapses_code_zero_to_low();
   fan_profile_four_speed_exposes_code_zero_as_quiet();
   fan_profile_encodes_quiet_only_for_four_speed();
-
   status_decoder_decodes_core_fields();
   status_decoder_preserves_protocol_fan_code_zero();
   status_decoder_decodes_33_byte_vane_feedback();
@@ -121,7 +123,6 @@ int main() {
   diagnostics_snapshot_reports_command_confirmation_event_ages();
   diagnostics_snapshot_reports_loop_budget_timing();
   diagnostics_snapshot_handles_missing_event_ages();
-
 
   fixture_valid_status_frame_decodes();
   fixture_bad_checksum_rejects();

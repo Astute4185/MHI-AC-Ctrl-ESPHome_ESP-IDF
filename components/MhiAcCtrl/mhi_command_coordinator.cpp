@@ -11,6 +11,8 @@ void MhiCommandCoordinator::reset() {
   in_flight_command_before_build_ = {};
   in_flight_staged_ms_ = 0U;
   staged_timeout_reported_ = false;
+  coalesced_extended_patch_ = {};
+  coalesced_extended_patch_pending_ = false;
   this->reset_attempts_();
 }
 
@@ -20,6 +22,8 @@ bool MhiCommandCoordinator::prepare_next(MhiCommandState& command, MhiTxRuntime&
   if (command_in_flight_ || confirmation_.has_pending()) {
     return false;
   }
+
+  this->apply_coalesced_extended_patch_(command);
 
   if (!MhiTxBuilder::build_next_frame(command, runtime, config, frame, result) || frame.len == 0U) {
     return false;
@@ -51,6 +55,10 @@ void MhiCommandCoordinator::on_stage_result(const MhiTxEnvelope& envelope, const
 
   if (!staged) {
     restore_command_mask_(command, command_before_build, envelope.command_mask);
+    // A coalesced companion field may have been injected inside prepare_next()
+    // after command_before_build was captured. Restore from the encoded intent
+    // as a fallback so a queue failure cannot discard the latest composite target.
+    restore_intent_mask_(command, envelope.intent, envelope.command_mask);
     return;
   }
 
@@ -66,7 +74,6 @@ bool MhiCommandCoordinator::on_tx_completion(const MhiTxCompletion& completion, 
   if (!completion.is_command()) {
     return false;
   }
-
   if (!command_in_flight_ || completion.generation != in_flight_envelope_.generation) {
     return false;
   }
@@ -74,8 +81,14 @@ bool MhiCommandCoordinator::on_tx_completion(const MhiTxCompletion& completion, 
   if (completion.success) {
     uint32_t confirm_mask = in_flight_envelope_.command_mask;
 
-    // If a newer request for the same field arrived while this frame was in
-    // flight, do not let feedback for the old value block the newer command.
+    // A horizontal and 3D request share DB16/DB17. If a request for either
+    // field arrived while this frame was in flight and changes the transmitted
+    // composite target, abandon the old extended confirmation and retain one
+    // complete latest-state patch for the next generation.
+    confirm_mask &= ~this->coalesce_extended_supersession_(in_flight_envelope_.intent, confirm_mask, command);
+
+    // For independent fields, a newer request for the same field supersedes
+    // semantic confirmation of the value that just completed transmission.
     MhiCommandConfirmation in_flight_confirmation{};
     in_flight_confirmation.stage(in_flight_envelope_.intent, confirm_mask, completion.completed_at_ms);
     confirm_mask &= ~in_flight_confirmation.supersede(command);
@@ -87,6 +100,7 @@ bool MhiCommandCoordinator::on_tx_completion(const MhiTxCompletion& completion, 
     }
   } else {
     restore_command_mask_(command, in_flight_command_before_build_, in_flight_envelope_.command_mask);
+    restore_intent_mask_(command, in_flight_envelope_.intent, in_flight_envelope_.command_mask);
   }
 
   command_in_flight_ = false;
@@ -115,7 +129,15 @@ uint32_t MhiCommandCoordinator::settle_pending_mask(uint32_t mask) {
 }
 
 uint32_t MhiCommandCoordinator::supersede_pending(const MhiCommandState& patch) {
-  const uint32_t superseded = confirmation_.supersede(patch);
+  uint32_t superseded = 0U;
+
+  if (confirmation_.has_pending()) {
+    const uint32_t obsolete_extended =
+        this->coalesce_extended_supersession_(confirmation_.pending_intent(), confirmation_.pending_mask(), patch);
+    superseded |= confirmation_.settle_pending_mask(obsolete_extended);
+  }
+
+  superseded |= confirmation_.supersede(patch);
   if (!confirmation_.has_pending()) {
     this->reset_attempts_();
   }
@@ -133,7 +155,6 @@ MhiCommandTimeoutResult MhiCommandCoordinator::expire(uint32_t now_ms, MhiComman
   result.attempt = confirmation_attempt_ == 0U ? 1U : confirmation_attempt_;
   const uint32_t already_queued = command.pending_command_mask() & expiration.mask;
   result.superseded_mask = already_queued;
-
   if (result.attempt < kMhiMaxCommandAttempts) {
     result.retry_mask = restore_intent_mask_(command, expiration.intent, expiration.mask & ~already_queued);
     result.superseded_mask |= expiration.mask & ~(result.retry_mask | result.superseded_mask);
@@ -146,7 +167,6 @@ MhiCommandTimeoutResult MhiCommandCoordinator::expire(uint32_t now_ms, MhiComman
     result.exhausted_mask = expiration.mask & ~already_queued;
     this->reset_attempts_();
   }
-
   return result;
 }
 
@@ -158,6 +178,69 @@ uint32_t MhiCommandCoordinator::staged_timeout_mask(uint32_t now_ms, uint32_t ti
 
   staged_timeout_reported_ = true;
   return in_flight_envelope_.command_mask;
+}
+
+uint32_t MhiCommandCoordinator::coalesce_extended_supersession_(const MhiCommandIntent& intent, uint32_t confirm_mask,
+                                                                const MhiCommandState& patch) {
+  const uint32_t extended_confirm_mask = confirm_mask & kMhiExtendedLouverCommandMask;
+  const bool crosses_shared_domain =
+      ((extended_confirm_mask & MHI_COMMAND_HORIZONTAL_VANE) != 0U && patch.three_d_auto_set) ||
+      ((extended_confirm_mask & MHI_COMMAND_THREE_D_AUTO) != 0U && patch.horizontal_vane_set);
+  if (extended_confirm_mask == 0U || !intent.has_extended_louver_context || !crosses_shared_domain) {
+    return 0U;
+  }
+
+  MhiCommandState desired{};
+  desired.horizontal_vane_set = true;
+  desired.horizontal_vane = intent.horizontal_vane;
+  desired.three_d_auto_set = true;
+  desired.three_d_auto = intent.three_d_auto;
+
+  if (coalesced_extended_patch_pending_) {
+    if (coalesced_extended_patch_.horizontal_vane_set) {
+      desired.horizontal_vane = coalesced_extended_patch_.horizontal_vane;
+    }
+    if (coalesced_extended_patch_.three_d_auto_set) {
+      desired.three_d_auto = coalesced_extended_patch_.three_d_auto;
+    }
+  }
+
+  if (patch.horizontal_vane_set) {
+    desired.horizontal_vane = patch.horizontal_vane;
+  }
+  if (patch.three_d_auto_set) {
+    desired.three_d_auto = patch.three_d_auto;
+  }
+
+  const bool composite_changed =
+      desired.horizontal_vane != intent.horizontal_vane || desired.three_d_auto != intent.three_d_auto;
+  if (!composite_changed) {
+    return 0U;
+  }
+
+  coalesced_extended_patch_ = desired;
+  coalesced_extended_patch_pending_ = true;
+  return extended_confirm_mask;
+}
+
+void MhiCommandCoordinator::apply_coalesced_extended_patch_(MhiCommandState& command) {
+  if (!coalesced_extended_patch_pending_) {
+    return;
+  }
+
+  // Explicitly queued values are newer than the cached companion context and
+  // therefore take precedence. Fill only the missing side of the composite.
+  if (!command.horizontal_vane_set && coalesced_extended_patch_.horizontal_vane_set) {
+    command.horizontal_vane_set = true;
+    command.horizontal_vane = coalesced_extended_patch_.horizontal_vane;
+  }
+  if (!command.three_d_auto_set && coalesced_extended_patch_.three_d_auto_set) {
+    command.three_d_auto_set = true;
+    command.three_d_auto = coalesced_extended_patch_.three_d_auto;
+  }
+
+  coalesced_extended_patch_ = {};
+  coalesced_extended_patch_pending_ = false;
 }
 
 void MhiCommandCoordinator::restore_command_mask_(MhiCommandState& destination, const MhiCommandState& source,
@@ -202,7 +285,6 @@ void MhiCommandCoordinator::restore_command_mask_(MhiCommandState& destination, 
 uint32_t MhiCommandCoordinator::restore_intent_mask_(MhiCommandState& destination, const MhiCommandIntent& intent,
                                                      uint32_t mask) {
   uint32_t restored = 0U;
-
   if ((mask & MHI_COMMAND_POWER) != 0U && !destination.power_set) {
     destination.power_set = true;
     destination.power = intent.power;
@@ -238,7 +320,6 @@ uint32_t MhiCommandCoordinator::restore_intent_mask_(MhiCommandState& destinatio
     destination.three_d_auto = intent.three_d_auto;
     restored |= MHI_COMMAND_THREE_D_AUTO;
   }
-
   return restored;
 }
 
