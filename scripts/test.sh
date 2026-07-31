@@ -37,6 +37,7 @@ fi
   tests/unit/test_duplex_tx_mailbox.cpp \
   tests/unit/test_rmt_cs_spi_mode.cpp \
   tests/unit/test_command_coordinator.cpp \
+  tests/unit/test_command_coordinator_extended_supersession.cpp \ 
   tests/unit/test_worker_policy.cpp \
   tests/unit/test_worker_decoded_store.cpp \
   tests/unit/test_frame_catalog.cpp \
