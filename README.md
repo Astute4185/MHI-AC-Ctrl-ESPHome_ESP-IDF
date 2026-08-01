@@ -116,9 +116,22 @@ external_components:
     components: [MhiAcCtrl]
 ```
 
+## Examples
+
+| Example | Purpose | Transport |
+|---|---|---|
+| [`examples/simple.yaml`](examples/simple.yaml) | Minimal conservative starting point | `fast_gpio_rx` with automatically selected `fast_gpio_tx` |
+| [`examples/rmt_cs_spi.yaml`](examples/rmt_cs_spi.yaml) | Minimal hardware-assisted ESP32/ESP32-S3 configuration | Integrated `rmt_cs_spi` with `command_worker` |
+| [`examples/full.yaml`](examples/full.yaml) | Full entity and sensor configuration | Integrated `rmt_cs_spi` with `command_worker` |
+| [`examples/external_sensor.yaml`](examples/external_sensor.yaml) | Home Assistant room-temperature input | Integrated `rmt_cs_spi` with `command_worker` |
+| [`examples/simple-energy-measurement.yaml`](examples/simple-energy-measurement.yaml) | Derived power and daily energy | Integrated `rmt_cs_spi` with `command_worker` |
+| [`examples/UniversalAircoController.yaml`](examples/UniversalAircoController.yaml) | Universal Airco Controller v1.0 | Integrated `rmt_cs_spi` with board-specific pins |
+
+The example pin values are not universal. Confirm the board mapping before flashing. The Universal Airco Controller installation guide is in [`UniversalAircoController/README.md`](UniversalAircoController/README.md).
+
 ## Minimal component configuration
 
-Recommended FastGPIO configuration:
+Conservative FastGPIO configuration:
 
 ```yaml
 MhiAcCtrl:

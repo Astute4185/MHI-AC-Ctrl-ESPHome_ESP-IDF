@@ -1,5 +1,5 @@
 substitutions:
-  device_name: mhi-ac-ctrl
+  device_name: mhi-ac-rmt-cs-spi
   friendly_name: MHI Air Conditioner
 
 esphome:
@@ -9,7 +9,7 @@ esphome:
   name_add_mac_suffix: false
 
 esp32:
-  board: esp32-s3-devkitc-1  # Change to match your ESP32 board
+  board: esp32-s3-devkitc-1  # ESP32 and ESP32-S3 are supported; change for your board.
   framework:
     type: esp-idf
 
@@ -43,16 +43,15 @@ external_components:
 
 MhiAcCtrl:
   id: mhi_ac
-  # Set to 20 for older units.
-  # Set to 33 for newer WF-RAC compatible units that expose 3D Auto and left/right vanes.
-  # If you see checksum/signature failures, verify frame_size first.
+  # Use 20 for older units. Use 33 for horizontal vanes and 3D Auto feedback.
   frame_size: 33
-  # Update these pins to match your hardware.
-  sck_pin: 14
-  mosi_pin: 13
-  miso_pin: 12
-  # Conservative baseline. The matching fast_gpio_tx path is selected automatically.
-  rx_driver: fast_gpio_rx
+  # Example ESP32-S3 pins. Replace these with the mapping for your board.
+  sck_pin: 8
+  mosi_pin: 38
+  miso_pin: 39
+  # FIFO-backed integrated RX/TX. No physical CS pin or tx_driver is used.
+  rx_driver: rmt_cs_spi
+  command_worker: true
 
 climate:
   - platform: MhiAcCtrl
