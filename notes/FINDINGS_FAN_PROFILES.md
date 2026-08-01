@@ -14,7 +14,7 @@ The MHI protocol provides four fixed fan values plus Auto:
 
 Initial testing suggested that one AC exposed only three fixed speeds. Further hardware testing showed that both available AC models accept protocol value `0`, return it in MOSI status, and distinguish it from Low. Quiet, Low, Medium, High, and Auto all completed command confirmation successfully.
 
-Redux therefore defaults to the four-speed profile.
+The component therefore defaults to the four-speed profile.
 
 ## Protocol notation
 

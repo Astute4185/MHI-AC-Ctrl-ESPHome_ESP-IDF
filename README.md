@@ -1,4 +1,4 @@
-# MHI-AC-Ctrl-ESPHome-Redux
+# MHI-AC-Ctrl for ESPHome (ESP-IDF)
 
 ESPHome external component for controlling Mitsubishi Heavy Industries air conditioners over the MHI SPI-style bus using ESP32-class hardware.
 
@@ -235,7 +235,7 @@ select:
       name: Fan Control Left Right
 ```
 
-Redux defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
+The component defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
 
 ```yaml
 MhiAcCtrl:

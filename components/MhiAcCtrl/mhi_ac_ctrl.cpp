@@ -257,7 +257,7 @@ void MhiAcCtrl::refresh_publish_targets_() {
 }
 
 void MhiAcCtrl::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up MHI AC Ctrl rewrite skeleton");
+  ESP_LOGCONFIG(TAG, "Setting up MHI AC Ctrl");
 
   this->diagnostics_.stats().reset();
   this->command_coordinator_.reset();
@@ -446,7 +446,7 @@ void MhiAcCtrl::loop() {
 void MhiAcCtrl::dump_config() {
   const auto diag = this->diagnostics_.snapshot(millis());
 
-  ESP_LOGCONFIG(TAG, "MHI AC Ctrl rewrite skeleton:");
+  ESP_LOGCONFIG(TAG, "MHI AC Ctrl:");
   ESP_LOGCONFIG(TAG, "  Frame size: %d", this->frame_size_);
   ESP_LOGCONFIG(TAG, "  Room temp timeout: %ds", this->room_temp_api_timeout_s_);
   ESP_LOGCONFIG(TAG, "  Room temperature publish interval: %lums",

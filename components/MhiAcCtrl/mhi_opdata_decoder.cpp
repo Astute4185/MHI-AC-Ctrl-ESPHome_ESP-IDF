@@ -82,7 +82,7 @@ bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& o
 
   switch (group) {
     case 0x01U:
-      // Current Redux synthetic mapping: MODE in lower 4 bits of DB10.
+      // Compatibility mapping: MODE in the lower 4 bits of DB10.
       decoded.has_mode = true;
       decoded.mode = static_cast<uint8_t>(item & 0x0FU);
       break;
@@ -93,14 +93,14 @@ bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& o
         decoded.has_mode = true;
         decoded.mode = static_cast<uint8_t>(item & 0x0FU);
       } else {
-        // Current Redux synthetic mapping: SET TEMP: DB11 / 2.
+        // Compatibility mapping: SET TEMP is DB11 / 2.
         decoded.has_setpoint = true;
         decoded.setpoint_c = static_cast<float>(value & 0x7FU) / 2.0f;
       }
       break;
 
     case 0x03U:
-      // Backward-compatible synthetic mapping kept for older unit fixtures.
+      // Compatibility mapping retained for earlier unit-test fixtures.
       decoded.has_return_air = true;
       decoded.return_air_c = static_cast<float>(static_cast<int>(value) - 61) / 4.0f;
       break;
@@ -204,13 +204,13 @@ bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& o
       break;
 
     case 0x15U:
-      // Backward-compatible synthetic mapping kept for older unit fixtures.
+      // Compatibility mapping retained for earlier unit-test fixtures.
       decoded.has_outdoor_temp = true;
       decoded.outdoor_temp_c = static_cast<float>(value);
       break;
 
     case 0x18U:
-      // Backward-compatible synthetic mapping kept for older unit fixtures.
+      // Compatibility mapping retained for earlier unit-test fixtures.
       if (item >= 0x10U) {
         decoded.has_compressor_frequency = true;
         decoded.compressor_frequency_hz =
@@ -219,7 +219,7 @@ bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& o
       break;
 
     case 0x1DU:
-      // Backward-compatible synthetic mapping kept for older unit fixtures.
+      // Compatibility mapping retained for earlier unit-test fixtures.
       decoded.has_current = true;
       decoded.current_a = static_cast<float>(value) * 14.0f / 51.0f;
       break;
@@ -247,7 +247,7 @@ bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& o
       break;
 
     case 0x25U:
-      // Current Redux synthetic mapping: TOTAL COMP RUN: DB11 * 100 hours.
+      // Compatibility mapping: TOTAL COMP RUN is DB11 * 100 hours.
       decoded.has_total_compressor_runtime = true;
       decoded.total_compressor_runtime_hours = static_cast<uint32_t>(value) * 100U;
       break;
