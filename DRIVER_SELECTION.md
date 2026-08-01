@@ -1,104 +1,169 @@
 # Driver Selection Guide
 
-This guide explains how to choose and tune the MHI transport drivers. The README contains the short operational recommendation; this document records the technical selection rules and validation criteria.
+This guide explains the available MHI transport drivers, the supported combinations, and the evidence required before a hardware result is treated as validated.
 
-## Configuration model
+The short operational recommendation remains in [`README.md`](README.md). Runtime counters and soak-test interpretation are documented in [`DIAGNOSTICS.md`](DIAGNOSTICS.md).
 
-`rx_driver` is the primary transport selector.
+## Current position
 
-For split backends, the component automatically selects the normal TX driver. `tx_driver` remains available as an optional compatibility and diagnostic override.
+The transport architecture is now largely complete:
 
-| `rx_driver` | Automatic effective TX | Transport model | Maturity |
-|---|---|---|---|
-| `fast_gpio_rx` | `fast_gpio_tx` | Split RX/TX | **Stable** |
-| `external_clock_rx` | `fast_gpio_tx` | Split RX/TX | **Stable** |
-| `rmt_spi_rx` | `fast_gpio_tx` | Split RX/TX | **Stable** |
-| `rmt_cs_spi` | Integrated `rmt_cs_spi` TX | FIFO-backed shared full-duplex transport | **In testing** |
+- `fast_gpio_rx` + `fast_gpio_tx` remains the conservative default and fallback.
+- `external_clock_rx` + `fast_gpio_tx` remains a validated split path for the original ESP32.
+- `rmt_spi_rx` + `fast_gpio_tx` remains the validated ESP32-S3 split hardware path.
+- `rmt_cs_spi` is the consolidated FIFO-backed full-duplex path for the original ESP32 and ESP32-S3.
+- The temporary `rmt_cs_spi_nodma` label has been removed.
+- `rmt_cs_spi` always uses the SPI CPU FIFO with `SPI_DMA_DISABLED`.
+- Command staging, real TX completion, semantic confirmation, retries, and latest-intent supersession are shared above the transport layer.
 
 The default configuration is equivalent to:
 
 ```yaml
-rx_driver: fast_gpio_rx
+MhiAcCtrl:
+  frame_size: 20
+  fan_profile: four_speed
+  rx_driver: fast_gpio_rx
+  command_worker: false
 ```
 
-which resolves to:
+`fast_gpio_rx` automatically resolves to `fast_gpio_tx`.
 
-```yaml
-rx_driver: fast_gpio_rx
-tx_driver: fast_gpio_tx
-```
+## Supported selections
 
-Existing explicit split configurations remain supported.
+| `rx_driver` | Effective TX | Target availability | Runtime position |
+|---|---|---|---|
+| `fast_gpio_rx` | `fast_gpio_tx` | Original ESP32 and ESP32-S3 runtime; ESP32-C3 compile fixture | Stable baseline on validated runtime targets |
+| `external_clock_rx` | `fast_gpio_tx` | Original ESP32 and ESP32-S3 | Hardware-validated on the original ESP32 |
+| `rmt_spi_rx` | `fast_gpio_tx` | ESP32-S3 only | Hardware-validated split hardware RX path |
+| `rmt_cs_spi` | Integrated `rmt_cs_spi` TX | Original ESP32 and ESP32-S3 | Hardware-validated FIFO full-duplex path |
+
+ESP32-C3 currently has compile coverage through the FastGPIO configuration. Runtime RX/TX operation has not yet been validated, and the current target-specific transport build does not establish a supported control path on C3.
 
 ## Selection rules
 
-### Normal split selection
+### Split drivers
+
+The normal split configuration only needs `rx_driver`:
 
 ```yaml
-rx_driver: rmt_spi_rx
+MhiAcCtrl:
+  rx_driver: rmt_spi_rx
 ```
 
-This automatically selects `fast_gpio_tx`.
+The component resolves the effective TX driver to `fast_gpio_tx`.
 
-An explicit equivalent remains valid:
+The explicit equivalent remains valid:
 
 ```yaml
-rx_driver: rmt_spi_rx
-tx_driver: fast_gpio_tx
+MhiAcCtrl:
+  rx_driver: rmt_spi_rx
+  tx_driver: fast_gpio_tx
 ```
 
-### RX-only diagnostic selection
+The same rule applies to `fast_gpio_rx` and `external_clock_rx`.
+
+### RX-only diagnostics
+
+The queue-backed split drivers can be operated without TX:
 
 ```yaml
-rx_driver: rmt_spi_rx
-tx_driver: none
+MhiAcCtrl:
+  rx_driver: rmt_spi_rx
+  tx_driver: none
 ```
 
-Use `tx_driver: none` only when validating receive behaviour without controlling the air conditioner. Climate commands and opdata requests requiring TX will not work.
-
-### Full-duplex selection
+or:
 
 ```yaml
-rx_driver: rmt_cs_spi
+MhiAcCtrl:
+  rx_driver: external_clock_rx
+  tx_driver: none
 ```
 
-`rmt_cs_spi` is available on the original dual-core ESP32 and ESP32-S3 under ESP-IDF. It owns RMT, SPI2, SCK, MOSI, MISO, RX buffers, TX buffers, and the SPI owner task. It therefore rejects a separate TX override.
+Use this only to isolate RX behaviour. Climate commands, vane commands, 3D Auto changes, and opdata requests requiring TX will not work.
+
+Do not use `tx_driver: none` as a normal Home Assistant configuration.
+
+### Full-duplex `rmt_cs_spi`
+
+```yaml
+MhiAcCtrl:
+  rx_driver: rmt_cs_spi
+```
+
+`rmt_cs_spi` owns:
+
+- RMT frame-boundary detection;
+- SPI2 slave configuration;
+- SCK, MOSI, and MISO;
+- RX and TX buffers;
+- transaction queue/result calls;
+- the dedicated SPI owner task;
+- command TX completion reporting.
+
+It therefore rejects a separate TX override.
 
 Invalid:
 
 ```yaml
-rx_driver: rmt_cs_spi
-tx_driver: fast_gpio_tx
+MhiAcCtrl:
+  rx_driver: rmt_cs_spi
+  tx_driver: fast_gpio_tx
 ```
 
 Also invalid:
 
 ```yaml
-rx_driver: rmt_cs_spi
-tx_driver: none
+MhiAcCtrl:
+  rx_driver: rmt_cs_spi
+  tx_driver: none
 ```
 
-No physical CS pin or additional CS YAML setting is required. RMT detects the inter-frame SCK idle gap and routes an internal CS state into the SPI peripheral. The transport always uses the SPI CPU FIFO with `SPI_DMA_DISABLED`; 20-byte and 33-byte MHI frames do not require DMA.
+No physical CS pin is required. RMT detects the inter-frame SCK idle gap and drives the SPI peripheral's internal CS signal.
 
-### Command-worker compatibility
+The implementation always uses:
 
-All transport selections support the same command-facing contract. The selected backend remains responsible for real-time TX:
+```text
+SPI_DMA_DISABLED
+```
+
+The MHI frame sizes are 20 or 33 bytes. The rounded 36-byte working transaction fits within the SPI slave FIFO capacity, so DMA does not provide a frame-capacity benefit for this transport.
+
+### Command worker
+
+All transports use the same command contract. The selected transport still owns real-time bus activity.
 
 ```yaml
-command_worker: false
+MhiAcCtrl:
+  command_worker: false
 ```
 
-is the synchronous fallback, while:
+uses the main-loop command coordinator.
 
 ```yaml
-command_worker: true
+MhiAcCtrl:
+  command_worker: true
 ```
 
-enables the first-stage event-driven command coordinator. For split drivers, completion is reported after `fast_gpio_tx` returns. For the full-duplex RMT/CS/SPI selection, completion is reported after the SPI owner task receives the completed transaction result.
+enables the event-driven command worker.
 
-The command worker does not drive MISO, wait on SCK edges, or own SPI. Classified RX processing will be added to this same worker later. The legacy `rx_worker` and `tx_worker` settings have been removed.
+When enabled:
 
-## Driver summary
+- command envelopes are prepared outside the transport's real-time path;
+- a command becomes pending confirmation only after the transport reports actual TX completion;
+- queue-backed RX drivers are drained, synchronised, classified, and decoded in the worker;
+- the main loop applies bounded decoded snapshots and remains the only context that publishes ESPHome state;
+- `fast_gpio_rx` remains main-loop driven because its synchronous edge sampling cannot be moved safely into the classified worker.
+
+Queue-backed classified-RX support applies to:
+
+- `external_clock_rx`;
+- `rmt_spi_rx`;
+- `rmt_cs_spi`.
+
+`command_worker: false` remains the fallback for diagnosis and compatibility comparison.
+
+## Driver details
 
 ### `fast_gpio_rx`
 
@@ -106,163 +171,182 @@ Software GPIO receive path.
 
 Strengths:
 
-- Conservative and established baseline.
-- Works with the existing FastGPIO TX path.
-- Available on more ESP32 targets than the S3-specific hardware SPI backends.
-- Useful fallback when hardware-assisted drivers are unavailable.
+- conservative default;
+- widest fallback coverage;
+- straightforward bring-up and comparison path;
+- paired with the established `fast_gpio_tx` implementation.
 
 Trade-offs:
 
-- CPU-intensive and timing-sensitive.
-- More exposed to Wi-Fi, logging, API, publishing, and scheduler load.
-- Can contribute to long transport sections in the ESPHome main loop.
+- CPU-intensive synchronous sampling;
+- sensitive to scheduler, logging, Wi-Fi, API, and publication load;
+- remains in the ESPHome main loop even when `command_worker: true`;
+- can contribute to long loop sections.
 
-Use when:
+Use it when:
 
-- Bringing up a new installation.
-- Running on hardware without a validated hardware-assisted backend.
-- Diagnosing whether a problem is specific to an experimental driver.
+- bringing up new hardware;
+- testing ESP32-C3;
+- comparing a hardware-assisted backend against the baseline;
+- isolating whether a failure is transport-specific.
 
 ### `external_clock_rx`
 
-Software external-clock receive path that samples MOSI from the AC-provided SCK timing and emits signature-anchored frame chunks.
+Interrupt-driven external-clock MOSI sampler for the no-CS MHI bus.
 
-Current maturity: **Stable** on the original ESP32 configuration validated with an M5Stack Atom.
+It samples MOSI from AC-provided SCK edges, reconstructs LSB-first bytes, and emits signature-anchored frame chunks.
 
 Strengths:
 
-- Reduces RX-side pressure compared with the original synchronous FastGPIO path in tested runs.
-- Supports split operation with `fast_gpio_tx`.
-- Provides the current validated hardware-assisted direction for the original ESP32/non-S3 target.
+- validated on the original ESP32/M5Stack Atom configuration;
+- lower RX pressure than the original synchronous FastGPIO path in tested runs;
+- supports command-worker classified RX;
+- retains `fast_gpio_tx` for split operation.
 
 Trade-offs:
 
-- TX remains FastGPIO and can remain the dominant loop-time cost.
-- Validation is hardware-specific; behaviour must not be assumed across every ESP32 family.
+- TX remains software-driven;
+- validation is hardware-specific;
+- target support is limited to original ESP32 and ESP32-S3 in the current transport manager.
 
-Use when:
+Recommended validated split configuration:
 
-- Running the validated original ESP32/M5Stack Atom configuration.
-- Testing non-S3 hardware where the S3-only SPI backends are unavailable.
-- Comparing software RX strategies using recorded diagnostics.
+```yaml
+MhiAcCtrl:
+  rx_driver: external_clock_rx
+  command_worker: true
+```
 
 ### `rmt_spi_rx`
 
-ESP32-S3 receive backend using RMT to detect the inter-frame clock gap and the SPI slave peripheral with DMA to capture complete frames.
+ESP32-S3 receive-only hardware backend.
+
+RMT detects the inter-frame clock gap and the SPI slave peripheral captures each complete frame. This backend still uses a DMA-backed RX buffer internally. That DMA design is independent from the FIFO-only `rmt_cs_spi` transport.
 
 Strengths:
 
-- Hardware-assisted RX.
-- Clean 20-byte and 33-byte complete-frame capture on the tested ESP32-S3.
-- Completed a roughly 47.5-hour soak with no checksum failures, signature misses, synchronisation losses, SPI queue errors, or completed-frame drops.
-- Considerably lowers RX-side timing pressure.
+- hardware-assisted complete-frame RX;
+- clean 20-byte and 33-byte capture on the tested ESP32-S3;
+- completed an approximately 47.5-hour soak with clean protocol health;
+- supports command-worker classified RX;
+- preserves the proven `fast_gpio_tx` command path.
 
 Trade-offs:
 
-- ESP32-S3 and ESP-IDF only.
-- TX remains `fast_gpio_tx`, which can still block the main loop and miss occasional background response windows.
-- Requires an inferred internal chip-select boundary because the MHI bus has no physical CS line.
+- ESP32-S3 only;
+- RX-only: TX remains `fast_gpio_tx`;
+- FastGPIO TX can still dominate loop timing or miss background windows;
+- uses the inferred internal-CS boundary because the MHI bus has no physical CS line.
 
-Recommended ESP32-S3 split configuration:
+Recommended split configuration:
 
 ```yaml
-rx_driver: rmt_spi_rx
-rmt_spi_frame_gap_us: 1000
-command_worker: false
+MhiAcCtrl:
+  rx_driver: rmt_spi_rx
+  rmt_spi_frame_gap_us: 1000
+  command_worker: true
 ```
 
 ### `rmt_cs_spi`
 
-Full-duplex backend for the original dual-core ESP32 and ESP32-S3 using RMT-derived internal chip select and a mode-3, LSB-first SPI slave transaction through the CPU FIFO.
+FIFO-backed full-duplex transport for the original dual-core ESP32 and ESP32-S3.
+
+RMT converts the inter-frame SCK idle gap into an internal CS pulse. The SPI slave peripheral then captures MOSI and shifts MISO as one mode-3, LSB-first transaction.
 
 Strengths:
 
-- Hardware owns bit-level RX and TX timing.
-- Removes FastGPIO TX from the normal transaction path.
-- Uses one transport architecture on both ESP32 and ESP32-S3.
-- 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
-- Avoids DMA alignment, DMA-capable allocation, and DMA channel/reset handling.
-- Owns the complete bus transport and reports command completion after the SPI owner task receives the completed transaction result.
+- hardware owns bit-level RX and TX timing;
+- removes FastGPIO TX from the normal transaction path;
+- one public driver and one FIFO architecture across ESP32 and ESP32-S3;
+- no DMA allocation, alignment, descriptor, or channel lifecycle;
+- command completion is reported only after the SPI owner task receives the completed transaction result;
+- supports classified RX in the command worker.
 
 Target-specific behaviour:
 
-- Original ESP32 requires a driver-local mode-3 input-edge correction after SPI initialisation. Without it, transactions complete at the correct length but MOSI is sampled on the wrong edge.
-- ESP32-S3 uses the normal ESP-IDF mode-3 configuration.
-
-Trade-offs:
-
-- ESP-IDF only.
-- Supported only on original ESP32 and ESP32-S3.
-- Owns the complete bus transport and cannot be mixed with another TX driver.
-- Remains **In testing** while extended cross-chip soak evidence is accumulated.
+- original ESP32 applies a driver-local mode-3 receive-edge correction after SPI initialisation;
+- ESP32-S3 uses the standard ESP-IDF mode-3 configuration.
 
 Configuration:
 
 ```yaml
-rx_driver: rmt_cs_spi
-rmt_spi_frame_gap_us: 1000
-command_worker: true
+MhiAcCtrl:
+  rx_driver: rmt_cs_spi
+  rmt_spi_frame_gap_us: 1000
+  command_worker: true
 ```
 
-Do not add `tx_driver` and do not add a physical CS pin. Use the existing SCK, MOSI, and MISO configuration.
-
-### FIFO design position
-
-The MHI protocol uses 20-byte or 33-byte frames. The transport rounds the maximum working buffer to 36 bytes, which remains within the SPI slave FIFO transaction capacity. DMA therefore provides no functional frame-capacity requirement.
-
-The production position is one FIFO-backed `rmt_cs_spi` driver on both supported chip families. Validation should focus on protocol health, command confirmation, invalid transaction lengths, transport queue pressure, and loop timing.
+Do not specify `tx_driver` and do not add a physical CS pin.
 
 ### `fast_gpio_tx`
 
-Software GPIO transmit path used by all split RX drivers.
+Software GPIO transmit path used by all split RX selections.
 
 Strengths:
 
-- Established command path.
-- Compatible with FastGPIO, external-clock, and RMT/SPI RX backends.
-- Command confirmation has remained reliable in the validated S3 tests.
+- established and broadly exercised command path;
+- supports `fast_gpio_rx`, `external_clock_rx`, and `rmt_spi_rx`;
+- uses the common TX completion and command-confirmation contract.
 
 Trade-offs:
 
-- Follows the externally supplied clock in software.
-- Can create 40-60 ms class main-loop transport stalls.
-- Long-duration testing with `rmt_spi_rx` showed occasional background TX failures even though tested commands still confirmed.
+- follows the AC-owned clock in software;
+- can create long main-loop sections;
+- background TX attempts may fail even when user commands continue to confirm.
 
 ### `none`
 
-Diagnostic RX-only TX selection.
+Diagnostic RX-only TX selection for supported queue-backed split drivers.
 
-Use only to isolate receive behaviour. It is not a usable Home Assistant control configuration.
+It is not a usable control configuration.
 
 ## Hardware guidance
 
-Keep one consolidated row per ESP chip version. Add boards or modules to the `Validated hardware` cell as testing expands.
+| ESP chip | Validated hardware | Recommended selection | Position |
+|---|---|---|---|
+| Original ESP32 | M5Stack Atom and current original-ESP32 test path | `rmt_cs_spi` for full duplex; `external_clock_rx` + `fast_gpio_tx` as the validated split alternative | Both paths hardware-tested; original-ESP32 mode-3 correction is internal |
+| ESP32-S3 | Current ESP32-S3 test unit | `rmt_cs_spi` for full duplex; `rmt_spi_rx` + `fast_gpio_tx` as the validated split alternative | Both paths hardware-tested; `rmt_cs_spi` uses the standard S3 mode-3 configuration |
+| ESP32-C3 | No runtime-validated board | `fast_gpio_rx` + `fast_gpio_tx` | Compile coverage only |
 
-| ESP chip | Validated hardware | Recommended RX selection | Effective TX | Maturity | Technical position |
-|---|---|---|---|---|---|
-| ESP32 | M5Stack Atom (original ESP32) | `external_clock_rx` for stable split use; `rmt_cs_spi` for full-duplex testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `external_clock_rx`; **In testing** for `rmt_cs_spi` | FIFO-backed 33-byte RX/TX and command testing passed. The original-ESP32 mode-3 edge correction is applied internally. `fast_gpio_rx` remains the conservative fallback. |
-| ESP32-S3 | Current ESP32-S3 test unit; board/module model still to be recorded | `rmt_spi_rx` for stable split use; `rmt_cs_spi` for full-duplex testing | `fast_gpio_tx`; integrated TX for `rmt_cs_spi` | **Stable** for `rmt_spi_rx`; **In testing** for `rmt_cs_spi` | Uses the same FIFO-backed full-duplex architecture without the original-ESP32 edge override. |
-| ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` | `fast_gpio_tx` | **In development** | Compile coverage only. Single-core runtime reliability has not been established. |
+Do not infer compatibility from the generic ESP32 family name. GPIO registers, core topology, RMT revisions, SPI routing, DMA support, and peripheral capabilities vary by target.
 
-Do not infer compatibility from the general ESP32 family name. GPIO registers, core count, RMT revisions, SPI routing, DMA behaviour, and available peripherals differ by target.
-
-## Technical tuning
+## Configuration and tuning
 
 ### `frame_size`
+
+Default:
 
 ```yaml
 frame_size: 20
 ```
 
-Use for older or shorter-frame units.
+Use `20` for short-frame units.
+
+Use:
 
 ```yaml
 frame_size: 33
 ```
 
-Use for units providing the extended frame, including horizontal vane and 3D Auto feedback.
+for units that provide the extended frame, including horizontal vane and 3D Auto feedback.
 
-Incorrect frame size normally presents as repeated invalid frames, checksum failures, or missing extended features.
+An incorrect frame size normally presents as invalid frames, checksum failures, or missing extended features.
+
+### `fan_profile`
+
+Default:
+
+```yaml
+fan_profile: four_speed
+```
+
+Alternative:
+
+```yaml
+fan_profile: three_speed
+```
+
+The profile changes fan exposure and encoding. It does not select a different transport implementation.
 
 ### `rmt_spi_frame_gap_us`
 
@@ -274,14 +358,14 @@ rmt_spi_frame_gap_us: 1000
 
 Valid range: 500-5000 microseconds.
 
-This value must be:
+This value applies to both `rmt_spi_rx` and `rmt_cs_spi` and must be:
 
-- Greater than the normal inter-byte idle period.
-- Lower than the inter-frame idle period.
+- greater than the normal inter-byte idle period;
+- lower than the inter-frame idle period.
 
-The tested bus has an approximately 250 microsecond inter-byte pause and a roughly 40 millisecond inter-frame pause, making 1000 microseconds a practical starting point.
+The documented bus has an approximately 250 microsecond inter-byte pause and roughly 40 millisecond inter-frame pause, making 1000 microseconds a practical starting point.
 
-Only tune this value when diagnostics show regular invalid transaction lengths, missed boundaries, or re-arm errors. Do not use it to mask checksum or signature problems caused by the wrong frame size or pin mapping.
+Only tune this when diagnostics show repeated invalid lengths, missed boundaries, or RMT re-arm failures.
 
 ### `frame_start_idle_ms`
 
@@ -291,72 +375,79 @@ Default:
 frame_start_idle_ms: 10
 ```
 
-This setting applies to the software FastGPIO timing path. Leave it at the default unless oscilloscope or logic-analyser data shows a materially different frame-start idle requirement.
+This primarily affects the synchronous FastGPIO timing path. Leave it at the default unless measured bus timing shows a different requirement.
 
 ### `tx_background_interval_ms`
 
-Default for both synchronous and command-worker modes:
+Default:
 
 ```yaml
 tx_background_interval_ms: 250
 ```
 
-This controls background TX attempts. Command frames bypass the normal background interval.
+Command frames bypass this interval. Background requests wait while command confirmation is pending.
 
-Increase it when background requests create unnecessary TX pressure. Reducing it increases bus activity and can expose FastGPIO TX timing limitations.
+Increase it to reduce background bus pressure. Lower values increase TX activity and can expose split FastGPIO timing limits.
 
-### Command worker
+### Command-worker tuning
 
-Default:
+Defaults:
 
 ```yaml
 command_worker: false
+command_worker_start_delay_ms: 0
+command_worker_stack_size: 6144
+command_worker_priority: 4
+command_worker_core_id: -1
 ```
 
-First-stage test configuration:
+Do not tune stack, priority, or core placement without evidence from runtime diagnostics. Functional confirmation, opdata flow, and transport health are more important than a lower loop-time number.
 
-```yaml
-command_worker: true
-```
+## Compile coverage
 
-The worker prepares command envelopes and coordinates staging, actual TX completion, and semantic confirmation. Background and command frames remain transmitted by the selected transport. The first-stage implementation leaves RX decoding in the main loop.
+The representative compile matrix intentionally covers material chip and transport boundaries rather than every YAML permutation:
 
-Judge the command-worker path by functional outcomes:
-
-- Commands are not marked pending confirmation before actual TX completion.
-- Commands confirm and `command_confirmation_timeouts` remains zero.
-- Opdata continues to publish.
-- Home Assistant state matches the physical unit.
-- Transport overwrite, queue, and drop counters remain clean.
-- `command_worker: false` remains a reliable fallback.
-
-The staged rollout and classified-RX integration are documented in [`COMMAND_WORKER_V2_PLAN.md`](COMMAND_WORKER_V2_PLAN.md). When `command_worker: true`, queue-backed RX drivers (`external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`) are drained and classified by that worker; `fast_gpio_rx` remains in the main loop.
-
-## Diagnostics
-
-Runtime counters and health interpretation are documented separately in [`DIAGNOSTICS.md`](DIAGNOSTICS.md).
-
-Use that guide for:
-
-- Common protocol-health counters
-- `rmt_spi_rx` and `rmt_cs_spi` transport counters
-- Command-confirmation and opdata checks
-- Loop and command-worker measurements
-- Soak-test evidence and troubleshooting
-
-## Driver maturity statuses
-
-Use only these three labels in the README and driver-selection tables:
-
-| Status | Meaning |
+| Configuration | Coverage |
 |---|---|
-| **Stable** | Hardware validated and suitable for normal use on the listed hardware. Little to no transport-level change is expected; changes should normally be fixes, compatibility additions, or diagnostics. |
-| **In testing** | Functional on hardware and undergoing soak, compatibility, or regression testing. Configuration or internals may still change before promotion to Stable. |
-| **In development** | Incomplete, compile-only, or not yet validated sufficiently for normal installations. |
+| ESP32-C3 + FastGPIO | `fast_gpio_rx`, `fast_gpio_tx`, 20-byte frame, three-speed fan profile |
+| Original ESP32 + `rmt_cs_spi` + worker | FIFO full-duplex path and original-ESP32 mode-3 correction |
+| ESP32-S3 + `rmt_cs_spi` + worker | FIFO full-duplex S3 path |
+| ESP32-S3 + `rmt_spi_rx` + `fast_gpio_tx` + worker | Split hardware RX and legacy software TX path |
 
-A driver can have different maturity on different ESP chips. The status must therefore be tied to the hardware row, not inferred globally from the driver name.
+Run:
 
-## Adding a new hardware result
+```bash
+./scripts/compile-tests.sh
+```
+
+The default action is to compile all four representative configurations.
+
+Validation-only remains available:
+
+```bash
+./scripts/compile-tests.sh validate
+```
+
+Frame-size, fan-profile, command-coordinator, confirmation, worker-policy, and driver-selection permutations belong primarily in unit and schema tests rather than duplicate firmware builds.
+
+## Validation criteria
+
+A driver result is not accepted solely because it compiles or receives frames.
+
+Confirm:
+
+- protocol counters remain clean;
+- commands are physically applied and confirmed from returned MOSI state;
+- retries recover or are explicitly explained;
+- retry exhaustion remains zero;
+- opdata continues to publish;
+- Home Assistant state follows confirmed AC state;
+- queue, overwrite, drop, SPI, and RMT counters remain bounded and understood;
+- the same behaviour survives reconnects and extended runtime.
+
+See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for the required evidence.
+
+## Recording a hardware result
 
 Record at least:
 
@@ -367,6 +458,7 @@ ESPHome version
 ESP-IDF version
 AC model
 frame size
+fan profile
 SCK/MOSI/MISO pins
 RX selection and effective TX
 command-worker settings
@@ -374,12 +466,14 @@ tuning overrides
 test duration
 commands tested
 opdata behaviour
-end-of-test diagnostics
+end-of-test common diagnostics
+end-of-test driver-specific diagnostics
 known failures or limitations
 ```
 
-A hardware/driver combination should not be promoted from **In development** to **In testing** without clean runtime logs and successful command operation. Promotion to **Stable** requires extended runtime evidence and no planned material transport changes.
-
 ## Related findings
+
 - [`notes/FINDINGS_RMT_SPI_RX.md`](notes/FINDINGS_RMT_SPI_RX.md)
 - [`notes/FINDINGS_fastGpio&ExternalClock.md`](notes/FINDINGS_fastGpio&ExternalClock.md)
+- [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md)
+- [`notes/FINDINGS_FAN_PROFILES.md`](notes/FINDINGS_FAN_PROFILES.md)
