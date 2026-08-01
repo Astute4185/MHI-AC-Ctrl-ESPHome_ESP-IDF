@@ -18,8 +18,8 @@ struct MhiFastGpioTxConfig {
   bool byte_critical_sections{true};
 };
 
-// TX-only clock follower used by the native_spi_rx experiment.
-// It does not sample MOSI. It only drives MISO on the AC-provided SCK.
+// TX-only clock follower used with split RX transports.
+// It does not sample MOSI and only drives MISO using the AC-provided SCK.
 class MhiFastGpioTxDriver final : public IMhiTxDriver {
  public:
   void set_config(const MhiFastGpioTxConfig& config) {
