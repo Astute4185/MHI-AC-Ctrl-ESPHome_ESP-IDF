@@ -594,6 +594,20 @@ Remaining work is incremental:
 - continue soak testing after material transport or coordinator changes;
 - handle bug fixes, ESPHome compatibility updates, and routine maintenance.
 
+## Contributing
+
+Contributions are welcome for bug fixes, documentation, protocol findings, additional hardware validation, and carefully scoped feature work.
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing transport, command, worker, state, or publication behaviour. Pull requests should pass:
+
+```bash
+./scripts/lint.sh fix
+./scripts/test.sh
+./scripts/compile-tests.sh
+```
+
+Hardware-dependent changes should include the board, ESP chip, air-conditioner model, frame size, selected transport, worker setting, test duration, focused logs, and final diagnostic counters. Use the repository issue forms for bugs, hardware-validation reports, and protocol findings.
+
 ## Credits
 
 This project builds on prior MHI reverse-engineering and ESPHome integration work.

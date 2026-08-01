@@ -1,0 +1,106 @@
+name: Protocol finding
+description: Submit repeatable frame, field, opdata, vane, fan, or command-confirmation observations.
+title: "[Protocol finding]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep direct observations separate from interpretation. Raw frames and repeatable before/after evidence are more useful than an inferred field name alone.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Finding checks
+      options:
+        - label: I searched the existing findings documents and issues for the same observation.
+          required: true
+        - label: I removed secrets and unrelated personal data from logs and configuration.
+          required: true
+
+  - type: input
+    id: ac_model
+    attributes:
+      label: Air-conditioner model
+      placeholder: "SRK35ZSX-W"
+    validations:
+      required: true
+
+  - type: input
+    id: controller
+    attributes:
+      label: Controller or test hardware
+      placeholder: "M5Stack Atom S3 Lite running this component"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frame_size
+    attributes:
+      label: Frame size
+      options:
+        - "20"
+        - "33"
+        - Mixed or unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Frame direction or data class
+      options:
+        - MOSI status
+        - MISO command
+        - Opdata request or response
+        - Both MOSI and MISO
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: action
+    attributes:
+      label: Test action
+      description: Describe the exact remote-control, Home Assistant, or physical action that produced the observation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: observation
+    attributes:
+      label: Direct observation
+      description: State which raw bytes or bits changed and what remained constant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: frames
+    attributes:
+      label: Before and after frames or focused logs
+      render: text
+      description: Include several repeatable samples where possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: interpretation
+    attributes:
+      label: Proposed interpretation
+      description: Explain the suspected mapping, mask, encoding, or confirmation rule. Mark uncertainty clearly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repeatability
+    attributes:
+      label: Repeatability and conflicting evidence
+      description: Include the number of repetitions, other modes tested, and any case that did not match the proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      render: yaml
+      description: Include frame size, driver, worker, and any feature-specific configuration. Remove secrets.
