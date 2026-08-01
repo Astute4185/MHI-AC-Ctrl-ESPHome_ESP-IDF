@@ -35,7 +35,7 @@ Implemented functionality includes 20-byte and 33-byte frames, climate control, 
 | RX selection | Effective TX | Status |
 |---|---|---|
 | `fast_gpio_rx` | `fast_gpio_tx` | **Stable baseline** |
-| `external_clock_rx` | `fast_gpio_tx` | **Validated on original ESP32** |
+| `external_clock_rx` | `fast_gpio_tx` | **Validated on ESP32 and ESP32-S3** |
 | `rmt_spi_rx` | `fast_gpio_tx` | **Validated on ESP32-S3** |
 | `rmt_cs_spi` | Integrated full-duplex TX | **Validated on ESP32 and ESP32-S3** |
 
@@ -77,7 +77,6 @@ MhiAcCtrl:
   mosi_pin: 38
   miso_pin: 39
   rx_driver: rmt_cs_spi
-  rmt_spi_frame_gap_us: 1000
   command_worker: true
 ```
 
