@@ -1,4 +1,26 @@
-# MHI Transport and Worker Findings
+# Historical FastGPIO and External-Clock Findings
+
+> [!NOTE]
+> This document is a historical development record.
+>
+> The separate `rx_worker` and `tx_worker` settings described below were removed
+> and replaced by the consolidated `command_worker` architecture. Configuration
+> examples and recommendations in the historical body must not be treated as
+> current project guidance.
+>
+> Current references:
+>
+> - [Architecture](../../ARCHITECTURE.md)
+> - [Driver selection](../../DRIVER_SELECTION.md)
+> - [Diagnostics](../../DIAGNOSTICS.md)
+> - [SPI transport findings](../FINDINGS_SPI_TRANSPORTS.md)
+- [MHI protocol findings](../FINDINGS_MHI_PROTOCOL.md)
+
+The material below is retained because it records the measurements and failure
+modes that informed the current transport and worker architecture.
+
+---
+
 
 ## Scope
 

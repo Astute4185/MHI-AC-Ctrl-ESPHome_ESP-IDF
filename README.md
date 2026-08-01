@@ -1,4 +1,4 @@
-# MHI-AC-Ctrl-ESPHome-IDF
+# MHI-AC-Ctrl-ESPHome-Redux
 
 ESPHome external component for controlling Mitsubishi Heavy Industries air conditioners over the MHI SPI-style bus using ESP32-class hardware.
 
@@ -97,7 +97,7 @@ MhiAcCtrl:
   rmt_spi_frame_gap_us: 1000
 ```
 
-See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting.
+See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
 
 ## Hardware assumptions
 
@@ -197,7 +197,7 @@ For `external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`, the worker can perform 
 
 Separate `rx_worker` and `tx_worker` settings are no longer used.
 
-See [`COMMAND_WORKER_V2_PLAN.md`](COMMAND_WORKER_V2_PLAN.md) for the design history and acceptance criteria. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md#command-worker-diagnostics) for worker counters and interpretation.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the current ownership and lifecycle model. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md#command-worker-diagnostics) for worker counters and interpretation.
 
 ## Frame size
 
@@ -235,7 +235,7 @@ select:
       name: Fan Control Left Right
 ```
 
-This version defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
+Redux defaults to the four-speed profile. No `fan_profile` setting is required for normal use:
 
 ```yaml
 MhiAcCtrl:

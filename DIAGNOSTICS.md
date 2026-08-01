@@ -433,7 +433,11 @@ completion_dropped=0
 
 The run included recoverable 3D confirmation timeouts, successful retries, horizontal/3D supersession, and a fixed startup `invalid_len=1`. Those events were acceptable because counters stopped increasing, all combinations confirmed, and no command exhausted its retry budget.
 
+The consolidated bus, frame, and command-field reference is [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
+
 Detailed protocol findings are recorded in [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md).
+
+Driver-specific SPI evidence and counter interpretation are recorded in [`notes/FINDINGS_SPI_TRANSPORTS.md`](notes/FINDINGS_SPI_TRANSPORTS.md).
 
 ## Hardware validation workflow
 

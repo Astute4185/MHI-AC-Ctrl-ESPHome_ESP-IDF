@@ -16,6 +16,27 @@ Initial testing suggested that one AC exposed only three fixed speeds. Further h
 
 Redux therefore defaults to the four-speed profile.
 
+## Protocol notation
+
+The supplied protocol reference describes four fixed fan levels using
+`DB1[1:0]` and `DB6[6]`, with a special MISO set form for the highest fixed
+speed. The component's normalized values (`0`, `1`, `2`, `6`, `7`) are an
+implementation-level code assembled from the relevant status fields; they are
+not the same numbering convention as the legacy user-facing levels `1..4`.
+
+Observed returned DB1 command/status bytes on the tested four-speed path were:
+
+| Presentation state | Returned DB1 | Normalized code |
+|---|---:|---:|
+| Quiet | `0x08` | `0` |
+| Low | `0x09` | `1` |
+| Medium | `0x0A` | `2` |
+| High | `0x0E` | `6` |
+| Auto | `0x0F` | `7` |
+
+See [`FINDINGS_MHI_PROTOCOL.md`](FINDINGS_MHI_PROTOCOL.md) for the base field
+layout and direction terminology.
+
 ## Default four-speed profile
 
 No explicit setting is required:
@@ -93,17 +114,6 @@ TX Auto   -> 7
 
 Protocol value `0` remains preserved by the status decoder but is collapsed to Low at the presentation layer.
 
-## Compatibility alias
-
-The earlier configuration value remains accepted:
-
-```yaml
-MhiAcCtrl:
-  fan_profile: four_speed
-```
-
-It maps internally to `four_speed`. New configurations should use `four_speed` or omit `fan_profile`.
-
 ## Validation coverage
 
 Host tests cover:
@@ -119,10 +129,12 @@ Host tests cover:
 - TX frame encoding and checksum validity;
 - Quiet command confirmation.
 
-ESPHome compile coverage includes:
+ESPHome compile coverage uses the representative matrix rather than separate builds for every profile:
 
-- the standard fixture with `fan_profile` omitted, validating the default four-speed path;
-- an explicit `three_speed` compatibility fixture;
+- the ESP32-C3 FastGPIO fixture explicitly covers `fan_profile: three_speed` with 20-byte frames;
+- the ESP32 and ESP32-S3 SPI fixtures cover the default or explicit four-speed path with 33-byte frames.
+
+Profile encoding, decoding, command rejection, publishing and confirmation remain covered by host unit tests.
 
 ## Hardware validation
 

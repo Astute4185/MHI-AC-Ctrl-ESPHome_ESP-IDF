@@ -1,5 +1,16 @@
 # Vertical Vane, Horizontal Vane, and 3D Auto Findings
 
+## Evidence basis
+
+The supplied 20-byte protocol reference establishes the base vertical-vane
+fields: vertical swing in `DB0[6]`, fixed position in `DB1[5:4]`, and the MISO
+set bits in `DB0[7]`/`DB1[7]`. The horizontal-vane and 3D Auto mappings in this
+document are project hardware findings from 33-byte frames.
+
+See [`FINDINGS_MHI_PROTOCOL.md`](FINDINGS_MHI_PROTOCOL.md) for the consolidated
+base protocol and the distinction between source-documented fields and
+project-observed extensions.
+
 ## Summary
 
 Hardware testing confirmed that vertical vane state, horizontal vane state, and 3D Auto are represented across two protocol areas:

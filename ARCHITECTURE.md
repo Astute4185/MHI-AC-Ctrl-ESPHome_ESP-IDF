@@ -602,6 +602,8 @@ Remaining work is primarily wider hardware validation, protocol discovery, docum
 - [`README.md`](README.md) — configuration and user-facing project status
 - [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) — driver combinations and target guidance
 - [`DIAGNOSTICS.md`](DIAGNOSTICS.md) — runtime counters and hardware validation
+- [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md) — consolidated MHI bus and protocol findings
 - [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md) — extended-louver protocol findings
-- [`notes/FINDINGS_RMT_SPI_RX.md`](notes/FINDINGS_RMT_SPI_RX.md) — RMT/SPI transport findings
+- [`notes/FINDINGS_SPI_TRANSPORTS.md`](notes/FINDINGS_SPI_TRANSPORTS.md) — current SPI transport findings
 - [`notes/FINDINGS_FAN_PROFILES.md`](notes/FINDINGS_FAN_PROFILES.md) — fan-profile findings
+- [`notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md`](notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md) — historical worker and transport experiments

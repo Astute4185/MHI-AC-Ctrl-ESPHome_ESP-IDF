@@ -473,7 +473,8 @@ known failures or limitations
 
 ## Related findings
 
-- [`notes/FINDINGS_RMT_SPI_RX.md`](notes/FINDINGS_RMT_SPI_RX.md)
-- [`notes/FINDINGS_fastGpio&ExternalClock.md`](notes/FINDINGS_fastGpio&ExternalClock.md)
+- [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md)
+- [`notes/FINDINGS_SPI_TRANSPORTS.md`](notes/FINDINGS_SPI_TRANSPORTS.md)
+- [`notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md`](notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md) (historical)
 - [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md)
 - [`notes/FINDINGS_FAN_PROFILES.md`](notes/FINDINGS_FAN_PROFILES.md)
