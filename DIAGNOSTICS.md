@@ -1,292 +1,447 @@
 # Diagnostics and Hardware Validation
 
-This guide explains the MHI runtime diagnostics, how to interpret transport health, and what evidence is required before a driver or hardware combination is promoted in the compatibility tables.
+This guide explains the current MHI runtime diagnostics, how to distinguish recoverable events from real failures, and what evidence should accompany a hardware or driver result.
 
-The driver-selection rules and hardware recommendations are documented in [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md).
+Driver availability and configuration rules are documented in [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md).
 
-## Logging level
+## Logging strategy
 
-Use DEBUG logging for initial bring-up, command testing, and the first part of a soak test:
+Use DEBUG during initial bring-up and focused command testing:
 
 ```yaml
 logger:
   level: DEBUG
 ```
 
-Once the configuration is behaving correctly, use WARN or ERROR for the longer soak. This reduces logging load and provides a more representative runtime result.
+For a longer soak, reduce unrelated log load while retaining MHI health lines:
 
-Do not treat a clean startup log as proof of stability. Review diagnostics after commands, reconnects, opdata polling, and sustained runtime.
+```yaml
+logger:
+  level: WARN
+  logs:
+    mhi.diag: INFO
+    mhi_rmt_cs_spi: INFO
+    mhi_rmt_spi_rx: INFO
+```
+
+Only enable the driver tag that applies to the selected transport.
+
+A clean startup log is not sufficient. Review diagnostics after command sequences, Home Assistant reconnects, opdata polling, Wi-Fi activity, and sustained runtime.
+
+## Reading the periodic diagnostics
+
+The component emits several periodic lines:
+
+1. common RX/TX protocol health;
+2. command confirmation and retry state;
+3. frame-catalogue and worker-decoded-store activity;
+4. TX scheduling and worker activity;
+5. transport queue and loop timing;
+6. a driver-specific line for hardware-assisted transports.
+
+Interpret the lines together. A clean transport does not prove that commands confirmed or that opdata continued to publish.
 
 ## Common protocol health
 
-A healthy run should show:
+Primary fields:
 
 ```text
-valid_frames increases continuously
-invalid_frames = 0
-checksum_failures = 0
-signature_misses = 0
-sync_losses = 0
-dropped_bytes = 0
-command_confirmation_timeouts = 0
+rx_bytes
+rx_chunks
+candidate_frames
+valid_frames
+invalid_frames
+checksum_failures
+signature_misses
+sync_losses
+dropped_bytes
+last_valid_frame_age_ms
+last_rx_byte_age_ms
 ```
 
-The following fields are the main protocol indicators.
-
 | Counter | Meaning | Healthy expectation |
 |---|---|---|
-| `rx_bytes` | Total bytes received by the transport | Increases while the MHI bus is active |
-| `rx_chunks` | RX chunks delivered to frame processing | Increases with traffic |
-| `candidate_frames` | Potential frames evaluated | Tracks received frame activity |
+| `rx_bytes` | Bytes delivered by the selected transport | Increases while the bus is active |
+| `rx_chunks` | Transport chunks passed into frame processing | Increases with traffic |
+| `candidate_frames` | Potential frames evaluated | Tracks frame activity |
 | `valid_frames` | Frames accepted after structure and checksum validation | Increases continuously |
-| `invalid_frames` | Candidate frames rejected | Zero during normal runtime |
-| `checksum_failures` | Frames rejected because the checksum was wrong | Zero |
-| `signature_misses` | Data discarded while searching for a valid frame signature | Zero on complete-frame hardware transports; occasional recovery activity may occur on software paths |
+| `invalid_frames` | Candidate frames rejected | Zero during normal operation |
+| `checksum_failures` | Frames rejected by checksum | Zero |
+| `signature_misses` | Data discarded while searching for a valid signature | Zero on complete-frame hardware paths; bounded recovery activity may occur on software paths |
 | `sync_losses` | Loss of frame synchronisation | Zero |
-| `dropped_bytes` | RX bytes discarded during recovery or overflow | Zero |
-| `last_valid_frame_age_ms` | Time since the last accepted frame | Should remain close to the normal bus cadence |
-| `last_rx_byte_age_ms` | Time since the last received byte | Should remain close to the normal bus cadence |
+| `dropped_bytes` | Bytes discarded during overflow or recovery | Zero |
+| `last_valid_frame_age_ms` | Age of the last accepted frame | Close to the normal bus cadence |
+| `last_rx_byte_age_ms` | Age of the last received byte | Close to the normal bus cadence |
 
-A single startup anomaly can be non-material if the counters stop increasing. A counter that continues increasing indicates an active fault.
+A single startup anomaly can be acceptable when the counter remains fixed. A counter that continues increasing represents an active fault.
 
-## TX and command health
+The `rx_protocol_health healthy=YES/NO` line is a delta-based summary. Treat the underlying counters as authoritative when diagnosing an anomaly.
 
-The common TX counters show whether frames are being prepared and transmitted.
+## TX health
+
+Primary fields:
+
+```text
+tx_frames
+tx_failures
+tx_command_frames
+tx_command_failures
+unsupported_commands
+last_tx_command_mask
+last_tx_command_age_ms
+```
 
 | Counter | Meaning | Healthy expectation |
 |---|---|---|
-| `tx_frames` | Total frames successfully handed to the TX backend | Increases with background and command traffic |
-| `tx_failures` | General TX failures | Zero, or fully explained by a known startup event |
-| `tx_command_frames` | Command-bearing frames transmitted | Increases when Home Assistant commands are issued |
+| `tx_frames` | Frames successfully accepted by the TX backend | Increases with background and command traffic |
+| `tx_failures` | General TX failures | Zero or fully explained by a fixed startup event |
+| `tx_command_frames` | Command-bearing frames actually transmitted | Increases when controls are used |
 | `tx_command_failures` | Failed command-frame attempts | Zero |
-| `unsupported_commands` | Commands the active transport or protocol path could not represent | Zero during normal use |
-| `last_tx_command_mask` | Bitmask of the last command fields transmitted | Used when tracing a specific command |
-| `last_tx_command_age_ms` | Time since the last command transmission | Informational |
+| `unsupported_commands` | Commands the active path could not represent | Zero |
+| `last_tx_command_mask` | Fields carried by the last command frame | Used for focused command tracing |
+| `last_tx_command_age_ms` | Age of the last command transmission | Informational |
 
-A background TX failure does not automatically mean a user command failed. Command success must be judged using command-confirmation counters and actual AC feedback.
+A TX frame count does not prove command success. Returned AC state is authoritative.
 
-## Command confirmation
+## Command confirmation, retries, and supersession
 
-Commands are staged, transmitted, and then confirmed against decoded MOSI feedback from the air conditioner.
+Commands move through three distinct stages:
+
+```text
+staged intent -> actual bus transmission -> semantic MOSI confirmation
+```
 
 Monitor:
 
 ```text
 command_confirmations
-command_confirmation_timeouts
+confirmation_timeouts
+retries
+retry_exhaustions
+staged_timeouts
 pending_confirmation_mask
 last_confirmed_mask
 last_timeout_mask
+last_retry_mask
+last_exhausted_mask
+last_staged_timeout_mask
 ```
 
-Healthy behaviour:
+| Counter | Meaning | Interpretation |
+|---|---|---|
+| `command_confirmations` | Command fields confirmed from returned MOSI state | Should increase after successful commands |
+| `confirmation_timeouts` | Confirmation attempt exceeded its field-specific window | Ideally zero; recoverable when a retry subsequently confirms |
+| `retries` | Timed-out fields queued for another attempt | Should correspond to recoverable confirmation timeouts |
+| `retry_exhaustions` | All permitted attempts completed without confirmation | Hard command failure; expected zero |
+| `staged_timeouts` | A command envelope remained staged without real TX completion for too long | Indicates transport or completion-path blockage; expected zero |
+| `pending_confirmation_mask` | Fields currently awaiting semantic feedback | Returns to zero after confirmation, supersession, or exhaustion |
 
-- `command_confirmations` increases after confirmable commands.
-- `command_confirmation_timeouts` remains zero.
-- `pending_confirmation_mask` returns to zero after the AC reports the requested state.
-- Home Assistant settles to the decoded AC state.
+A non-zero `confirmation_timeouts` count is not automatically a failed run. The louver matrix demonstrated that a command may be ignored on the first attempt and confirm after one retry. Acceptance requires:
 
-A command test is not successful merely because a TX frame was sent. The physical unit must change and the returned status must confirm the change.
+```text
+retry_exhaustions = 0
+staged_timeouts = 0
+pending_confirmation_mask returns to 0
+physical state and Home Assistant state match
+```
 
-When testing, cover at least:
+### Extended-louver timing
 
-- Power on and off
-- Each supported climate mode
-- Several temperature changes
-- Every exposed fan level
-- Vertical vane positions and swing
-- Horizontal vane positions when supported
-- 3D Auto when supported
-- Commands issued while the unit is off
-- Rapid replacement of pending commands
+Horizontal vane and 3D Auto confirmation use three-second windows. Other command fields use the normal ten-second confirmation window.
 
-## Frame catalogue and opdata
+### Latest-intent supersession
 
-The frame catalogue separates repeated status traffic, extended status, operation data, and unknown frames.
+Horizontal vane and 3D Auto share DB16/DB17. When newer intent changes the composite desired state, the old confirmation generation is superseded and a combined command can be transmitted immediately.
+
+Typical trace:
+
+```text
+command: superseded pending confirmation mask=0x00000020
+command: staged=YES mask=0x00000060 ...
+command: confirmed mask=0x00000060 pending=0x00000000
+```
+
+This is expected behaviour, not a failure. The latest requested composite state must confirm without stale intent carrying into the next command.
+
+### Command test scope
+
+Exercise at least:
+
+- power on and off;
+- each supported climate mode;
+- multiple temperature changes;
+- every exposed fan level;
+- all vertical vane positions and swing;
+- all horizontal vane positions and swing on 33-byte units;
+- 3D Auto on and off;
+- commands while the unit is off;
+- rapid replacement of pending commands;
+- horizontal/3D changes issued close together.
+
+## Frame catalogue and decoded snapshots
+
+The frame catalogue separates standard status, extended status, opdata, unknown frames, and command-confirmation candidates.
 
 Monitor:
 
 | Counter | Meaning | Healthy expectation |
 |---|---|---|
 | `catalog ingested` | Valid frames accepted by the catalogue | Tracks `valid_frames` closely |
-| `status` | Standard status frames classified | Depends on the AC and frame layout |
+| `status` | Standard status frames classified | Model/frame dependent |
 | `extended` | Extended status frames classified | Expected on 33-byte units |
-| `opdata` | Operation-data responses classified | Increases when opdata polling is active |
-| `unknown` | Valid frames that were not classified | Zero or explained by an unsupported frame type |
-| `overwritten` | Latest-value catalogue entries replaced before publication | Normally zero; sustained growth requires review |
-| `opdata_slots_full` | Opdata could not be stored because the catalogue was full | Zero |
-| `command_candidates` | Frames considered for command confirmation | Increases when relevant feedback is received |
+| `opdata` | Operation-data responses classified | Increases while opdata polling is active |
+| `unknown` | Valid frames not mapped to a known class | Zero or explicitly explained |
+| `overwritten` | Latest-value catalogue slot replaced before consumption | Bounded latest-value behaviour; investigate continuous growth with missing publications |
+| `opdata_slots_full` | Opdata could not be retained because all semantic slots were occupied | Zero |
+| `command_candidates` | Feedback frames considered for confirmation | Increases around commands |
 
-Opdata health must also be verified functionally. Sensors should continue updating across the entire run. Clean frame counters do not compensate for missing opdata publications.
+For worker decode, monitor:
 
-Some opdata fields are model-dependent. A sensor that remains unavailable because the AC never returns that field is not necessarily a transport problem.
+```text
+worker_decode status=writes/overwrites
+worker_decode extended=writes/overwrites
+worker_decode candidates=writes/overwrites
+opdata_merges
+opdata_field_overwrites
+unknown=writes/overwrites
+publish_batches
+pending_high_water
+unknown_high_water
+```
+
+Latest-value overwrites are not automatically data loss. Repeated status can replace an older pending status before the main loop applies it. The failure condition is missing or stale published state, lost opdata fields, unbounded queue pressure, or command-confirmation regression.
+
+Opdata is model-dependent. A field that the AC never returns should remain unavailable rather than being fabricated as zero.
 
 ## TX scheduling and priority
-
-The TX priority diagnostics distinguish command traffic from routine background requests.
 
 Monitor:
 
 ```text
-tx_priority command_attempts
-tx_priority background_attempts
-tx_priority background_failures
+command_attempts
+background_attempts
+background_failures
 interval_deferrals
 confirmation_deferrals
 ```
 
 Expected behaviour:
 
-- Commands bypass the normal background interval.
-- Background traffic waits while a command confirmation is pending.
-- `confirmation_deferrals` may increase during a command and should stop once the command is confirmed or times out.
-- Repeated `background_failures` require investigation, especially if opdata stops updating.
+- command traffic bypasses the background interval;
+- routine background traffic waits while confirmation is pending;
+- `confirmation_deferrals` can increase during an active command and should stop afterward;
+- repeated `background_failures` require investigation, particularly if opdata stops updating.
+
+A split `fast_gpio_tx` path can show occasional background failures while user commands still confirm. Record the failure count and verify that it does not correlate with missing opdata or command failures.
+
+## Command-worker diagnostics
+
+`command_worker` is opt-in and production-capable, but the synchronous path remains available for comparison.
+
+Monitor:
+
+```text
+command_worker enabled
+command_worker running
+command_worker classified_rx
+wakes
+service_runs
+idle_polls
+frames_staged
+completions
+rx_polls
+rx_batches
+rx_chunks
+rx_frames
+rx_max_batch
+runtime_us=last/max
+notify_max
+stack_free_min
+```
+
+| Field | Meaning | Healthy expectation |
+|---|---|---|
+| `enabled` | YAML setting | Matches configuration |
+| `running` | FreeRTOS worker task state | `YES` when enabled |
+| `classified_rx` | Worker drains and decodes RX | `YES` for queue-backed drivers; `NO` for `fast_gpio_rx` |
+| `wakes` | Explicit worker notifications consumed | Increases with command and completion activity |
+| `service_runs` | Combined command/RX service passes | Increases continuously while active |
+| `idle_polls` | Timed passes without an explicit notification | Can increase steadily without being a fault |
+| `frames_staged` | TX envelopes accepted by the transport | Increases with background and command traffic |
+| `completions` | Command frames reported complete after a real transaction | Increases only for command-bearing completions |
+| `rx_polls` | Worker RX polling passes | Increases when `classified_rx=YES` |
+| `rx_batches` | Polls that produced at least one valid frame | Increases on an active bus |
+| `rx_chunks` | Transport chunks drained by the worker | Tracks queue handoff activity |
+| `rx_frames` | Valid frames synchronised and catalogued by the worker | Broadly tracks `valid_frames` |
+| `rx_max_batch` | Maximum valid frames processed in one poll | Normally small and bounded |
+| `runtime_us` | Last and maximum worker service duration | Use to detect worker stalls |
+| `notify_max` | Maximum notification batch consumed at once | Normally small |
+| `stack_free_min` | Minimum remaining worker stack | Must remain comfortably above zero |
+
+Queue-backed RX drivers that support classified RX:
+
+- `external_clock_rx`;
+- `rmt_spi_rx`;
+- `rmt_cs_spi`.
+
+`fast_gpio_rx` remains main-loop capture/synchronisation/decode even when the command worker is enabled.
+
+A valid worker run requires:
+
+- real TX completion before confirmation starts;
+- successful command confirmation;
+- no staged timeouts or retry exhaustion;
+- continued opdata publication;
+- bounded worker and transport queues;
+- synchronised physical and Home Assistant state.
+
+Lower loop timing alone is not acceptance evidence.
+
+## Transport queues
+
+Common queue line:
+
+```text
+transport_queues rx_depth=... rx_high_water=... rx_overwritten=...
+completion_depth=... completion_high_water=... completion_dropped=...
+```
+
+| Counter | Healthy expectation |
+|---|---|
+| `rx_depth` | Normally zero or low after each service pass |
+| `rx_high_water` | Low and bounded |
+| `rx_overwritten` | Zero |
+| `completion_depth` | Normally zero |
+| `completion_high_water` | Low and bounded |
+| `completion_dropped` | Zero |
+
+A high-water mark is historical. It does not need to return to zero. The current depth should drain and overwrite/drop counters should remain fixed.
 
 ## Main-loop timing
 
-The component reports total loop timing and timing by section.
-
-Example fields:
+The component reports:
 
 ```text
 loop_us last / average / maximum
 over_budget
-transport
-TX
-RX
-publish
-command
+section_us transport / tx / rx / publish / command
 ```
 
-Use these measurements to locate processing pressure, not as the sole definition of health.
+Use section timing to identify pressure:
 
-A command worker or hardware backend can improve `loop_us` while introducing lost confirmations, stale data, or missing opdata. Functional behaviour remains the primary acceptance criterion.
+- `transport`: selected transport service and completion draining;
+- `tx`: command/background staging and context refresh;
+- `rx`: main-loop RX work or worker-snapshot apply;
+- `publish`: ESPHome state publication;
+- `command`: timeout and retry housekeeping.
 
-For split FastGPIO configurations, long transport or TX sections may occur because software must follow the externally supplied MHI clock. Hardware-assisted backends should materially reduce this pressure.
+A single startup over-budget event can be non-material when the count remains fixed. Sustained growth requires investigation.
 
-## Command-worker diagnostics
-
-The first-stage command worker is experimental and disabled by default. It prepares immutable command envelopes and coordinates staging, actual TX completion, and semantic confirmation. Real-time TX remains owned by the selected transport.
-
-Monitor:
-
-```text
-command_worker enabled / running / classified_rx
-command_worker wakes
-command_worker service_runs
-command_worker idle_polls
-command_worker frames_staged
-command_worker completions
-command_worker rx_polls
-command_worker rx_batches
-command_worker rx_chunks
-command_worker rx_frames
-command_worker rx_max_batch
-```
-
-Interpretation:
-
-| Counter | Meaning | Healthy expectation |
-|---|---|---|
-| `enabled` | Configured worker state | Matches YAML |
-| `running` | FreeRTOS task is active | `YES` when enabled |
-| `classified_rx` | Worker owns RX draining/synchronisation/classification | `YES` for queue-backed RX drivers; `NO` for `fast_gpio_rx` |
-| `wakes` | Explicit notifications consumed by the worker | Increases with command changes and completed command transactions |
-| `service_runs` | Combined command/RX service passes | Increases while the worker is active |
-| `idle_polls` | Timed polls without an explicit notification | May increase steadily; should not correlate with drops or regressions |
-| `frames_staged` | Frames accepted by the selected transport | Increases with commands and background requests |
-| `completions` | Command frames reported complete after a real bus transaction | Increases only for command-bearing TX envelopes |
-| `rx_polls` | Worker RX polling passes | Increases only when `classified_rx=YES` |
-| `rx_batches` | Polls that produced at least one valid frame | Should increase continuously on an active bus |
-| `rx_chunks` | Transport chunks drained by the worker | Tracks transport queue handoff activity |
-| `rx_frames` | Valid frames synchronised and catalogued by the worker | Should broadly track common `valid_frames` |
-| `rx_max_batch` | Largest number of valid frames processed in one poll | Normally small; sustained growth indicates worker starvation |
-| `worker_decode status/extended` | Decoded status writes and latest-value overwrites | Overwrites are expected when repeated status arrives before main-loop apply |
-| `worker_decode candidates` | Generation-sensitive command confirmation snapshots | Should increase while commands are awaiting confirmation |
-| `worker_decode opdata_merges` | Decoded opdata frames merged into the pending snapshot | Should track active opdata traffic |
-| `worker_decode opdata_field_overwrites` | Repeated semantic opdata fields replaced before main-loop apply | Acceptable when bounded; different fields remain preserved |
-| `worker_decode unknown` | Bounded unknown-frame ring writes/overwrites | Overwrites are diagnostic only and must not affect status or opdata |
-| `worker_decode publish_batches` | Main-loop decoded snapshot batches applied | Should increase while the bus is active |
-
-A valid first-stage test must demonstrate all of the following:
-
-- The configured worker starts on the intended core.
-- A staged command does not create a pending confirmation until `completions` increases.
-- Commands continue to confirm.
-- `command_confirmation_timeouts` remains zero.
-- Opdata continues to publish.
-- Home Assistant state remains synchronised with the physical unit.
-- Transport overwrite, queue, and drop counters remain clean.
-- `command_worker: false` remains a working synchronous fallback.
-
-For queue-backed RX drivers, RX draining, synchronisation, classification, and protocol decoding run in the same worker. The main loop consumes bounded decoded snapshots and remains the only context that mutates published state or calls ESPHome publication APIs. `fast_gpio_rx` remains entirely main-loop driven.
+FastGPIO RX/TX can block while following the AC-owned clock. Hardware-assisted paths should materially reduce normal loop pressure, but functional behaviour remains the acceptance criterion.
 
 ## `rmt_spi_rx` diagnostics
 
-The split hardware-assisted RX path uses RMT-derived frame boundaries and the SPI slave peripheral for receive capture. TX remains `fast_gpio_tx`.
+This ESP32-S3 split backend uses RMT-derived frame boundaries and DMA-backed SPI RX. TX remains `fast_gpio_tx`.
 
-Monitor:
+Example fields:
 
 ```text
-invalid transaction lengths
-SPI result errors
-SPI queue errors
-RMT re-arm errors
-completed-frame overwrites
-completed-frame drops
-maximum buffered frames
+boundaries
+completed
+frame20
+frame33
+invalid_len
+result_errors
+queue_errors
+rmt_rearm_errors
+buffered_frames
+max_buffered
+overwritten
+dropped
 ```
 
-Healthy expectation:
+| Counter | Healthy expectation |
+|---|---|
+| `boundaries` | Increases with frame traffic |
+| `completed` | Closely tracks boundaries after startup |
+| `frame20` / `frame33` | Only the configured frame counter increases |
+| `invalid_len` | Zero after startup |
+| `result_errors` | Zero |
+| `queue_errors` | Zero |
+| `rmt_rearm_errors` | Zero |
+| `buffered_frames` | Zero or low |
+| `max_buffered` | Low and bounded |
+| `overwritten` | Zero |
+| `dropped` | Zero |
 
-- Invalid transaction lengths remain zero after startup.
-- SPI result and queue errors remain zero.
-- RMT re-arm errors remain zero.
-- Completed-frame overwrites and drops remain zero.
-- Maximum buffering remains low and bounded.
-
-If RX remains clean but background TX fails or the main loop stalls, investigate the `fast_gpio_tx` side separately.
+If RX remains clean but loop timing or background TX degrades, investigate `fast_gpio_tx` separately.
 
 ## `rmt_cs_spi` diagnostics
 
-The full-duplex backend uses the same SPI transaction for RX and TX and owns the full transport.
+`rmt_cs_spi` is the FIFO-backed full-duplex transport. It owns the complete SPI transaction and its dedicated owner task.
 
-Example runtime line:
+Example line:
 
 ```text
-boundaries=602 completed=601 tx_completed=117 tx_failures=0
-frame20=0 frame33=601 invalid_len=1 result_errors=0
-queue_errors=0 rmt_rearm_errors=0 buffered_frames=0
-max_buffered=1 rx_overwritten=0 tx_overwritten=0 dropped=0
+boundaries=51611 completed=51610 tx_completed=10355 tx_failures=0
+frame20=0 frame33=51610 invalid_len=1 result_errors=0
+queue_errors=0 rmt_rearm_errors=0 buffered_frames=0 max_buffered=2
+rx_overwritten=0 tx_overwritten=20 dropped=0 completion=0/1/0
 task_running=YES
 ```
 
-Monitor:
-
 | Counter | Meaning | Healthy expectation |
 |---|---|---|
-| `boundaries` | Frame gaps detected by RMT | Increases with bus traffic |
-| `completed` | SPI transactions returned as completed | Closely tracks boundaries after startup |
-| `tx_completed` | Transactions that carried prepared TX data | Increases with background and command traffic |
-| `tx_failures` | TX-side transaction failures | Zero |
-| `frame20` | Completed 20-byte transactions | Matches the configured frame type |
-| `frame33` | Completed 33-byte transactions | Matches the configured frame type |
-| `invalid_len` | Transactions with an unexpected bit length | Zero after startup |
-| `result_errors` | Errors retrieving completed SPI transactions | Zero |
-| `queue_errors` | Errors queuing SPI transactions | Zero |
-| `rmt_rearm_errors` | Failures restarting RMT boundary detection | Zero |
-| `buffered_frames` | Completed RX frames waiting for the main path | Normally zero or low |
-| `max_buffered` | High-water mark for completed-frame buffering | Low and bounded |
+| `boundaries` | Inter-frame gaps detected by RMT | Increases with bus traffic |
+| `completed` | SPI transactions returned successfully | Closely tracks boundaries after startup |
+| `tx_completed` | Transactions that carried a prepared TX snapshot | Increases with background and command traffic |
+| `tx_failures` | Failed TX-bearing transactions | Zero |
+| `frame20` / `frame33` | Completed transaction lengths | Only the configured frame counter increases |
+| `invalid_len` | Unexpected transaction length | Zero after startup; one fixed attach-time event can be acceptable |
+| `result_errors` | Errors retrieving transaction results | Zero |
+| `queue_errors` | Errors queuing the next SPI transaction | Zero |
+| `rmt_rearm_errors` | Failures restarting boundary detection | Zero |
+| `buffered_frames` | RX frames waiting for consumption | Normally zero or low |
+| `max_buffered` | Historical RX queue high-water mark | Low and bounded |
 | `rx_overwritten` | Completed RX frames replaced before consumption | Zero |
-| `tx_overwritten` | Pending TX snapshots replaced before use | Zero during normal command operation; investigate sustained growth |
-| `dropped` | Frames discarded by the transport | Zero |
-| `task_running` | State of the SPI owner task | `YES` |
+| `tx_overwritten` | Pending latest TX snapshot replaced before use | Can increase during aggressive command/background churn; not a failure when commands confirm and no completions are dropped |
+| `dropped` | Transport frames discarded | Zero |
+| `completion=current/high-water/dropped` | TX completion queue state | Current normally zero, high-water low, dropped zero |
+| `task_running` | SPI owner task state | `YES` |
 
-One initial `invalid_len` can occur while attaching to an already active bus. It is acceptable only when the counter remains fixed and all subsequent traffic is clean.
+`tx_overwritten` implements latest-value mailbox behaviour. Investigate it when growth correlates with command failure, missing opdata, staged timeouts, or completion drops. Do not classify a bounded increase during an aggressive matrix as RX corruption.
 
-## Hardware validation checklist
+## Known validated louver-matrix example
 
-Before submitting a merge request:
+The completed 80-case vertical/horizontal/3D matrix showed:
+
+```text
+all requested combinations matched
+retry_exhaustions=0
+pending_confirmation_mask=0x00000000
+invalid_frames=0
+checksum_failures=0
+signature_misses=0
+sync_losses=0
+dropped_bytes=0
+tx_failures=0
+queue_errors=0
+rmt_rearm_errors=0
+rx_overwritten=0
+completion_dropped=0
+```
+
+The run included recoverable 3D confirmation timeouts, successful retries, horizontal/3D supersession, and a fixed startup `invalid_len=1`. Those events were acceptable because counters stopped increasing, all combinations confirmed, and no command exhausted its retry budget.
+
+The consolidated bus, frame, and command-field reference is [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
+
+Detailed protocol findings are recorded in [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md).
+
+Driver-specific SPI evidence and counter interpretation are recorded in [`notes/FINDINGS_SPI_TRANSPORTS.md`](notes/FINDINGS_SPI_TRANSPORTS.md).
+
+## Hardware validation workflow
+
+Before a pull request:
 
 ```bash
 ./scripts/lint.sh fix
@@ -294,7 +449,9 @@ Before submitting a merge request:
 ./scripts/compile-tests.sh
 ```
 
-For initial hardware validation, record:
+`compile-tests.sh` compiles the representative four-target matrix by default.
+
+Record:
 
 ```text
 ESP chip and revision
@@ -303,6 +460,7 @@ ESPHome version
 ESP-IDF version
 AC model
 frame size
+fan profile
 SCK/MOSI/MISO pins
 RX selection and effective TX
 command-worker settings
@@ -312,139 +470,161 @@ tuning overrides
 Then verify:
 
 ```text
-valid_frames climbs
-invalid_frames = 0
-checksum_failures = 0
-signature_misses = 0
-sync_losses = 0
-dropped_bytes = 0
-commands confirm
-command_confirmation_timeouts = 0
-opdata sensors continue to publish
-Home Assistant state matches confirmed AC feedback
-driver-specific queue, overwrite, and drop counters remain zero
+valid_frames increases
+invalid_frames remains zero
+checksum_failures remains zero
+signature_misses and sync_losses remain zero on complete-frame hardware paths
+dropped_bytes remains zero
+commands physically apply and confirm
+retry_exhaustions remains zero
+staged_timeouts remains zero
+pending_confirmation_mask returns to zero
+opdata continues to publish
+Home Assistant matches confirmed AC feedback
+queue, overwrite, drop, SPI, and RMT counters remain bounded and understood
 ```
 
-A full command test should be completed before starting a long soak.
+Complete a command matrix before beginning a long soak.
 
-## Soak-test evidence
+## Soak-test record
 
-A useful soak record should include:
+Include:
 
 ```text
 start and end time
 total duration
-logging level
-Wi-Fi and API reconnect events
-commands issued during the run
+logging configuration
+Wi-Fi/API reconnect events
+commands issued
 opdata fields observed
 end-of-test common diagnostics
 end-of-test driver-specific diagnostics
-crashes, watchdog resets, or safe-mode boots
-known anomalies and whether their counters continued increasing
+crashes, watchdog resets, safe-mode boots
+all anomalies and whether their counters continued increasing
 ```
 
 Recommended sequence:
 
-1. Initial DEBUG validation with command testing.
-2. Several hours at DEBUG while reviewing detailed counters.
-3. A 24- to 48-hour soak at WARN or ERROR.
-4. Final DEBUG reconnect to capture the complete end-of-test diagnostics.
-
-Promotion guidance:
-
-- **In development** to **In testing** requires clean runtime logs and successful command operation.
-- **In testing** to **Stable** requires extended runtime evidence and no planned material transport changes.
+1. DEBUG bring-up and complete command test.
+2. Several hours with MHI diagnostics visible.
+3. A 24-48 hour lower-noise soak.
+4. Final reconnect with MHI INFO diagnostics enabled.
 
 ## Troubleshooting
 
 ### No valid frames
 
-Check, in order:
+Check in order:
 
-1. SCK, MOSI, and MISO GPIO mapping.
-2. Ground reference and electrical connection.
-3. `frame_size`.
-4. Selected RX backend and chip support.
-5. Whether SCK activity is visible with a logic analyser.
+1. SCK, MOSI, and MISO pins;
+2. common ground and electrical connection;
+3. `frame_size`;
+4. selected driver and chip support;
+5. visible SCK activity;
+6. active driver names and ready state in `dump_config`.
 
-Do not tune frame-gap values before confirming the pins and frame size.
+Do not tune frame-gap values before confirming wiring and frame size.
 
 ### Repeated checksum or signature failures
 
 Likely causes:
 
-- Wrong `frame_size`
-- Incorrect GPIO mapping
-- Timing instability on a software backend
-- Electrical noise or level problems
-- Incorrect frame-gap boundary detection
+- wrong frame size;
+- incorrect GPIO mapping;
+- software-path timing instability;
+- electrical noise or level problems;
+- incorrect frame-boundary detection.
 
-Compare against the conservative `fast_gpio_rx` path to separate protocol and wiring problems from an experimental backend issue.
+Compare with `fast_gpio_rx` to separate wiring/protocol problems from a hardware-assisted backend.
 
 ### Repeated invalid transaction lengths
 
-For RMT/SPI backends:
+For `rmt_spi_rx` and `rmt_cs_spi`:
 
-- Confirm `rmt_spi_frame_gap_us` is greater than the inter-byte gap and lower than the inter-frame gap.
-- Confirm the configured frame size matches the unit.
-- Check whether the counter increases only once during startup or continuously.
-- Review RMT re-arm and SPI queue/result errors.
+- confirm `rmt_spi_frame_gap_us` is above the inter-byte gap and below the inter-frame gap;
+- confirm the configured frame size;
+- determine whether the counter is one fixed startup event or continues increasing;
+- review `rmt_rearm_errors`, `queue_errors`, and `result_errors`.
 
 ### Commands transmit but do not confirm
 
-Check:
+Review:
 
-- `tx_command_frames`
-- `tx_command_failures`
-- `pending_confirmation_mask`
-- `command_confirmation_timeouts`
-- `last_confirmed_mask`
-- Physical AC behaviour
+```text
+tx_command_frames
+tx_command_failures
+pending_confirmation_mask
+confirmation_timeouts
+retries
+retry_exhaustions
+last_confirmed_mask
+last_timeout_mask
+physical AC state
+```
 
-A clean TX count without returned confirmation is a failed command path.
+A transmitted command without matching returned state is not successful.
+
+### Staged timeout
+
+A `staged_timeout` means the command did not reach real TX completion in the expected time. Investigate:
+
+- transport readiness;
+- TX completion queue drops;
+- driver task state;
+- queue/result errors;
+- FastGPIO marker/window timing on split paths.
+
+This is different from a confirmation timeout, which occurs after the frame was transmitted.
 
 ### Opdata stops updating
 
 Check:
 
-- `opdata` catalogue count
-- `opdata_slots_full`
-- Catalogue overwrites
-- Background TX attempts and failures
-- Confirmation deferrals
-- Command-worker state
+- catalogue `opdata` growth;
+- `opdata_slots_full`;
+- worker decode merges and field overwrites;
+- background attempts and failures;
+- confirmation deferrals;
+- active pending confirmation;
+- worker state.
 
-If status frames remain healthy but opdata stops, investigate TX request scheduling and catalogue handling rather than RX synchronisation alone.
+If status remains healthy but opdata stops, investigate background TX scheduling and catalogue handling rather than RX synchronisation alone.
 
-### Long ESPHome loop warnings
+### Long loop warnings
 
-Synchronous FastGPIO RX or TX can block the ESPHome loop while following the external MHI frame cadence.
+Use `section_us` to identify the source. A FastGPIO split path can legitimately spend significant time following the external clock, but sustained overruns, missing commands, or stale publications require action.
 
-Identify whether the time is concentrated in `transport`, `TX`, `RX`, or `publish`. Clean protocol counters are necessary but not sufficient; commands and opdata must remain functional.
+### Worker-path regression
 
-### Command-worker mode regresses behaviour
-
-Disable the experimental path:
+Temporarily compare with:
 
 ```yaml
-command_worker: false
+MhiAcCtrl:
+  command_worker: false
 ```
 
-Compare the same command sequence against the synchronous fallback. The worker path is not successful unless actual TX completion, command confirmation, opdata flow, and Home Assistant state remain correct. Lower loop timing alone is not an acceptance result.
+The worker path is acceptable only when TX completion, semantic confirmation, opdata, publications, and queue health remain correct.
 
 ### Sensor remains unavailable
 
-Many opdata fields are model-dependent. A sensor only publishes after the AC returns a valid response for that field. Unavailable is preferred over a fabricated zero.
+Many opdata fields are model-dependent. A field only becomes available after the AC returns a valid response.
 
 ### Fan or vane selection bounces back
 
-Confirmed AC feedback is authoritative. The requested state will be replaced by the decoded state if the AC rejects, clamps, or remaps the command.
+Confirmed AC feedback is authoritative. The published selection will return to the decoded state when the unit rejects, clamps, or remaps the request.
 
-Review command masks and confirmation diagnostics to determine whether the AC accepted the selection.
+Review the command masks, retries, and confirmation state.
 
 ## Reporting a hardware result
 
-Include the hardware-validation record and both the common and driver-specific end-of-test diagnostic lines. State whether `command_worker` was enabled and identify every non-default tuning value.
+Attach:
 
-The hardware compatibility table should only be updated after the evidence is repeatable and the maturity status is clear.
+- the hardware/configuration record;
+- the final common diagnostic lines;
+- the relevant driver-specific line;
+- command test results;
+- opdata behaviour;
+- every non-default tuning value;
+- an explanation of any non-zero counters.
+
+A result is repeatable only when the maturity statement is tied to a specific ESP chip, board, AC model, and configuration.

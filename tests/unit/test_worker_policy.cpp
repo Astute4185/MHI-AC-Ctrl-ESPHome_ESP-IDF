@@ -10,7 +10,6 @@ void worker_policy_allows_queue_backed_rx_drivers() {
 
 void worker_policy_keeps_synchronous_rx_in_main_loop() {
   EXPECT_FALSE(mhi_rx_driver_supports_classified_worker("fast_gpio_rx"));
-  EXPECT_FALSE(mhi_rx_driver_supports_classified_worker("native_spi_rx"));
   EXPECT_FALSE(mhi_rx_driver_supports_classified_worker("none"));
 }
 

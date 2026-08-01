@@ -1,0 +1,171 @@
+name: Hardware validation report
+description: Report successful or unsuccessful testing on a board and MHI air-conditioner combination.
+title: "[Hardware validation]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hardware reports expand the compatibility evidence for each transport. Include final counters even when the test passed.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Report checks
+      options:
+        - label: I removed secrets and private credentials from the supplied configuration and logs.
+          required: true
+        - label: I am reporting observed hardware results rather than compile-only results.
+          required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options:
+        - Passed
+        - Passed with recovered retries or warnings
+        - Failed
+        - Inconclusive
+    validations:
+      required: true
+
+  - type: dropdown
+    id: chip
+    attributes:
+      label: ESP chip
+      options:
+        - ESP32
+        - ESP32-S3
+        - ESP32-C3
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Exact board or module
+      placeholder: "M5Stack Atom S3 Lite"
+    validations:
+      required: true
+
+  - type: input
+    id: ac_model
+    attributes:
+      label: Air-conditioner model
+      placeholder: "SRK35ZSX-W"
+    validations:
+      required: true
+
+  - type: input
+    id: esphome_version
+    attributes:
+      label: ESPHome version
+      placeholder: "2026.7.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frame_size
+    attributes:
+      label: Frame size
+      options:
+        - "20"
+        - "33"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: rx_driver
+    attributes:
+      label: RX driver
+      options:
+        - fast_gpio_rx
+        - external_clock_rx
+        - rmt_spi_rx
+        - rmt_cs_spi
+    validations:
+      required: true
+
+  - type: input
+    id: tx_driver
+    attributes:
+      label: Effective TX driver
+      placeholder: "fast_gpio_tx or integrated rmt_cs_spi"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: command_worker
+    attributes:
+      label: Command worker
+      options:
+        - "false"
+        - "true"
+    validations:
+      required: true
+
+  - type: input
+    id: duration
+    attributes:
+      label: Test duration
+      placeholder: "24 hours"
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant YAML configuration
+      render: yaml
+      description: Include MhiAcCtrl and related entity configuration. Remove secrets.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: coverage
+    attributes:
+      label: Tested behaviour
+      options:
+        - label: Continuous status reception
+        - label: Power and climate mode commands
+        - label: Target-temperature commands
+        - label: Fan commands
+        - label: Vertical vane commands
+        - label: Horizontal vane commands
+        - label: 3D Auto commands
+        - label: Opdata updates
+        - label: Restart or reconnection recovery
+
+  - type: textarea
+    id: observations
+    attributes:
+      label: Observations
+      description: Describe command confirmation, recovered retries, instability, model-specific behaviour, or anything not tested.
+    validations:
+      required: true
+
+  - type: textarea
+    id: startup_log
+    attributes:
+      label: Startup configuration log
+      render: text
+      description: Include the selected driver, pins, frame size, worker, and transport setup lines.
+    validations:
+      required: true
+
+  - type: textarea
+    id: final_counters
+    attributes:
+      label: Final runtime counters
+      render: text
+      description: Include protocol-health, transport, command-confirmation, loop, and worker counters at the end of the test.
+    validations:
+      required: true
+
+  - type: textarea
+    id: failure_log
+    attributes:
+      label: Relevant warning or failure log
+      render: text
+      description: Required for failed or warning results; otherwise leave empty.

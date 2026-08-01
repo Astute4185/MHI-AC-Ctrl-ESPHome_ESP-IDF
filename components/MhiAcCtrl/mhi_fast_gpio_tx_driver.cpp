@@ -164,8 +164,8 @@ bool MhiFastGpioTxDriver::setup(const MhiTransportPins& pins) {
     return false;
   }
 
-  // Do not reset or reconfigure SCK/MOSI here. In native_spi_rx mode SCK/MOSI
-  // belong to the SPI peripheral. This driver only owns MISO.
+  // Do not reset or reconfigure SCK/MOSI here. The selected RX driver owns
+  // the input-side configuration. This driver only owns MISO.
   gpio_input_enable(static_cast<gpio_num_t>(pins_.sck));
   gpio_reset_pin(static_cast<gpio_num_t>(pins_.miso));
   gpio_set_direction(static_cast<gpio_num_t>(pins_.miso), GPIO_MODE_OUTPUT);

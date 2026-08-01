@@ -293,8 +293,9 @@ void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command,
       } else if (horizontal_requested || has_preserved_context) {
         out.data[DB16] = static_cast<uint8_t>(0x10U | (desired_horizontal_vane - 1U));
       } else {
-        // Preserve the pre-spike fallback for a 3D-only request received
-        // before the first extended-louver status has been learned.
+        // A 3D-only request can arrive before extended-louver status has
+        // established the companion horizontal position. Use zero until that
+        // context is available.
         out.data[DB16] = 0x00U;
       }
       out.data[DB17] = static_cast<uint8_t>(0x0AU | (desired_horizontal_swing ? 0x01U : 0x00U) |

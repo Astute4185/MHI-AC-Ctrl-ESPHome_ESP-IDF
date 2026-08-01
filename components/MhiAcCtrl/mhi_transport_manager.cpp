@@ -42,12 +42,6 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   fast_gpio_tx_config.max_exchange_time_ms = tx_marker_timeout_ms_;
   fast_gpio_tx_.set_config(fast_gpio_tx_config);
 #endif
-#if MHI_ENABLE_NATIVE_SPI_RX_DRIVER
-  MhiNativeSpiRxConfig native_spi_rx_config{};
-  native_spi_rx_config.frame_size_hint = frame_size_hint;
-  native_spi_rx_.set_config(native_spi_rx_config);
-#endif
-
 #if MHI_ENABLE_RMT_SPI_RX_DRIVER
   MhiRmtSpiRxConfig rmt_spi_rx_config{};
   rmt_spi_rx_config.frame_size_hint = frame_size_hint;
@@ -121,16 +115,6 @@ void MhiTransportManager::resolve_drivers() {
     return;
   }
 #endif
-#if MHI_ENABLE_NATIVE_SPI_RX_DRIVER
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "native_spi_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &native_spi_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#endif
-#endif
-
 #if MHI_ENABLE_RMT_SPI_RX_DRIVER
   if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "none") {
     rx_ = &rmt_spi_rx_;
@@ -170,11 +154,6 @@ void MhiTransportManager::resolve_drivers() {
 #else
   if (rx_driver_name_ == "external_clock_rx") {
     ESP_LOGW(TAG, "external_clock_rx is only built for ESP32 and ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
-  }
-#endif
-#if !MHI_ENABLE_NATIVE_SPI_RX_DRIVER
-  if (rx_driver_name_ == "native_spi_rx") {
-    ESP_LOGW(TAG, "native_spi_rx is only built for ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
   }
 #endif
 #if !MHI_ENABLE_RMT_SPI_RX_DRIVER

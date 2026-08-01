@@ -1,0 +1,147 @@
+name: Bug report
+description: Report incorrect behaviour, a regression, or a runtime failure.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include the configuration and diagnostics needed to distinguish protocol, transport, command, and ESPHome issues. Remove passwords, API keys, Wi-Fi credentials, and other secrets.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Initial checks
+      options:
+        - label: I searched existing issues and pull requests for the same problem.
+          required: true
+        - label: I removed secrets and private credentials from the supplied configuration and logs.
+          required: true
+
+  - type: input
+    id: esphome_version
+    attributes:
+      label: ESPHome version
+      placeholder: "2026.7.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: chip
+    attributes:
+      label: ESP chip
+      options:
+        - ESP32
+        - ESP32-S3
+        - ESP32-C3
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Board or module
+      placeholder: "M5Stack Atom S3 Lite"
+    validations:
+      required: true
+
+  - type: input
+    id: ac_model
+    attributes:
+      label: Air-conditioner model
+      placeholder: "SRK35ZSX-W"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frame_size
+    attributes:
+      label: Frame size
+      options:
+        - "20"
+        - "33"
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: rx_driver
+    attributes:
+      label: RX driver
+      options:
+        - fast_gpio_rx
+        - external_clock_rx
+        - rmt_spi_rx
+        - rmt_cs_spi
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: command_worker
+    attributes:
+      label: Command worker
+      options:
+        - "false"
+        - "true"
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe what happened, when it started, and whether it is continuous or intermittent.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: Describe the state or result you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the shortest reliable sequence that triggers the issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant YAML configuration
+      render: yaml
+      description: Include the MhiAcCtrl configuration and related entities. Remove secrets.
+    validations:
+      required: true
+
+  - type: textarea
+    id: startup_log
+    attributes:
+      label: Startup configuration log
+      render: text
+      description: Include the component startup lines showing selected drivers, pins, frame size, and worker configuration.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Runtime diagnostics
+      render: text
+      description: Include protocol-health, transport, command-confirmation, loop, and worker counters near the failure.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional logs or context
+      render: text
+      description: Include a focused log window around the problem and any relevant hardware or wiring details.
