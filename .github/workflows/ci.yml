@@ -13,9 +13,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  ESPHOME_VERSION: "2026.6.2"
-
 jobs:
   lint:
     name: lint
@@ -110,13 +107,5 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --requirement requirements-ci.txt
 
-      - name: Validate all configurations
-        run: ./scripts/compile-tests.sh validate
-
       - name: Compile representative configurations
-        if: github.event_name == 'pull_request'
-        run: ./scripts/compile-tests.sh compile
-
-      - name: Compile complete matrix
-        if: github.event_name == 'workflow_dispatch'
-        run: ./scripts/compile-tests.sh full\
+        run: ./scripts/compile-tests.sh
