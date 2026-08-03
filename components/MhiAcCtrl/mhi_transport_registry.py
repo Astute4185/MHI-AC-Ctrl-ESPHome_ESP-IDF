@@ -168,28 +168,8 @@ def validate_selected_transport_target(
     return definition
 
 
-def resolve_legacy_build_idf_components(
-    *,
-    platform: str,
-    framework: str,
-    variant: str | None,
-) -> tuple[str, ...]:
-    """Resolve dependencies required by the current target-gated C++ manager.
-
-    Phase 2 still compiles every transport enabled by the manager's target
-    macros. Phase 3 will switch this to the selected primary plus internal
-    FastGPIO recovery only.
-    """
-
-    components: set[str] = set()
-    for definition in TRANSPORT_DEFINITIONS.values():
-        if definition.supports_target(platform, framework, variant):
-            components.update(definition.required_idf_components)
-    return tuple(sorted(components))
-
-
 def resolve_selected_compile_defines(config: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return the future Phase 3 compile plan for the selected transport."""
+    """Return compile definitions for the selected transport and recovery."""
 
     selected = get_transport_definition(_selected_driver(config))
     defines = {selected.compile_define}
@@ -202,7 +182,7 @@ def resolve_selected_compile_defines(config: Mapping[str, Any]) -> tuple[str, ..
 
 
 def resolve_selected_idf_components(config: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return dependencies for the future selected-only transport build."""
+    """Return dependencies for the selected-only transport build."""
 
     selected = get_transport_definition(_selected_driver(config))
     components = set(selected.required_idf_components)

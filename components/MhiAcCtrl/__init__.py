@@ -15,7 +15,8 @@ from .driver_selection import (
 from .mhi_transport_registry import (
     TransportConfigurationError,
     build_transport_schemas,
-    resolve_legacy_build_idf_components,
+    resolve_selected_compile_defines,
+    resolve_selected_idf_components,
     resolve_transport_tuning,
     validate_driver_subsections,
     validate_selected_transport_target,
@@ -116,11 +117,10 @@ def _default_tx_background_interval_ms(config):
 
 
 async def to_code(config):
-    for component in resolve_legacy_build_idf_components(
-        platform=CORE.target_platform,
-        framework=CORE.target_framework,
-        variant=get_esp32_variant() if CORE.is_esp32 else None,
-    ):
+    for define in resolve_selected_compile_defines(config):
+        cg.add_define(define)
+
+    for component in resolve_selected_idf_components(config):
         include_builtin_idf_component(component)
 
     var = cg.new_Pvariable(config[CONF_ID])

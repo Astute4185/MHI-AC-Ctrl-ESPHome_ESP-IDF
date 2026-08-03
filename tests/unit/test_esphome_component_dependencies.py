@@ -14,7 +14,7 @@ RMT_DRIVER_MODULES = (
 
 
 class EspHomeComponentDependencyTests(unittest.TestCase):
-    def test_component_enables_registry_resolved_idf_dependencies(self):
+    def test_component_enables_selected_registry_idf_dependencies(self):
         tree = ast.parse(COMPONENT_INIT.read_text(encoding="utf-8"))
 
         imports_include_helper = False
@@ -27,7 +27,7 @@ class EspHomeComponentDependencyTests(unittest.TestCase):
                     alias.name == "include_builtin_idf_component" for alias in node.names
                 )
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id == "resolve_legacy_build_idf_components":
+                if node.func.id == "resolve_selected_idf_components":
                     resolves_dependencies = True
                 elif node.func.id == "include_builtin_idf_component" and node.args:
                     enables_resolved_component = isinstance(node.args[0], ast.Name)
@@ -47,8 +47,9 @@ class EspHomeComponentDependencyTests(unittest.TestCase):
                 }
                 self.assertIn("esp_driver_rmt", string_values)
 
-    def test_root_component_no_longer_hard_codes_rmt_dependency(self):
+    def test_root_component_no_longer_uses_target_wide_dependency_resolution(self):
         source = COMPONENT_INIT.read_text(encoding="utf-8")
+        self.assertNotIn("resolve_legacy_build_idf_components", source)
         self.assertNotIn('include_builtin_idf_component("esp_driver_rmt")', source)
 
 

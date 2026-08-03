@@ -1,7 +1,11 @@
-#include "mhi_null_tx_driver.h"
+#include "esphome/core/defines.h"
+
+#if defined(MHI_USE_TRANSPORT_FAST_GPIO) && defined(USE_ESP_IDF) && \
+    (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_null_tx_driver.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -33,3 +37,5 @@ bool MhiNullTxDriver::send(const uint8_t* data, std::size_t len) {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+
+#endif  // MHI_USE_TRANSPORT_FAST_GPIO and supported split-TX target

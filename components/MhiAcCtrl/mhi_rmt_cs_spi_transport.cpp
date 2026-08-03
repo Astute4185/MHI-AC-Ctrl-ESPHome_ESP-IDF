@@ -1,10 +1,13 @@
-#include "mhi_rmt_cs_spi_transport.h"
+#include "esphome/core/defines.h"
+
+#ifdef MHI_USE_TRANSPORT_RMT_CS_SPI
 
 #include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_rmt_cs_spi_transport.h"
 #if MHI_RMT_CS_SPI_SUPPORTED
 #include <driver/gpio.h>
 #include <esp_err.h>
@@ -785,3 +788,5 @@ void IRAM_ATTR MhiRmtCsSpiTransport::on_frame_boundary_from_isr_() {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+
+#endif  // MHI_USE_TRANSPORT_RMT_CS_SPI

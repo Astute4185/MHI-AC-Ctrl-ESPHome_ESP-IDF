@@ -1,10 +1,13 @@
-#include "mhi_rmt_spi_rx_driver.h"
+#include "esphome/core/defines.h"
+
+#ifdef MHI_USE_TRANSPORT_RMT_SPI
 
 #include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_rmt_spi_rx_driver.h"
 
 #if MHI_RMT_SPI_RX_SUPPORTED
 #include <driver/gpio.h>
@@ -488,3 +491,5 @@ void IRAM_ATTR MhiRmtSpiRxDriver::on_frame_boundary_from_isr_() {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+
+#endif  // MHI_USE_TRANSPORT_RMT_SPI

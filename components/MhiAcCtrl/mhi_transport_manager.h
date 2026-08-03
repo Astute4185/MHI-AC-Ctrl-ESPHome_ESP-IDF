@@ -8,10 +8,10 @@
 #include <cstdint>
 #include <string>
 
+#include "esphome/core/defines.h"
 #include "mhi_defs.h"
 #include "mhi_diag.h"
 #include "mhi_duplex_transport.h"
-#include "mhi_fast_gpio_rx_driver.h"
 #include "mhi_rx_driver.h"
 #include "mhi_transport_pins.h"
 #include "mhi_tx_contract.h"
@@ -21,23 +21,37 @@
 #ifdef USE_ESP_IDF
 #include <sdkconfig.h>
 #endif
+
+#if defined(MHI_USE_TRANSPORT_FAST_GPIO)
+#define MHI_ENABLE_FAST_GPIO_TRANSPORT 1
+#include "mhi_fast_gpio_rx_driver.h"
 #if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 1
 #define MHI_ENABLE_SPLIT_TX_DRIVER 1
-#include "mhi_external_clock_rx_driver.h"
 #include "mhi_fast_gpio_tx_driver.h"
 #include "mhi_null_tx_driver.h"
 #else
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 0
 #define MHI_ENABLE_SPLIT_TX_DRIVER 0
 #endif
-#if defined(USE_ESP_IDF) && defined(CONFIG_IDF_TARGET_ESP32S3)
+#else
+#define MHI_ENABLE_FAST_GPIO_TRANSPORT 0
+#define MHI_ENABLE_SPLIT_TX_DRIVER 0
+#endif
+
+#if defined(MHI_USE_TRANSPORT_EXTERNAL_CLOCK)
+#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 1
+#include "mhi_external_clock_rx_driver.h"
+#else
+#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 0
+#endif
+
+#if defined(MHI_USE_TRANSPORT_RMT_SPI)
 #define MHI_ENABLE_RMT_SPI_RX_DRIVER 1
 #include "mhi_rmt_spi_rx_driver.h"
 #else
 #define MHI_ENABLE_RMT_SPI_RX_DRIVER 0
 #endif
-#if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
+
+#if defined(MHI_USE_TRANSPORT_RMT_CS_SPI)
 #define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 1
 #include "mhi_rmt_cs_spi_transport.h"
 #else
@@ -120,7 +134,9 @@ class MhiTransportManager {
   std::string transport_driver_name_{"split"};
   std::string rx_driver_name_{"fast_gpio_rx"};
   std::string tx_driver_name_{"fast_gpio_tx"};
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
   MhiFastGpioRxDriver fast_gpio_rx_{};
+#endif
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   MhiFastGpioTxDriver fast_gpio_tx_{};
   MhiNullTxDriver null_tx_{};
@@ -135,7 +151,11 @@ class MhiTransportManager {
   MhiExternalClockRxDriver external_clock_rx_{};
 #endif
   IMhiDuplexTransport* duplex_{nullptr};
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
   IMhiRxDriver* rx_{&fast_gpio_rx_};
+#else
+  IMhiRxDriver* rx_{nullptr};
+#endif
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   IMhiTxDriver* tx_{&fast_gpio_tx_};
 #else
