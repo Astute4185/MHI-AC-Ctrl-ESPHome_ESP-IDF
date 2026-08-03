@@ -11,6 +11,15 @@ from .driver_selection import (
     DriverSelectionError,
     resolve_tx_driver,
 )
+from .mhi_transport_external_clock import CONFIG_SCHEMA as EXTERNAL_CLOCK_RX_SCHEMA
+from .mhi_transport_fast_gpio import CONFIG_SCHEMA as FAST_GPIO_RX_SCHEMA
+from .mhi_transport_registry import (
+    TransportConfigurationError,
+    resolve_transport_tuning,
+    validate_driver_subsections,
+)
+from .mhi_transport_rmt_cs_spi import CONFIG_SCHEMA as RMT_CS_SPI_SCHEMA
+from .mhi_transport_rmt_spi import CONFIG_SCHEMA as RMT_SPI_RX_SCHEMA
 
 CONF_MHI_AC_CTRL_ID = "mhi_ac_ctrl_id"
 CONF_FRAME_SIZE = "frame_size"
@@ -33,6 +42,10 @@ CONF_COMMAND_WORKER_START_DELAY_MS = "command_worker_start_delay_ms"
 CONF_COMMAND_WORKER_STACK_SIZE = "command_worker_stack_size"
 CONF_COMMAND_WORKER_PRIORITY = "command_worker_priority"
 CONF_COMMAND_WORKER_CORE_ID = "command_worker_core_id"
+CONF_FAST_GPIO_RX = "fast_gpio_rx"
+CONF_EXTERNAL_CLOCK_RX = "external_clock_rx"
+CONF_RMT_SPI_RX = "rmt_spi_rx"
+CONF_RMT_CS_SPI = "rmt_cs_spi"
 
 DEFAULT_TX_BACKGROUND_INTERVAL_MS = 250
 
@@ -55,7 +68,8 @@ def _validate_transport_configuration(config):
     explicit_tx_driver = config.get(CONF_TX_DRIVER)
     try:
         resolve_tx_driver(config[CONF_RX_DRIVER], explicit_tx_driver)
-    except DriverSelectionError as err:
+        validate_driver_subsections(config)
+    except (DriverSelectionError, TransportConfigurationError) as err:
         raise cv.Invalid(str(err)) from err
 
     return config
@@ -78,8 +92,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RX_DRIVER, default="fast_gpio_rx"): cv.one_of(*RX_DRIVERS, lower=True),
             cv.Optional(CONF_TX_DRIVER): cv.one_of(*TX_DRIVERS, lower=True),
             cv.Optional(CONF_FAN_PROFILE, default="four_speed"): cv.one_of("four_speed", "three_speed", lower=True),
-            cv.Optional(CONF_FRAME_START_IDLE_MS, default=10): cv.int_range(min=1, max=50),
-            cv.Optional(CONF_RMT_SPI_FRAME_GAP_US, default=1000): cv.int_range(min=500, max=5000),
+            cv.Optional(CONF_FRAME_START_IDLE_MS): cv.int_range(min=1, max=50),
+            cv.Optional(CONF_RMT_SPI_FRAME_GAP_US): cv.int_range(min=500, max=5000),
+            cv.Optional(CONF_FAST_GPIO_RX): FAST_GPIO_RX_SCHEMA,
+            cv.Optional(CONF_EXTERNAL_CLOCK_RX): EXTERNAL_CLOCK_RX_SCHEMA,
+            cv.Optional(CONF_RMT_SPI_RX): RMT_SPI_RX_SCHEMA,
+            cv.Optional(CONF_RMT_CS_SPI): RMT_CS_SPI_SCHEMA,
             cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
             cv.Optional(CONF_COMMAND_WORKER, default=False): cv.boolean,
             cv.Optional(CONF_COMMAND_WORKER_START_DELAY_MS, default=0): cv.int_range(min=0, max=30000),
@@ -106,11 +124,12 @@ async def to_code(config):
     cg.add(var.set_room_temperature_publish_interval_ms(config[CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL]))
     cg.add(var.set_room_temperature_immediate_delta(config[CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA]))
     effective_tx_driver = resolve_tx_driver(config[CONF_RX_DRIVER], config.get(CONF_TX_DRIVER))
+    transport_tuning = resolve_transport_tuning(config)
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(effective_tx_driver))
     cg.add(var.set_fan_profile(config[CONF_FAN_PROFILE]))
-    cg.add(var.set_frame_start_idle_ms(config[CONF_FRAME_START_IDLE_MS]))
-    cg.add(var.set_rmt_spi_frame_gap_us(config[CONF_RMT_SPI_FRAME_GAP_US]))
+    cg.add(var.set_frame_start_idle_ms(transport_tuning.frame_start_idle_ms))
+    cg.add(var.set_rmt_spi_frame_gap_us(transport_tuning.rmt_spi_frame_gap_us))
     cg.add(var.set_tx_background_interval_ms(_default_tx_background_interval_ms(config)))
     cg.add(var.set_command_worker(config[CONF_COMMAND_WORKER]))
     cg.add(var.set_command_worker_start_delay_ms(config[CONF_COMMAND_WORKER_START_DELAY_MS]))
