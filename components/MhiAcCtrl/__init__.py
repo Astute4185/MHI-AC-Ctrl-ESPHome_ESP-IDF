@@ -2,8 +2,9 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import sensor
-from esphome.components.esp32 import include_builtin_idf_component
+from esphome.components.esp32 import get_esp32_variant, include_builtin_idf_component
 from esphome.const import CONF_ID
+from esphome.core import CORE
 
 from .driver_selection import (
     RX_DRIVERS,
@@ -11,15 +12,14 @@ from .driver_selection import (
     DriverSelectionError,
     resolve_tx_driver,
 )
-from .mhi_transport_external_clock import CONFIG_SCHEMA as EXTERNAL_CLOCK_RX_SCHEMA
-from .mhi_transport_fast_gpio import CONFIG_SCHEMA as FAST_GPIO_RX_SCHEMA
 from .mhi_transport_registry import (
     TransportConfigurationError,
+    build_transport_schemas,
+    resolve_legacy_build_idf_components,
     resolve_transport_tuning,
     validate_driver_subsections,
+    validate_selected_transport_target,
 )
-from .mhi_transport_rmt_cs_spi import CONFIG_SCHEMA as RMT_CS_SPI_SCHEMA
-from .mhi_transport_rmt_spi import CONFIG_SCHEMA as RMT_SPI_RX_SCHEMA
 
 CONF_MHI_AC_CTRL_ID = "mhi_ac_ctrl_id"
 CONF_FRAME_SIZE = "frame_size"
@@ -42,10 +42,6 @@ CONF_COMMAND_WORKER_START_DELAY_MS = "command_worker_start_delay_ms"
 CONF_COMMAND_WORKER_STACK_SIZE = "command_worker_stack_size"
 CONF_COMMAND_WORKER_PRIORITY = "command_worker_priority"
 CONF_COMMAND_WORKER_CORE_ID = "command_worker_core_id"
-CONF_FAST_GPIO_RX = "fast_gpio_rx"
-CONF_EXTERNAL_CLOCK_RX = "external_clock_rx"
-CONF_RMT_SPI_RX = "rmt_spi_rx"
-CONF_RMT_CS_SPI = "rmt_cs_spi"
 
 DEFAULT_TX_BACKGROUND_INTERVAL_MS = 250
 
@@ -63,12 +59,20 @@ SetVerticalVanesAction = mhi_ns.class_("SetVerticalVanesAction", automation.Acti
 SetHorizontalVanesAction = mhi_ns.class_("SetHorizontalVanesAction", automation.Action)
 SetExternalRoomTemperatureAction = mhi_ns.class_("SetExternalRoomTemperatureAction", automation.Action)
 
+TRANSPORT_SCHEMAS = build_transport_schemas()
+
 
 def _validate_transport_configuration(config):
     explicit_tx_driver = config.get(CONF_TX_DRIVER)
     try:
         resolve_tx_driver(config[CONF_RX_DRIVER], explicit_tx_driver)
         validate_driver_subsections(config)
+        validate_selected_transport_target(
+            config,
+            platform=CORE.target_platform,
+            framework=CORE.target_framework,
+            variant=get_esp32_variant() if CORE.is_esp32 else None,
+        )
     except (DriverSelectionError, TransportConfigurationError) as err:
         raise cv.Invalid(str(err)) from err
 
@@ -94,10 +98,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FAN_PROFILE, default="four_speed"): cv.one_of("four_speed", "three_speed", lower=True),
             cv.Optional(CONF_FRAME_START_IDLE_MS): cv.int_range(min=1, max=50),
             cv.Optional(CONF_RMT_SPI_FRAME_GAP_US): cv.int_range(min=500, max=5000),
-            cv.Optional(CONF_FAST_GPIO_RX): FAST_GPIO_RX_SCHEMA,
-            cv.Optional(CONF_EXTERNAL_CLOCK_RX): EXTERNAL_CLOCK_RX_SCHEMA,
-            cv.Optional(CONF_RMT_SPI_RX): RMT_SPI_RX_SCHEMA,
-            cv.Optional(CONF_RMT_CS_SPI): RMT_CS_SPI_SCHEMA,
+            **{cv.Optional(name): schema for name, schema in TRANSPORT_SCHEMAS.items()},
             cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
             cv.Optional(CONF_COMMAND_WORKER, default=False): cv.boolean,
             cv.Optional(CONF_COMMAND_WORKER_START_DELAY_MS, default=0): cv.int_range(min=0, max=30000),
@@ -115,7 +116,12 @@ def _default_tx_background_interval_ms(config):
 
 
 async def to_code(config):
-    include_builtin_idf_component("esp_driver_rmt")
+    for component in resolve_legacy_build_idf_components(
+        platform=CORE.target_platform,
+        framework=CORE.target_framework,
+        variant=get_esp32_variant() if CORE.is_esp32 else None,
+    ):
+        include_builtin_idf_component(component)
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)

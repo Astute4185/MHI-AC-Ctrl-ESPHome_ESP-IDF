@@ -7,10 +7,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "components" / "MhiAcCtrl"))
 
-from driver_selection import DriverSelectionError, resolve_tx_driver  # noqa: E402
+from driver_selection import RX_DRIVERS, DriverSelectionError, resolve_tx_driver  # noqa: E402
+from mhi_transport_registry import TRANSPORT_DEFINITIONS  # noqa: E402
 
 
 class DriverSelectionTests(unittest.TestCase):
+    def test_rx_drivers_come_from_transport_registry(self):
+        self.assertEqual(RX_DRIVERS, tuple(TRANSPORT_DEFINITIONS))
+
     def test_fast_gpio_rx_defaults_to_fast_gpio_tx(self):
         self.assertEqual(resolve_tx_driver("fast_gpio_rx"), "fast_gpio_tx")
 

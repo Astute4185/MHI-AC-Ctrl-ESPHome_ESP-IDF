@@ -1,11 +1,11 @@
 """Driver selection rules shared by ESPHome configuration and tests."""
 
-RX_DRIVERS = (
-    "fast_gpio_rx",
-    "external_clock_rx",
-    "rmt_spi_rx",
-    "rmt_cs_spi",
-)
+try:
+    from .mhi_transport_registry import TRANSPORT_DEFINITIONS
+except ImportError:
+    from mhi_transport_registry import TRANSPORT_DEFINITIONS
+
+RX_DRIVERS = tuple(TRANSPORT_DEFINITIONS)
 
 TX_DRIVERS = (
     "fast_gpio_tx",
