@@ -68,4 +68,5 @@ fi
 "${BUILD_DIR}/mhi_protocol_tests"
 
 python3 tests/unit/test_driver_selection.py
+python3 tests/unit/test_transport_configuration.py
 python3 tests/unit/test_esphome_component_dependencies.py
