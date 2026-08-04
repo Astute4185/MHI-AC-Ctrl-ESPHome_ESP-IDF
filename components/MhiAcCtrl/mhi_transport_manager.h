@@ -6,6 +6,7 @@
 #include "mhi_defs.h"
 #include "mhi_diag.h"
 #include "mhi_transport.h"
+#include "mhi_transport_transition.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -17,6 +18,9 @@ class MhiTransportManager {
  public:
   void set_primary(IMhiTransport* transport);
   void set_recovery(IMhiTransport* transport);
+  void set_transition_listener(IMhiTransportTransitionListener* listener) {
+    transition_listener_ = listener;
+  }
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -59,6 +63,13 @@ class MhiTransportManager {
   bool recovery_active() const {
     return recovery_active_;
   }
+  bool recovery_attempted() const {
+    return recovery_attempted_;
+  }
+  bool safe_mode() const {
+    return safe_mode_;
+  }
+  MhiTransportState state() const;
 
   bool rx_ready() const {
     return active_ != nullptr && active_->rx_ready();
@@ -75,9 +86,16 @@ class MhiTransportManager {
   MhiTransportErrorDetail last_transport_error() const {
     return last_transport_error_;
   }
+  MhiTransportErrorDetail primary_failure() const {
+    return primary_failure_;
+  }
+  MhiTransportErrorDetail recovery_failure() const {
+    return recovery_failure_;
+  }
 
  private:
   bool activate_recovery_(const MhiTransportResult& primary_result);
+  bool enter_safe_mode_(const MhiTransportErrorDetail& reason);
   void update_transport_diagnostics_();
   void reset_transport_diagnostic_cursors_();
   void publish_driver_diagnostics_();
@@ -85,7 +103,11 @@ class MhiTransportManager {
   IMhiTransport* primary_{nullptr};
   IMhiTransport* recovery_{nullptr};
   IMhiTransport* active_{nullptr};
+  IMhiTransportTransitionListener* transition_listener_{nullptr};
   bool recovery_active_{false};
+  bool recovery_attempted_{false};
+  bool safe_mode_{false};
+  MhiTransportState state_{MhiTransportState::STOPPED};
 
   bool auto_tx_flush_{true};
   bool rx_byte_critical_sections_{true};
@@ -93,6 +115,8 @@ class MhiTransportManager {
   uint32_t last_transport_tx_completed_{0U};
   uint32_t last_transport_tx_failures_{0U};
   MhiTransportErrorDetail last_transport_error_{};
+  MhiTransportErrorDetail primary_failure_{};
+  MhiTransportErrorDetail recovery_failure_{};
   MhiDiagnostics* diagnostics_{nullptr};
 };
 

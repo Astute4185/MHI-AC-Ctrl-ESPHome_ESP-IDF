@@ -253,6 +253,34 @@ class FakeUnifiedTransport final : public IMhiTransport {
   int loop_count{0};
 };
 
+class FakeTransportTransitionListener final : public IMhiTransportTransitionListener {
+ public:
+  void on_transport_switch_begin(const MhiTransportErrorDetail& reason) override {
+    switch_begin_count++;
+    switch_reason = reason;
+    command_state_cleared = true;
+  }
+
+  void on_transport_recovery_ready() override {
+    recovery_ready_count++;
+    commands_enabled = true;
+  }
+
+  void on_transport_safe_mode(const MhiTransportErrorDetail& reason) override {
+    safe_mode_count++;
+    safe_mode_reason = reason;
+    commands_enabled = false;
+  }
+
+  int switch_begin_count{0};
+  int recovery_ready_count{0};
+  int safe_mode_count{0};
+  bool command_state_cleared{false};
+  bool commands_enabled{false};
+  MhiTransportErrorDetail switch_reason{};
+  MhiTransportErrorDetail safe_mode_reason{};
+};
+
 MhiTxEnvelope make_command_envelope() {
   MhiTxEnvelope envelope{};
   envelope.len = kMhiFrame20Bytes;
@@ -433,6 +461,85 @@ void transport_manager_activates_injected_recovery_after_setup_failure() {
   EXPECT_EQ(recovery.setup_count, 1);
   EXPECT_TRUE(manager.recovery_active());
   EXPECT_TRUE(std::strcmp(manager.rx_name(), "fast_gpio_recovery") == 0);
+}
+
+void transport_manager_recovery_transition_is_ordered_and_latched() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  FakeTransportTransitionListener listener{};
+  primary.setup_result = MhiTransportResult::failure(MhiTransportError::RMT_SETUP_FAILED, "primary_setup", 17);
+
+  MhiTransportManager manager{};
+  manager.set_transition_listener(&listener);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  EXPECT_TRUE(manager.setup());
+  EXPECT_EQ(listener.switch_begin_count, 1);
+  EXPECT_TRUE(listener.command_state_cleared);
+  EXPECT_EQ(listener.recovery_ready_count, 1);
+  EXPECT_EQ(listener.safe_mode_count, 0);
+  EXPECT_TRUE(listener.commands_enabled);
+  EXPECT_TRUE(manager.recovery_attempted());
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_FALSE(manager.safe_mode());
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::RECOVERY_ACTIVE));
+  EXPECT_EQ(primary.shutdown_count, 1);
+  EXPECT_EQ(recovery.setup_count, 1);
+  EXPECT_EQ(static_cast<uint8_t>(manager.primary_failure().code),
+            static_cast<uint8_t>(MhiTransportError::RMT_SETUP_FAILED));
+  EXPECT_FALSE(manager.recovery_failure().present());
+}
+
+void transport_manager_enters_safe_mode_when_recovery_fails() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  FakeTransportTransitionListener listener{};
+  primary.setup_result = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, "primary_setup");
+  recovery.setup_result = MhiTransportResult::failure(MhiTransportError::GPIO_SETUP_FAILED, "recovery_setup", 23);
+
+  MhiTransportManager manager{};
+  manager.set_transition_listener(&listener);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  EXPECT_FALSE(manager.setup());
+  EXPECT_EQ(listener.switch_begin_count, 1);
+  EXPECT_EQ(listener.recovery_ready_count, 0);
+  EXPECT_EQ(listener.safe_mode_count, 1);
+  EXPECT_FALSE(listener.commands_enabled);
+  EXPECT_TRUE(manager.recovery_attempted());
+  EXPECT_FALSE(manager.recovery_active());
+  EXPECT_TRUE(manager.safe_mode());
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::SAFE_MODE));
+  EXPECT_TRUE(std::strcmp(manager.rx_name(), "none") == 0);
+  EXPECT_TRUE(std::strcmp(manager.tx_name(), "none") == 0);
+  EXPECT_EQ(primary.shutdown_count, 1);
+  EXPECT_EQ(recovery.shutdown_count, 1);
+  EXPECT_EQ(static_cast<uint8_t>(manager.recovery_failure().code),
+            static_cast<uint8_t>(MhiTransportError::GPIO_SETUP_FAILED));
+
+  const MhiTxEnvelope envelope = make_command_envelope();
+  EXPECT_FALSE(manager.queue_tx(envelope));
+  std::array<uint8_t, 4U> buffer{};
+  EXPECT_EQ(manager.read_rx(buffer.data(), buffer.size()), 0U);
+}
+
+void transport_manager_enters_safe_mode_without_recovery() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeTransportTransitionListener listener{};
+  primary.setup_result = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, "primary_setup");
+
+  MhiTransportManager manager{};
+  manager.set_transition_listener(&listener);
+  manager.set_primary(&primary);
+
+  EXPECT_FALSE(manager.setup());
+  EXPECT_EQ(listener.switch_begin_count, 1);
+  EXPECT_EQ(listener.safe_mode_count, 1);
+  EXPECT_TRUE(manager.recovery_attempted());
+  EXPECT_TRUE(manager.safe_mode());
+  EXPECT_EQ(primary.shutdown_count, 1);
 }
 
 }  // namespace mhi_unit_tests

@@ -317,5 +317,8 @@ void split_transport_reports_setup_failure_and_rx_health();
 void duplex_transport_adapter_reports_missing_backend();
 void transport_manager_uses_injected_primary_transport();
 void transport_manager_activates_injected_recovery_after_setup_failure();
+void transport_manager_recovery_transition_is_ordered_and_latched();
+void transport_manager_enters_safe_mode_when_recovery_fails();
+void transport_manager_enters_safe_mode_without_recovery();
 
 }  // namespace mhi_unit_tests
