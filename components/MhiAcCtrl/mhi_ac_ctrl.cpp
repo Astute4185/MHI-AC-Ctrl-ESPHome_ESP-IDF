@@ -111,9 +111,66 @@ void MhiAcCtrl::check_external_room_temperature_timeout_() {
   ESP_LOGD(DIAG_TAG, "external room temperature timed out after %ds", this->room_temp_api_timeout_s_);
 }
 
+bool MhiAcCtrl::set_active_mode(bool enabled) {
+  if (enabled && this->transport_.safe_mode()) {
+    ESP_LOGW(DIAG_TAG, "Active Mode cannot be enabled while the transport is in safe mode");
+    active_mode_enabled_.store(false, std::memory_order_release);
+    this->transport_.set_active_mode(false);
+    this->transport_commands_enabled_.store(false, std::memory_order_release);
+    this->publish_active_mode_state_();
+    return false;
+  }
+
+  const bool previous = active_mode_enabled_.exchange(enabled, std::memory_order_acq_rel);
+  if (previous == enabled) {
+    this->transport_.set_active_mode(enabled);
+    this->publish_active_mode_state_();
+    return true;
+  }
+
+  // Quiesce command generation before clearing staged transport work.
+  this->transport_commands_enabled_.store(false, std::memory_order_release);
+  this->transport_.set_active_mode(false);
+  this->reset_command_runtime_();
+
+  if (enabled) {
+    // Clear again before reopening TX so work staged by asynchronous callbacks
+    // while listen-only was active cannot be replayed.
+    this->reset_command_runtime_();
+    this->transport_.set_active_mode(true);
+    const bool commands_ready = this->transport_command_path_ready_();
+    this->transport_commands_enabled_.store(commands_ready, std::memory_order_release);
+    if (commands_ready) {
+      this->notify_command_worker_();
+    }
+    ESP_LOGI(TAG, "Active Mode enabled; MHI transmit participation resumed");
+  } else {
+    ESP_LOGI(TAG, "Active Mode disabled; RX and diagnostics remain active while TX is suppressed");
+  }
+
+  this->publish_active_mode_state_();
+  return true;
+}
+
+void MhiAcCtrl::publish_active_mode_state_() {
+  if (this->active_mode_switch_ != nullptr) {
+    this->active_mode_switch_->publish_state(this->active_mode());
+  }
+}
+
+bool MhiAcCtrl::transport_command_path_ready_() const {
+  if (this->transport_.safe_mode() || !this->transport_.tx_ready()) {
+    return false;
+  }
+  if (this->transport_.recovery_active() && this->transport_.state() != MhiTransportState::RECOVERY_ACTIVE) {
+    return false;
+  }
+  return true;
+}
+
 uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   if (!this->transport_commands_enabled_.load(std::memory_order_acquire)) {
-    ESP_LOGD(DIAG_TAG, "command: rejected while transport is switching or in safe mode");
+    ESP_LOGD(DIAG_TAG, "command: rejected while Active Mode is off, transport is switching, or safe mode is active");
     return 0U;
   }
 
@@ -309,6 +366,7 @@ void MhiAcCtrl::setup() {
   this->command_worker_max_notify_batch_.store(0U, std::memory_order_relaxed);
   this->command_worker_stack_high_water_bytes_.store(0U, std::memory_order_relaxed);
   this->shutting_down_.store(false, std::memory_order_release);
+  this->active_mode_enabled_.store(true, std::memory_order_release);
   this->transport_commands_enabled_.store(true, std::memory_order_release);
   this->transport_shutdown_ = false;
 
@@ -329,9 +387,9 @@ void MhiAcCtrl::setup() {
   this->transport_.set_diagnostics(&this->diagnostics_);
   this->transport_.set_transition_listener(this);
 
-  this->rx_byte_critical_sections_enabled_ = true;
-  this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);
+  this->transport_.set_rx_byte_critical_sections(true);
   this->transport_.set_auto_tx_flush(true);
+  this->transport_.set_active_mode(this->active_mode());
 
   const bool transport_ready = this->transport_.setup();
   this->command_worker_classified_rx_enabled_ =
@@ -358,6 +416,7 @@ void MhiAcCtrl::setup() {
     ESP_LOGE(TAG, "Transport unavailable; MHI control is in safe mode");
   }
   this->publish_transport_diagnostics_(true);
+  this->publish_active_mode_state_();
 
   ESP_LOGCONFIG(TAG, "RX mode: %s",
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
@@ -382,25 +441,31 @@ void MhiAcCtrl::on_transport_recovery_ready() {
   this->status_set_warning("MHI running on internal FastGPIO recovery");
   this->command_worker_classified_rx_enabled_ =
       this->command_worker_enabled_ && this->transport_.rx_supports_classified_worker();
-  this->transport_commands_enabled_.store(true, std::memory_order_release);
-  this->notify_command_worker_();
+  const bool commands_ready = this->active_mode() && this->transport_command_path_ready_();
+  this->transport_commands_enabled_.store(commands_ready, std::memory_order_release);
+  if (commands_ready) {
+    this->notify_command_worker_();
+  }
   this->publish_transport_diagnostics_(true);
   ESP_LOGW(TAG, "Internal FastGPIO recovery transport is active");
 }
 
 void MhiAcCtrl::on_transport_safe_mode(const MhiTransportErrorDetail& reason) {
+  active_mode_enabled_.store(false, std::memory_order_release);
+  this->transport_.set_active_mode(false);
   this->transport_commands_enabled_.store(false, std::memory_order_release);
   this->status_clear_warning();
   this->status_set_error();
   this->command_worker_classified_rx_enabled_ = false;
   this->reset_runtime_for_transport_switch_();
   this->publish_transport_diagnostics_(true);
+  this->publish_active_mode_state_();
 
   ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
            reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
 }
 
-void MhiAcCtrl::reset_runtime_for_transport_switch_() {
+void MhiAcCtrl::reset_command_runtime_() {
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
@@ -410,10 +475,13 @@ void MhiAcCtrl::reset_runtime_for_transport_switch_() {
     xSemaphoreGive(this->command_mutex_);
   }
 
-  this->rx_runtime_.reset();
-
   this->pending_extended_feedback_candidate_ = false;
   this->pending_extended_feedback_repeat_count_ = 0U;
+}
+
+void MhiAcCtrl::reset_runtime_for_transport_switch_() {
+  this->reset_command_runtime_();
+  this->rx_runtime_.reset();
 }
 
 void MhiAcCtrl::on_shutdown() {
@@ -523,9 +591,6 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  Room temperature immediate delta: %.2fC", this->room_temperature_immediate_delta_c_);
   ESP_LOGCONFIG(TAG, "  External room temperature sensor: %s",
                 this->external_room_temperature_sensor_ != nullptr ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  Pins: SCK=%d MOSI=%d MISO=%d", this->pins_.sck, this->pins_.mosi, this->pins_.miso);
-  ESP_LOGCONFIG(TAG, "  RX driver configured: %s", this->rx_driver_.c_str());
-  ESP_LOGCONFIG(TAG, "  TX driver configured: %s", this->tx_driver_.c_str());
   ESP_LOGCONFIG(TAG, "  Fan profile: %s", mhi_fan_profile_name(this->fan_profile_));
   ESP_LOGCONFIG(TAG, "  RX driver active: %s", diag.rx_driver_name);
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
@@ -534,6 +599,7 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  Transport state: %s", mhi_transport_state_name(this->transport_.state()));
   ESP_LOGCONFIG(TAG, "  Internal recovery active: %s", this->transport_.recovery_active() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Transport safe mode: %s", this->transport_.safe_mode() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Active Mode: %s", this->active_mode() ? "ON" : "OFF (listen-only)");
   const MhiTransportDiagnosticsSnapshot transport_diag = this->transport_.diagnostics_snapshot(millis());
   ESP_LOGCONFIG(TAG,
                 "  Transport recovery: attempts=%lu activations=%lu failures=%lu safe_mode_entries=%lu "
@@ -550,8 +616,6 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  RX mode: %s",
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
                                            : "main-loop capture/sync/decode/apply");
-  ESP_LOGCONFIG(TAG, "  Frame start idle: %lums", static_cast<unsigned long>(this->frame_start_idle_ms_));
-  ESP_LOGCONFIG(TAG, "  RMT/SPI frame gap: %luus", static_cast<unsigned long>(this->rmt_spi_frame_gap_us_));
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
   ESP_LOGCONFIG(TAG, "  TX priority: commands bypass interval, background waits for no pending confirmation");
   ESP_LOGCONFIG(TAG, "  TX ownership: transport-owned real-time transmission, auto_flush=%s",
@@ -566,7 +630,7 @@ void MhiAcCtrl::dump_config() {
                 static_cast<unsigned long>(this->command_worker_stack_size_),
                 static_cast<unsigned long>(this->command_worker_start_delay_ms_),
                 static_cast<unsigned long>(this->worker_handles_rx_() ? kCommandWorkerPollMs : 50U));
-  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->rx_byte_critical_sections_enabled_ ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->transport_.rx_byte_critical_sections() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
   ESP_LOGCONFIG(TAG, "  Frame catalog: enabled latest-slot decode");
 }
@@ -589,11 +653,12 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
 
   const MhiTransportDiagnosticsSnapshot transport_diag = this->transport_.diagnostics_snapshot(now);
   ESP_LOGI(DIAG_TAG,
-           "runtime: transport state=%s active=%s healthy=%s recovery=%s safe_mode=%s attempts=%lu "
+           "runtime: transport state=%s active=%s active_mode=%s healthy=%s recovery=%s safe_mode=%s attempts=%lu "
            "activations=%lu failures=%lu safe_entries=%lu last_error=%s operation=%s native=%ld",
            mhi_transport_state_name(transport_diag.state), transport_diag.active_transport_name,
-           transport_diag.transport_healthy ? "YES" : "NO", transport_diag.recovery_active ? "YES" : "NO",
-           transport_diag.safe_mode ? "YES" : "NO", static_cast<unsigned long>(transport_diag.recovery_attempts),
+           this->active_mode() ? "ON" : "OFF", transport_diag.transport_healthy ? "YES" : "NO",
+           transport_diag.recovery_active ? "YES" : "NO", transport_diag.safe_mode ? "YES" : "NO",
+           static_cast<unsigned long>(transport_diag.recovery_attempts),
            static_cast<unsigned long>(transport_diag.recovery_activations),
            static_cast<unsigned long>(transport_diag.recovery_failures),
            static_cast<unsigned long>(transport_diag.safe_mode_entries),

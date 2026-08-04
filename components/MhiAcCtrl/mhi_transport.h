@@ -25,6 +25,7 @@ struct MhiTransportCapabilities {
   bool supports_rx_byte_critical_sections{false};
   bool can_restart{true};
   bool can_report_rx_activity{true};
+  bool supports_active_mode{true};
 };
 
 // Unified operational transport contract used by the manager.
@@ -40,6 +41,11 @@ class IMhiTransport {
   virtual std::size_t read(uint8_t* dst, std::size_t max_len) = 0;
   virtual bool queue_tx(const MhiTxEnvelope& envelope) = 0;
   virtual bool take_tx_completion(MhiTxCompletion& completion) = 0;
+
+  // Active Mode controls transmit participation without stopping RX.
+  // Disabling must clear staged TX so it cannot replay when re-enabled.
+  virtual void set_active_mode(bool enabled) = 0;
+  virtual bool active_mode() const = 0;
 
   virtual bool has_pending_tx() const = 0;
   virtual bool flush_tx_on_bus_marker() = 0;

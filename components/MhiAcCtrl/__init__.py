@@ -151,11 +151,7 @@ async def to_code(config):
     if recovery_transport is not None:
         cg.add(var.set_recovery_transport(recovery_transport))
 
-    cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
-    cg.add(var.set_tx_driver(effective_tx_driver))
     cg.add(var.set_fan_profile(config[CONF_FAN_PROFILE]))
-    cg.add(var.set_frame_start_idle_ms(transport_tuning.frame_start_idle_ms))
-    cg.add(var.set_rmt_spi_frame_gap_us(transport_tuning.rmt_spi_frame_gap_us))
     cg.add(var.set_tx_background_interval_ms(_default_tx_background_interval_ms(config)))
     cg.add(var.set_command_worker(config[CONF_COMMAND_WORKER]))
     cg.add(var.set_command_worker_start_delay_ms(config[CONF_COMMAND_WORKER_START_DELAY_MS]))
@@ -169,12 +165,6 @@ async def to_code(config):
         cg.add(var.set_vanes(config[CONF_VANES_UD]))
     if CONF_VANES_LR in config:
         cg.add(var.set_vanesLR(config[CONF_VANES_LR]))
-    if CONF_SCK_PIN in config:
-        cg.add(var.set_sck_pin(config[CONF_SCK_PIN]))
-    if CONF_MOSI_PIN in config:
-        cg.add(var.set_mosi_pin(config[CONF_MOSI_PIN]))
-    if CONF_MISO_PIN in config:
-        cg.add(var.set_miso_pin(config[CONF_MISO_PIN]))
 
 
 @automation.register_action(

@@ -66,6 +66,10 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   std::size_t read(uint8_t* dst, std::size_t max_len) override;
   bool send(const MhiTxEnvelope& envelope) override;
   bool take_tx_completion(MhiTxCompletion& completion) override;
+  void set_active_mode(bool enabled) override;
+  bool active_mode() const override {
+    return active_mode_enabled_.load(std::memory_order_acquire);
+  }
 
   const char* name() const override {
     return mhi_rmt_cs_spi_driver_name();
@@ -139,6 +143,7 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   MhiRmtCsSpiConfig config_{};
   MhiTransportPins pins_{};
   std::atomic<bool> ready_{false};
+  std::atomic<bool> active_mode_enabled_{true};
 
   uint32_t completed_transactions_{0U};
   uint32_t completed_tx_frames_{0U};

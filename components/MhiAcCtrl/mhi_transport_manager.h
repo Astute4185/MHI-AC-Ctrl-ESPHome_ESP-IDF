@@ -37,6 +37,10 @@ class MhiTransportManager : public IMhiRxSource {
   std::size_t read_rx(uint8_t* dst, std::size_t max_len) override;
   bool queue_tx(const MhiTxEnvelope& envelope);
   bool take_tx_completion(MhiTxCompletion& completion);
+  void set_active_mode(bool enabled);
+  bool active_mode() const {
+    return active_mode_enabled_;
+  }
   bool has_pending_tx() const;
   bool flush_tx_on_bus_marker();
 
@@ -52,10 +56,6 @@ class MhiTransportManager : public IMhiRxSource {
   void set_rx_byte_critical_sections(bool enabled);
   bool rx_byte_critical_sections() const;
   bool tx_uses_bus_marker() const;
-  bool tx_uses_bus_window() const {
-    return this->tx_uses_bus_marker();
-  }
-
   const char* rx_name() const;
   const char* tx_name() const;
   const char* primary_name() const {
@@ -126,6 +126,7 @@ class MhiTransportManager : public IMhiRxSource {
 
   bool auto_tx_flush_{true};
   bool rx_byte_critical_sections_{true};
+  bool active_mode_enabled_{true};
 
   MhiTransportHealthPolicy health_policy_{};
   MhiProtocolHealth protocol_health_{};

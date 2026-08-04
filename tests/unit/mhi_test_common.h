@@ -26,7 +26,6 @@
 #include "mhi_rmt_cs_spi_mode.h"
 #include "mhi_status_decoder.h"
 #include "mhi_tx_builder.h"
-#include "mhi_worker_policy.h"
 #include "mhi_worker_decoded_store.h"
 #define EXPECT_TRUE(expr)                                                                            \
   do {                                                                                               \
@@ -307,18 +306,19 @@ void publish_bridge_three_speed_maps_code_zero_to_low();
 void publish_bridge_four_speed_maps_code_zero_to_quiet();
 void tx_builder_encodes_quiet_fan_code_zero();
 void command_confirmation_confirms_quiet_fan_code_zero();
-void worker_policy_allows_queue_backed_rx_drivers();
-void worker_policy_keeps_synchronous_rx_in_main_loop();
 void rmt_cs_spi_supports_esp32_and_s3();
 void rmt_cs_spi_exposes_single_driver_name();
 void rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
 void split_transport_delegates_rx_and_marker_armed_tx();
 void split_transport_preserves_null_tx_completion_contract();
 void duplex_transport_adapter_preserves_backend_contract();
+void split_transport_active_mode_clears_pending_tx_and_keeps_rx_ready();
+void duplex_transport_active_mode_propagates_and_blocks_tx();
 void transport_result_preserves_error_context();
 void split_transport_reports_setup_failure_and_rx_health();
 void duplex_transport_adapter_reports_missing_backend();
 void transport_manager_uses_injected_primary_transport();
+void transport_manager_active_mode_blocks_tx_without_stopping_rx();
 void transport_manager_activates_injected_recovery_after_setup_failure();
 void transport_manager_recovery_transition_is_ordered_and_latched();
 void transport_manager_enters_safe_mode_when_recovery_fails();

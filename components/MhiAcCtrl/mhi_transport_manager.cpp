@@ -10,6 +10,9 @@ static const char* const TAG = "mhi_transport";
 
 void MhiTransportManager::set_primary(IMhiTransport* transport) {
   primary_ = transport;
+  if (primary_ != nullptr) {
+    primary_->set_active_mode(active_mode_enabled_);
+  }
   active_ = transport;
   recovery_active_ = false;
   recovery_attempted_ = false;
@@ -33,6 +36,9 @@ void MhiTransportManager::set_primary(IMhiTransport* transport) {
 
 void MhiTransportManager::set_recovery(IMhiTransport* transport) {
   recovery_ = transport;
+  if (recovery_ != nullptr) {
+    recovery_->set_active_mode(active_mode_enabled_);
+  }
 }
 
 bool MhiTransportManager::setup() {
@@ -66,6 +72,7 @@ bool MhiTransportManager::setup() {
 
   primary_->set_auto_tx_flush(auto_tx_flush_);
   primary_->set_rx_byte_critical_sections(rx_byte_critical_sections_);
+  primary_->set_active_mode(active_mode_enabled_);
 
   MhiTransportResult setup_result = primary_->setup();
   if (setup_result.ok && (!primary_->rx_ready() || !primary_->tx_ready())) {
@@ -132,6 +139,7 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
 
   recovery_->set_auto_tx_flush(auto_tx_flush_);
   recovery_->set_rx_byte_critical_sections(rx_byte_critical_sections_);
+  recovery_->set_active_mode(active_mode_enabled_);
 
   MhiTransportResult recovery_result = recovery_->setup();
   if (recovery_result.ok && (!recovery_->rx_ready() || !recovery_->tx_ready())) {
@@ -227,6 +235,10 @@ std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
 }
 
 bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
+  if (!active_mode_enabled_) {
+    return false;
+  }
+
   if (active_ == nullptr || safe_mode_) {
     if (diagnostics_ != nullptr) {
       diagnostics_->stats().on_tx_failure();
@@ -240,15 +252,25 @@ bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
 }
 
 bool MhiTransportManager::take_tx_completion(MhiTxCompletion& completion) {
-  return active_ != nullptr && !safe_mode_ && active_->take_tx_completion(completion);
+  return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->take_tx_completion(completion);
+}
+
+void MhiTransportManager::set_active_mode(bool enabled) {
+  active_mode_enabled_ = enabled;
+  if (primary_ != nullptr) {
+    primary_->set_active_mode(enabled);
+  }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_active_mode(enabled);
+  }
 }
 
 bool MhiTransportManager::has_pending_tx() const {
-  return active_ != nullptr && !safe_mode_ && active_->has_pending_tx();
+  return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->has_pending_tx();
 }
 
 bool MhiTransportManager::flush_tx_on_bus_marker() {
-  if (active_ == nullptr || safe_mode_) {
+  if (!active_mode_enabled_ || active_ == nullptr || safe_mode_) {
     return false;
   }
   const bool flushed = active_->flush_tx_on_bus_marker();

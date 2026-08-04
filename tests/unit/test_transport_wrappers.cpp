@@ -128,17 +128,29 @@ class FakeDuplexTransport final : public IMhiDuplexTransport {
     return read_len;
   }
   bool send(const MhiTxEnvelope& envelope) override {
+    if (!active_mode_enabled) {
+      return false;
+    }
     send_count++;
     last_envelope = envelope;
     return send_result;
   }
   bool take_tx_completion(MhiTxCompletion& completion) override {
-    if (!completion_available) {
+    if (!active_mode_enabled || !completion_available) {
       return false;
     }
     completion = next_completion;
     completion_available = false;
     return true;
+  }
+  void set_active_mode(bool enabled) override {
+    active_mode_enabled = enabled;
+    if (!enabled) {
+      completion_available = false;
+    }
+  }
+  bool active_mode() const override {
+    return active_mode_enabled;
   }
   const char* name() const override {
     return "fake_duplex";
@@ -157,6 +169,7 @@ class FakeDuplexTransport final : public IMhiDuplexTransport {
   bool send_result{true};
   bool ready_{false};
   bool completion_available{false};
+  bool active_mode_enabled{true};
   int loop_count{0};
   int shutdown_count{0};
   int send_count{0};
@@ -201,11 +214,19 @@ class FakeUnifiedTransport final : public IMhiTransport {
     return read_len;
   }
   bool queue_tx(const MhiTxEnvelope& envelope) override {
-    return ready_ && envelope.valid();
+    queue_count++;
+    return active_mode_enabled && ready_ && envelope.valid();
   }
   bool take_tx_completion(MhiTxCompletion& completion) override {
     (void) completion;
     return false;
+  }
+  void set_active_mode(bool enabled) override {
+    active_mode_enabled = enabled;
+    active_mode_changes++;
+  }
+  bool active_mode() const override {
+    return active_mode_enabled;
   }
   bool has_pending_tx() const override {
     return false;
@@ -257,7 +278,10 @@ class FakeUnifiedTransport final : public IMhiTransport {
   bool ready_{false};
   bool auto_tx_flush_{true};
   bool critical_sections_{true};
+  bool active_mode_enabled{true};
   int setup_count{0};
+  int queue_count{0};
+  int active_mode_changes{0};
   int shutdown_count{0};
   int loop_count{0};
   std::size_t read_len{0U};
@@ -386,6 +410,57 @@ void duplex_transport_adapter_preserves_backend_contract() {
 }
 
 
+void split_transport_active_mode_clears_pending_tx_and_keeps_rx_ready() {
+  FakeRxDriver rx{};
+  FakeTxDriver tx{};
+  MhiSplitTransport transport{};
+  transport.bind(&rx, &tx, true, true);
+  transport.set_pins(8, 38, 39);
+  EXPECT_TRUE(transport.setup());
+
+  const MhiTxEnvelope envelope = make_command_envelope();
+  EXPECT_TRUE(transport.queue_tx(envelope));
+  EXPECT_TRUE(transport.has_pending_tx());
+
+  transport.set_active_mode(false);
+  EXPECT_FALSE(transport.active_mode());
+  EXPECT_FALSE(transport.has_pending_tx());
+  EXPECT_TRUE(transport.rx_ready());
+  EXPECT_FALSE(transport.queue_tx(envelope));
+
+  rx.read_len = 1U;
+  rx.read_data[0] = 0x6CU;
+  uint8_t byte = 0U;
+  EXPECT_EQ(transport.read(&byte, 1U), 1U);
+  EXPECT_EQ(byte, 0x6CU);
+
+  transport.set_active_mode(true);
+  EXPECT_TRUE(transport.active_mode());
+  EXPECT_FALSE(transport.has_pending_tx());
+  EXPECT_TRUE(transport.queue_tx(envelope));
+}
+
+void duplex_transport_active_mode_propagates_and_blocks_tx() {
+  FakeDuplexTransport backend{};
+  MhiDuplexTransportAdapter transport{};
+  transport.bind(&backend, true);
+  transport.set_pins(8, 38, 39);
+  EXPECT_TRUE(transport.setup());
+
+  const MhiTxEnvelope envelope = make_command_envelope();
+  transport.set_active_mode(false);
+  EXPECT_FALSE(transport.active_mode());
+  EXPECT_FALSE(backend.active_mode());
+  EXPECT_FALSE(transport.queue_tx(envelope));
+  EXPECT_EQ(backend.send_count, 0);
+  EXPECT_TRUE(transport.rx_ready());
+
+  transport.set_active_mode(true);
+  EXPECT_TRUE(backend.active_mode());
+  EXPECT_TRUE(transport.queue_tx(envelope));
+  EXPECT_EQ(backend.send_count, 1);
+}
+
 void transport_result_preserves_error_context() {
   const MhiTransportResult result = MhiTransportResult::failure(
       MhiTransportError::RMT_SETUP_FAILED, "rmt_new_rx_channel", 0x105, "channel allocation failed");
@@ -457,6 +532,30 @@ void transport_manager_uses_injected_primary_transport() {
   EXPECT_EQ(primary.loop_count, 1);
   manager.shutdown();
   EXPECT_EQ(primary.shutdown_count, 1);
+}
+
+void transport_manager_active_mode_blocks_tx_without_stopping_rx() {
+  FakeUnifiedTransport primary{"primary"};
+  MhiTransportManager manager{};
+  manager.set_primary(&primary);
+  EXPECT_TRUE(manager.setup());
+
+  const MhiTxEnvelope envelope = make_command_envelope();
+  EXPECT_TRUE(manager.queue_tx(envelope));
+  EXPECT_EQ(primary.queue_count, 1);
+
+  manager.set_active_mode(false);
+  EXPECT_FALSE(manager.active_mode());
+  EXPECT_FALSE(primary.active_mode());
+  EXPECT_FALSE(manager.queue_tx(envelope));
+  EXPECT_EQ(primary.queue_count, 1);
+  EXPECT_TRUE(manager.rx_ready());
+
+  manager.set_active_mode(true);
+  EXPECT_TRUE(manager.active_mode());
+  EXPECT_TRUE(primary.active_mode());
+  EXPECT_TRUE(manager.queue_tx(envelope));
+  EXPECT_EQ(primary.queue_count, 2);
 }
 
 void transport_manager_activates_injected_recovery_after_setup_failure() {
