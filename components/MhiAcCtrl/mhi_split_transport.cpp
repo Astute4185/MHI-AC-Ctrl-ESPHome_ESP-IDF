@@ -48,9 +48,8 @@ MhiTransportResult MhiSplitTransport::setup() {
   if (!rx_ready_) {
     last_error_ = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, rx_->name()).error;
   } else if (!tx_ready_) {
-    last_error_ = MhiTransportResult::failure(MhiTransportError::TX_SETUP_FAILED,
-                                              tx_ == nullptr ? "none" : tx_->name())
-                      .error;
+    last_error_ =
+        MhiTransportResult::failure(MhiTransportError::TX_SETUP_FAILED, tx_ == nullptr ? "none" : tx_->name()).error;
   }
 
   if (last_error_.present()) {
@@ -206,7 +205,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
     if (marker.sequence != last_stale_bus_marker_sequence_) {
       last_stale_bus_marker_sequence_ = marker.sequence;
       const std::size_t pending_len = pending_tx_envelope_.len;
-      (void) pending_len;
+      (void)pending_len;
       this->unlock_tx_();
       ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
                 static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
@@ -303,12 +302,10 @@ MhiTransportCapabilities MhiSplitTransport::capabilities() const {
   capabilities.uses_bus_marker = uses_bus_marker_;
   capabilities.supports_tx = tx_ != nullptr && std::strcmp(tx_->name(), "none") != 0;
   capabilities.supports_classified_worker = supports_classified_worker_;
-  capabilities.supports_rx_byte_critical_sections =
-      rx_ != nullptr && rx_->supports_byte_critical_sections();
+  capabilities.supports_rx_byte_critical_sections = rx_ != nullptr && rx_->supports_byte_critical_sections();
   capabilities.supports_active_mode = true;
   return capabilities;
 }
-
 
 MhiTransportHealth MhiSplitTransport::health() const {
   MhiTransportHealth snapshot = health_;
@@ -341,7 +338,6 @@ uint32_t MhiSplitTransport::tx_completion_queue_dropped() const {
   return value;
 }
 
-
 void MhiSplitTransport::lock_tx_() const {
 #ifdef USE_ESP_IDF
   portENTER_CRITICAL(&tx_mux_);
@@ -371,7 +367,6 @@ void MhiSplitTransport::reset_tx_state_() {
   last_stale_bus_marker_sequence_ = 0U;
   tx_backoff_until_ms_ = 0U;
 }
-
 
 void MhiSplitTransport::clear_tx_for_active_mode_() {
   this->lock_tx_();

@@ -123,7 +123,6 @@ MhiTransportCapabilities MhiDuplexTransportAdapter::capabilities() const {
   return capabilities;
 }
 
-
 MhiTransportHealth MhiDuplexTransportAdapter::health() const {
   MhiTransportHealth snapshot = health_;
   snapshot.tx_completed = this->completed_tx_frames();
@@ -139,8 +138,7 @@ uint32_t MhiDuplexTransportAdapter::completed_tx_frames() const {
 }
 
 uint32_t MhiDuplexTransportAdapter::tx_failures() const {
-  return (backend_ == nullptr ? 0U : backend_->tx_failures()) +
-         staging_failures_.load(std::memory_order_relaxed);
+  return (backend_ == nullptr ? 0U : backend_->tx_failures()) + staging_failures_.load(std::memory_order_relaxed);
 }
 
 std::size_t MhiDuplexTransportAdapter::tx_completion_queue_depth() const {

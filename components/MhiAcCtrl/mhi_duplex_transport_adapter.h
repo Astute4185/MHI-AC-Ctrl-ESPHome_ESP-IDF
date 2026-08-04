@@ -41,14 +41,14 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   }
 
   void set_auto_tx_flush(bool enabled) override {
-    (void) enabled;
+    (void)enabled;
   }
   bool auto_tx_flush() const override {
     return false;
   }
 
   void set_rx_byte_critical_sections(bool enabled) override {
-    (void) enabled;
+    (void)enabled;
   }
   bool rx_byte_critical_sections() const override {
     return false;

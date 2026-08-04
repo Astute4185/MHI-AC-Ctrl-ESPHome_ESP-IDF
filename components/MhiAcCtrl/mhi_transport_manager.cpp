@@ -76,8 +76,7 @@ bool MhiTransportManager::setup() {
 
   MhiTransportResult setup_result = primary_->setup();
   if (setup_result.ok && (!primary_->rx_ready() || !primary_->tx_ready())) {
-    setup_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT,
-                                               "primary_ready_after_setup", 0,
+    setup_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "primary_ready_after_setup", 0,
                                                "transport setup succeeded without ready RX/TX");
   }
 
@@ -132,8 +131,7 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
     return this->enter_safe_mode_(primary_result.error);
   }
 
-  ESP_LOGW(TAG,
-           "Primary transport %s failed: error=%s operation=%s native=%ld; activating internal recovery %s",
+  ESP_LOGW(TAG, "Primary transport %s failed: error=%s operation=%s native=%ld; activating internal recovery %s",
            failed_primary == nullptr ? "none" : failed_primary->name(),
            mhi_transport_error_name(primary_result.error.code),
            primary_result.error.operation == nullptr ? "none" : primary_result.error.operation,
@@ -145,9 +143,8 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
 
   MhiTransportResult recovery_result = recovery_->setup();
   if (recovery_result.ok && (!recovery_->rx_ready() || !recovery_->tx_ready())) {
-    recovery_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT,
-                                                  "recovery_ready_after_setup", 0,
-                                                  "recovery setup succeeded without ready RX/TX");
+    recovery_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "recovery_ready_after_setup",
+                                                  0, "recovery setup succeeded without ready RX/TX");
   }
 
   if (!recovery_result.ok) {
@@ -194,9 +191,8 @@ bool MhiTransportManager::enter_safe_mode_(const MhiTransportErrorDetail& reason
     transition_listener_->on_transport_safe_mode(reason);
   }
 
-  ESP_LOGE(TAG, "Transport safe mode entered: error=%s operation=%s native=%ld",
-           mhi_transport_error_name(reason.code), reason.operation == nullptr ? "none" : reason.operation,
-           static_cast<long>(reason.native_code));
+  ESP_LOGE(TAG, "Transport safe mode entered: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
+           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
   return false;
 }
 
@@ -445,8 +441,7 @@ void MhiTransportManager::evaluate_runtime_health_(uint32_t now_ms) {
   if (transport_health.fault_latched) {
     MhiTransportErrorDetail error = active_->last_error();
     if (!error.present()) {
-      error = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT,
-                                          "transport_fault_latched").error;
+      error = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "transport_fault_latched").error;
     }
     this->handle_runtime_failure_(error);
     return;

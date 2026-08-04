@@ -2,13 +2,12 @@
 
 #ifdef MHI_USE_TRANSPORT_RMT_CS_SPI
 
-#include "mhi_rmt_cs_spi_transport.h"
-
 #include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_rmt_cs_spi_transport.h"
 #if MHI_RMT_CS_SPI_SUPPORTED
 #include <driver/gpio.h>
 #include <esp_err.h>
@@ -251,7 +250,7 @@ void MhiRmtCsSpiTransport::set_active_mode(bool enabled) {
   }
   portEXIT_CRITICAL(&mux_);
 #else
-  (void) enabled;
+  (void)enabled;
 #endif
 }
 

@@ -162,8 +162,7 @@ bool MhiAcCtrl::transport_command_path_ready_() const {
   if (this->transport_.safe_mode() || !this->transport_.tx_ready()) {
     return false;
   }
-  if (this->transport_.recovery_active() &&
-      this->transport_.state() != MhiTransportState::RECOVERY_ACTIVE) {
+  if (this->transport_.recovery_active() && this->transport_.state() != MhiTransportState::RECOVERY_ACTIVE) {
     return false;
   }
   return true;
@@ -433,9 +432,8 @@ void MhiAcCtrl::on_transport_switch_begin(const MhiTransportErrorDetail& reason)
   this->status_set_warning("MHI transport recovery in progress");
   this->reset_runtime_for_transport_switch_();
 
-  ESP_LOGW(TAG, "Transport transition started: error=%s operation=%s native=%ld",
-           mhi_transport_error_name(reason.code), reason.operation == nullptr ? "none" : reason.operation,
-           static_cast<long>(reason.native_code));
+  ESP_LOGW(TAG, "Transport transition started: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
+           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
 }
 
 void MhiAcCtrl::on_transport_recovery_ready() {
@@ -463,9 +461,8 @@ void MhiAcCtrl::on_transport_safe_mode(const MhiTransportErrorDetail& reason) {
   this->publish_transport_diagnostics_(true);
   this->publish_active_mode_state_();
 
-  ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld",
-           mhi_transport_error_name(reason.code), reason.operation == nullptr ? "none" : reason.operation,
-           static_cast<long>(reason.native_code));
+  ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
+           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
 }
 
 void MhiAcCtrl::reset_command_runtime_() {
@@ -633,8 +630,7 @@ void MhiAcCtrl::dump_config() {
                 static_cast<unsigned long>(this->command_worker_stack_size_),
                 static_cast<unsigned long>(this->command_worker_start_delay_ms_),
                 static_cast<unsigned long>(this->worker_handles_rx_() ? kCommandWorkerPollMs : 50U));
-  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s",
-                this->transport_.rx_byte_critical_sections() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->transport_.rx_byte_critical_sections() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
   ESP_LOGCONFIG(TAG, "  Frame catalog: enabled latest-slot decode");
 }
@@ -1252,8 +1248,8 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
 
   this->command_worker_rx_polls_.fetch_add(1U, std::memory_order_relaxed);
 
-  const MhiRxServiceResult result = this->rx_runtime_.service(
-      this->transport_, kMaxRxChunksPerWorkerPoll, this->command_confirmation_pending_());
+  const MhiRxServiceResult result =
+      this->rx_runtime_.service(this->transport_, kMaxRxChunksPerWorkerPoll, this->command_confirmation_pending_());
 
   if (result.chunks > 0U) {
     this->command_worker_rx_chunks_.fetch_add(result.chunks, std::memory_order_relaxed);
@@ -1267,9 +1263,8 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
   this->command_worker_rx_frames_.fetch_add(result.frames, std::memory_order_relaxed);
 
   uint32_t previous_max = this->command_worker_rx_max_batch_.load(std::memory_order_relaxed);
-  while (result.frames > previous_max &&
-         !this->command_worker_rx_max_batch_.compare_exchange_weak(previous_max, result.frames,
-                                                                   std::memory_order_relaxed)) {
+  while (result.frames > previous_max && !this->command_worker_rx_max_batch_.compare_exchange_weak(
+                                             previous_max, result.frames, std::memory_order_relaxed)) {
   }
 
   return this->rx_runtime_.decode_cataloged_frames_to_worker_store(this->command_confirmation_pending_());
