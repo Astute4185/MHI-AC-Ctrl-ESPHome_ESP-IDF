@@ -138,6 +138,9 @@ int main() {
   split_transport_delegates_rx_and_marker_armed_tx();
   split_transport_preserves_null_tx_completion_contract();
   duplex_transport_adapter_preserves_backend_contract();
+  transport_result_preserves_error_context();
+  split_transport_reports_setup_failure_and_rx_health();
+  duplex_transport_adapter_reports_missing_backend();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;

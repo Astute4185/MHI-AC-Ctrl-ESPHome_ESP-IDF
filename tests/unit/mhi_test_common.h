@@ -312,5 +312,8 @@ void rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
 void split_transport_delegates_rx_and_marker_armed_tx();
 void split_transport_preserves_null_tx_completion_contract();
 void duplex_transport_adapter_preserves_backend_contract();
+void transport_result_preserves_error_context();
+void split_transport_reports_setup_failure_and_rx_health();
+void duplex_transport_adapter_reports_missing_backend();
 
 }  // namespace mhi_unit_tests

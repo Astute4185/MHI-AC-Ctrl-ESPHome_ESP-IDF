@@ -109,6 +109,12 @@ class MhiTransportManager {
   bool rx_supports_classified_worker() const {
     return this->rx_ready() && active_->capabilities().supports_classified_worker;
   }
+  MhiTransportHealth transport_health() const {
+    return active_ == nullptr ? MhiTransportHealth{} : active_->health();
+  }
+  MhiTransportErrorDetail last_transport_error() const {
+    return last_transport_error_;
+  }
 
  private:
   void resolve_transports_();
@@ -148,6 +154,7 @@ class MhiTransportManager {
   uint32_t rmt_spi_frame_gap_us_{1000U};
   uint32_t last_transport_tx_completed_{0U};
   uint32_t last_transport_tx_failures_{0U};
+  MhiTransportErrorDetail last_transport_error_{};
   MhiDiagnostics* diagnostics_{nullptr};
 };
 
