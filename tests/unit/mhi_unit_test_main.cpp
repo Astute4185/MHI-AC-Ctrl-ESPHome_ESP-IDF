@@ -80,9 +80,17 @@ int main() {
   opdata_freshness_counts_stale_transitions_once();
   opdata_freshness_reset_keeps_counters_and_restarts_observation_window();
   opdata_freshness_publisher_publishes_only_meaningful_changes();
+  power_estimator_is_inactive_until_enabled();
+  power_estimator_calculates_instantaneous_power();
+  power_estimator_integrates_energy_between_fresh_samples();
+  power_estimator_uses_trapezoidal_integration();
+  power_estimator_skips_stale_sample_gaps();
+  power_estimator_applies_configured_standby_floor_only_when_off();
+  power_estimator_reset_window_preserves_accumulated_energy();
   publish_bridge_republishes_cached_state_after_targets_are_registered();
   publish_bridge_publishes_sensor_parity_slice1_on_first_opdata_publish();
   publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();
+  publish_bridge_publishes_estimated_power_and_energy();
   publish_bridge_maps_unknown_protection_state();
   publish_bridge_maps_mhi_auto_to_heat_cool_for_ha_setpoint_ui();
   publish_bridge_three_speed_maps_code_zero_to_low();

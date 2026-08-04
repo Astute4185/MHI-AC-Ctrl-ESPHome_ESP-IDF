@@ -6,6 +6,7 @@ from esphome.const import (
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_FREQUENCY,
+    DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
     ENTITY_CATEGORY_DIAGNOSTIC,
     ICON_FAN,
@@ -18,6 +19,7 @@ from esphome.const import (
     UNIT_HOUR,
     UNIT_KILOWATT_HOURS,
     UNIT_SECOND,
+    UNIT_WATT,
 )
 
 from .. import CONF_MHI_AC_CTRL_ID, MhiAcCtrl, mhi_ns
@@ -35,6 +37,8 @@ CONF_OUTDOOR_UNIT_FAN_SPEED = "outdoor_unit_fan_speed"
 CONF_INDOOR_UNIT_TOTAL_RUN_TIME = "indoor_unit_total_run_time"
 CONF_COMPRESSOR_TOTAL_RUN_TIME = "compressor_total_run_time"
 CONF_ENERGY_USED = "energy_used"
+CONF_ESTIMATED_POWER = "estimated_power"
+CONF_ESTIMATED_ENERGY = "estimated_energy"
 CONF_INDOOR_UNIT_THI_R1 = "indoor_unit_thi_r1"
 CONF_INDOOR_UNIT_THI_R2 = "indoor_unit_thi_r2"
 CONF_INDOOR_UNIT_THI_R3 = "indoor_unit_thi_r3"
@@ -146,6 +150,20 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_LIGHTNING_BOLT,
             unit_of_measurement=UNIT_KILOWATT_HOURS,
             accuracy_decimals=2,
+            device_class=DEVICE_CLASS_ENERGY,
+            state_class=STATE_CLASS_TOTAL_INCREASING,
+        ),
+        cv.Optional(CONF_ESTIMATED_POWER): sensor.sensor_schema(
+            icon=ICON_LIGHTNING_BOLT,
+            unit_of_measurement=UNIT_WATT,
+            accuracy_decimals=1,
+            device_class=DEVICE_CLASS_POWER,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Optional(CONF_ESTIMATED_ENERGY): sensor.sensor_schema(
+            icon=ICON_LIGHTNING_BOLT,
+            unit_of_measurement=UNIT_KILOWATT_HOURS,
+            accuracy_decimals=3,
             device_class=DEVICE_CLASS_ENERGY,
             state_class=STATE_CLASS_TOTAL_INCREASING,
         ),
@@ -295,6 +313,18 @@ async def to_code(config):
         cg.add(var.set_energy_used(sens))
         cg.add(parent.set_energy_used_sensor(sens))
         opdata_mask |= MHI_OPDATA_REQ_KWH
+
+    if CONF_ESTIMATED_POWER in config:
+        sens = await sensor.new_sensor(config[CONF_ESTIMATED_POWER])
+        cg.add(var.set_estimated_power(sens))
+        cg.add(parent.set_estimated_power_sensor(sens))
+        opdata_mask |= MHI_OPDATA_REQ_CT
+
+    if CONF_ESTIMATED_ENERGY in config:
+        sens = await sensor.new_sensor(config[CONF_ESTIMATED_ENERGY])
+        cg.add(var.set_estimated_energy(sens))
+        cg.add(parent.set_estimated_energy_sensor(sens))
+        opdata_mask |= MHI_OPDATA_REQ_CT
 
     if CONF_INDOOR_UNIT_THI_R1 in config:
         sens = await sensor.new_sensor(config[CONF_INDOOR_UNIT_THI_R1])

@@ -73,6 +73,7 @@ class TransportCompileSelectionTests(unittest.TestCase):
         self.assertIn("set_primary_transport", called_attributes)
         self.assertIn("set_recovery_transport", called_attributes)
         self.assertIn("set_opdata_freshness_timeout_ms", called_attributes)
+        self.assertIn("configure_power_estimation", called_attributes)
 
         for obsolete_setter in (
             "set_sck_pin",
@@ -84,6 +85,15 @@ class TransportCompileSelectionTests(unittest.TestCase):
             "set_rmt_spi_frame_gap_us",
         ):
             self.assertNotIn(obsolete_setter, called_attributes)
+
+    def test_estimated_power_sensors_request_ct_opdata(self):
+        source = (COMPONENT_DIR / "sensor" / "__init__.py").read_text(encoding="utf-8")
+
+        self.assertIn('CONF_ESTIMATED_POWER = "estimated_power"', source)
+        self.assertIn('CONF_ESTIMATED_ENERGY = "estimated_energy"', source)
+        self.assertIn("set_estimated_power_sensor", source)
+        self.assertIn("set_estimated_energy_sensor", source)
+        self.assertGreaterEqual(source.count("opdata_mask |= MHI_OPDATA_REQ_CT"), 3)
 
     def test_manager_is_non_owning_and_has_no_concrete_driver_selection(self):
         source = MANAGER_HEADER.read_text(encoding="utf-8")
