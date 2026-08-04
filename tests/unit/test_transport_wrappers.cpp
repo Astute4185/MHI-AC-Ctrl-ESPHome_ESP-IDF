@@ -6,6 +6,7 @@
 #include "esphome/core/hal.h"
 #include "mhi_duplex_transport_adapter.h"
 #include "mhi_split_transport.h"
+#include "mhi_transport_diagnostics_publisher.h"
 #include "mhi_transport_manager.h"
 #include "mhi_test_common.h"
 
@@ -779,6 +780,117 @@ void transport_manager_enters_safe_mode_when_recovery_has_no_traffic() {
   EXPECT_EQ(listener.safe_mode_count, 1);
   EXPECT_EQ(static_cast<uint8_t>(manager.recovery_failure().code),
             static_cast<uint8_t>(MhiTransportError::NO_TRAFFIC));
+}
+
+
+void transport_manager_diagnostics_snapshot_tracks_recovery_and_safe_mode() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  primary.setup_result = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, "primary_setup");
+
+  MhiTransportHealthPolicy policy{};
+  policy.startup_grace_ms = 0U;
+  policy.no_traffic_timeout_ms = 100U;
+  policy.invalid_traffic_timeout_ms = 100U;
+  policy.stalled_traffic_timeout_ms = 100U;
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+
+  MhiTransportManager manager{};
+  manager.set_health_policy(policy);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+
+  MhiTransportDiagnosticsSnapshot snapshot = manager.diagnostics_snapshot(0U);
+  EXPECT_EQ(snapshot.recovery_attempts, 1U);
+  EXPECT_EQ(snapshot.recovery_activations, 0U);
+  EXPECT_EQ(snapshot.recovery_failures, 0U);
+  EXPECT_TRUE(snapshot.recovery_active);
+  EXPECT_FALSE(snapshot.transport_healthy);
+  EXPECT_TRUE(std::strcmp(snapshot.active_transport_name, "fast_gpio_recovery") == 0);
+
+  recovery.health_snapshot.traffic_seen = true;
+  recovery.health_snapshot.last_rx_activity_ms = 10U;
+  MhiProtocolHealth protocol_health{};
+  protocol_health.valid_frames = 2U;
+  protocol_health.last_valid_frame_ms = 10U;
+  manager.observe_protocol_health(protocol_health);
+  esphome::test_millis_value = 10U;
+  manager.loop();
+
+  snapshot = manager.diagnostics_snapshot(10U);
+  EXPECT_EQ(snapshot.recovery_activations, 1U);
+  EXPECT_TRUE(snapshot.transport_healthy);
+  EXPECT_EQ(static_cast<uint8_t>(snapshot.state), static_cast<uint8_t>(MhiTransportState::RECOVERY_ACTIVE));
+
+  esphome::test_millis_value = 110U;
+  manager.loop();
+  snapshot = manager.diagnostics_snapshot(110U);
+  EXPECT_TRUE(snapshot.safe_mode);
+  EXPECT_EQ(snapshot.safe_mode_entries, 1U);
+  EXPECT_EQ(snapshot.recovery_failures, 1U);
+  EXPECT_EQ(static_cast<uint8_t>(snapshot.last_error.code), static_cast<uint8_t>(MhiTransportError::RX_STALLED));
+
+  esphome::test_millis_value = 210U;
+  manager.loop();
+  snapshot = manager.diagnostics_snapshot(210U);
+  EXPECT_EQ(snapshot.safe_mode_entries, 1U);
+  EXPECT_EQ(snapshot.recovery_failures, 1U);
+}
+
+void transport_diagnostics_publisher_publishes_only_on_change() {
+  esphome::binary_sensor::BinarySensor healthy{};
+  esphome::binary_sensor::BinarySensor recovery_active{};
+  esphome::binary_sensor::BinarySensor safe_mode{};
+  esphome::text_sensor::TextSensor active_transport{};
+  esphome::text_sensor::TextSensor state{};
+  esphome::text_sensor::TextSensor last_error{};
+
+  MhiTransportDiagnosticsPublisher publisher{};
+  publisher.set_healthy_binary_sensor(&healthy);
+  publisher.set_recovery_active_binary_sensor(&recovery_active);
+  publisher.set_safe_mode_binary_sensor(&safe_mode);
+  publisher.set_active_transport_text_sensor(&active_transport);
+  publisher.set_state_text_sensor(&state);
+  publisher.set_last_error_text_sensor(&last_error);
+
+  MhiTransportDiagnosticsSnapshot snapshot{};
+  snapshot.state = MhiTransportState::HEALTHY;
+  snapshot.active_transport_name = "rmt_spi_rx";
+  snapshot.transport_healthy = true;
+  snapshot.state_changes = 1U;
+
+  publisher.publish(snapshot);
+  EXPECT_TRUE(healthy.state);
+  EXPECT_FALSE(recovery_active.state);
+  EXPECT_FALSE(safe_mode.state);
+  EXPECT_TRUE(active_transport.state == "rmt_spi_rx");
+  EXPECT_TRUE(state.state == "healthy");
+  EXPECT_TRUE(last_error.state == "none");
+  EXPECT_EQ(healthy.publish_count, 1U);
+
+  publisher.publish(snapshot);
+  EXPECT_EQ(healthy.publish_count, 1U);
+  EXPECT_EQ(state.publish_count, 1U);
+
+  snapshot.state = MhiTransportState::SAFE_MODE;
+  snapshot.active_transport_name = "none";
+  snapshot.transport_healthy = false;
+  snapshot.safe_mode = true;
+  snapshot.state_changes = 2U;
+  snapshot.last_error =
+      MhiTransportResult::failure(MhiTransportError::RMT_SETUP_FAILED, "rmt_new_rx_channel", 261).error;
+
+  publisher.publish(snapshot);
+  EXPECT_FALSE(healthy.state);
+  EXPECT_TRUE(safe_mode.state);
+  EXPECT_TRUE(active_transport.state == "none");
+  EXPECT_TRUE(state.state == "safe_mode");
+  EXPECT_TRUE(last_error.state == "rmt_setup_failed: rmt_new_rx_channel (native=261)");
+  EXPECT_EQ(healthy.publish_count, 2U);
 }
 
 }  // namespace mhi_unit_tests

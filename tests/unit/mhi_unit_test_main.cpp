@@ -152,6 +152,8 @@ int main() {
   transport_manager_recovers_after_valid_traffic_stalls();
   transport_manager_recovers_after_latched_driver_fault();
   transport_manager_enters_safe_mode_when_recovery_has_no_traffic();
+  transport_manager_diagnostics_snapshot_tracks_recovery_and_safe_mode();
+  transport_diagnostics_publisher_publishes_only_on_change();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;

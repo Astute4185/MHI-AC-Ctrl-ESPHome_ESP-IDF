@@ -356,10 +356,18 @@ void MhiAcCtrl::setup() {
   }
 
   if (transport_ready) {
+    this->status_clear_error();
+    if (this->transport_.recovery_active()) {
+      this->status_set_warning("MHI recovery transport waiting for valid traffic");
+    } else {
+      this->status_clear_warning();
+    }
     this->start_command_worker_();
   } else {
+    this->status_set_error();
     ESP_LOGE(TAG, "Transport unavailable; MHI control is in safe mode");
   }
+  this->publish_transport_diagnostics_(true);
 
   ESP_LOGCONFIG(TAG, "RX mode: %s",
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
@@ -371,6 +379,8 @@ void MhiAcCtrl::setup() {
 
 void MhiAcCtrl::on_transport_switch_begin(const MhiTransportErrorDetail& reason) {
   this->transport_commands_enabled_.store(false, std::memory_order_release);
+  this->status_clear_error();
+  this->status_set_warning("MHI transport recovery in progress");
   this->reset_runtime_for_transport_switch_();
 
   ESP_LOGW(TAG, "Transport transition started: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
@@ -378,17 +388,23 @@ void MhiAcCtrl::on_transport_switch_begin(const MhiTransportErrorDetail& reason)
 }
 
 void MhiAcCtrl::on_transport_recovery_ready() {
+  this->status_clear_error();
+  this->status_set_warning("MHI running on internal FastGPIO recovery");
   this->command_worker_classified_rx_enabled_ =
       this->command_worker_enabled_ && this->transport_.rx_supports_classified_worker();
   this->transport_commands_enabled_.store(true, std::memory_order_release);
   this->notify_command_worker_();
+  this->publish_transport_diagnostics_(true);
   ESP_LOGW(TAG, "Internal FastGPIO recovery transport is active");
 }
 
 void MhiAcCtrl::on_transport_safe_mode(const MhiTransportErrorDetail& reason) {
   this->transport_commands_enabled_.store(false, std::memory_order_release);
+  this->status_clear_warning();
+  this->status_set_error();
   this->command_worker_classified_rx_enabled_ = false;
   this->reset_runtime_for_transport_switch_();
+  this->publish_transport_diagnostics_(true);
 
   ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
            reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
@@ -487,6 +503,7 @@ void MhiAcCtrl::loop() {
   protocol_health.checksum_failures = protocol_stats.checksum_failures;
   protocol_health.resync_events = protocol_stats.sync_losses;
   this->transport_.observe_protocol_health(protocol_health);
+  this->publish_transport_diagnostics_();
 
   rx_read_sync_us = elapsed_us_(section_start_us);
 
@@ -506,6 +523,10 @@ void MhiAcCtrl::loop() {
                                             command_housekeeping_us, kLoopBudgetUs, millis());
 
   this->log_runtime_diagnostics_();
+}
+
+void MhiAcCtrl::publish_transport_diagnostics_(bool force) {
+  this->transport_diagnostics_publisher_.publish(this->transport_.diagnostics_snapshot(millis()), force);
 }
 
 void MhiAcCtrl::dump_config() {
@@ -530,6 +551,19 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  Transport state: %s", mhi_transport_state_name(this->transport_.state()));
   ESP_LOGCONFIG(TAG, "  Internal recovery active: %s", this->transport_.recovery_active() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Transport safe mode: %s", this->transport_.safe_mode() ? "YES" : "NO");
+  const MhiTransportDiagnosticsSnapshot transport_diag = this->transport_.diagnostics_snapshot(millis());
+  ESP_LOGCONFIG(TAG,
+                "  Transport recovery: attempts=%lu activations=%lu failures=%lu safe_mode_entries=%lu "
+                "state_changes=%lu",
+                static_cast<unsigned long>(transport_diag.recovery_attempts),
+                static_cast<unsigned long>(transport_diag.recovery_activations),
+                static_cast<unsigned long>(transport_diag.recovery_failures),
+                static_cast<unsigned long>(transport_diag.safe_mode_entries),
+                static_cast<unsigned long>(transport_diag.state_changes));
+  ESP_LOGCONFIG(TAG, "  Last transport error: %s operation=%s native=%ld",
+                mhi_transport_error_name(transport_diag.last_error.code),
+                transport_diag.last_error.operation == nullptr ? "none" : transport_diag.last_error.operation,
+                static_cast<long>(transport_diag.last_error.native_code));
   ESP_LOGCONFIG(TAG, "  RX mode: %s",
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
                                            : "main-loop capture/sync/decode/apply");
@@ -569,6 +603,20 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
 
   const auto diag = this->diagnostics_.snapshot(now);
   const auto& stats = diag.stats;
+
+  const MhiTransportDiagnosticsSnapshot transport_diag = this->transport_.diagnostics_snapshot(now);
+  ESP_LOGI(DIAG_TAG,
+           "runtime: transport state=%s active=%s healthy=%s recovery=%s safe_mode=%s attempts=%lu "
+           "activations=%lu failures=%lu safe_entries=%lu last_error=%s operation=%s native=%ld",
+           mhi_transport_state_name(transport_diag.state), transport_diag.active_transport_name,
+           transport_diag.transport_healthy ? "YES" : "NO", transport_diag.recovery_active ? "YES" : "NO",
+           transport_diag.safe_mode ? "YES" : "NO", static_cast<unsigned long>(transport_diag.recovery_attempts),
+           static_cast<unsigned long>(transport_diag.recovery_activations),
+           static_cast<unsigned long>(transport_diag.recovery_failures),
+           static_cast<unsigned long>(transport_diag.safe_mode_entries),
+           mhi_transport_error_name(transport_diag.last_error.code),
+           transport_diag.last_error.operation == nullptr ? "none" : transport_diag.last_error.operation,
+           static_cast<long>(transport_diag.last_error.native_code));
 
   ESP_LOGI(DIAG_TAG,
            "runtime: rx_bytes=%lu rx_chunks=%lu candidate_frames=%lu valid_frames=%lu invalid_frames=%lu "

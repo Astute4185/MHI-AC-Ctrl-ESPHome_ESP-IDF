@@ -66,6 +66,7 @@ fi
   components/MhiAcCtrl/mhi_split_transport.cpp \
   components/MhiAcCtrl/mhi_duplex_transport_adapter.cpp \
   components/MhiAcCtrl/mhi_transport_manager.cpp \
+  components/MhiAcCtrl/mhi_transport_diagnostics_publisher.cpp \
   components/MhiAcCtrl/mhi_tx_builder.cpp \
   components/MhiAcCtrl/mhi_worker_decoded_store.cpp \
   -o "${BUILD_DIR}/mhi_protocol_tests"

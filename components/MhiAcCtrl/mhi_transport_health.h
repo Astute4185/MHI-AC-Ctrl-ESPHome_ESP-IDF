@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "mhi_transport_result.h"
+
 namespace esphome {
 namespace mhi_ac_ctrl {
 
@@ -57,6 +59,31 @@ struct MhiProtocolHealth {
   uint32_t invalid_frames{0U};
   uint32_t checksum_failures{0U};
   uint32_t resync_events{0U};
+};
+
+struct MhiTransportDiagnosticsSnapshot {
+  MhiTransportState state{MhiTransportState::STOPPED};
+  const char* active_transport_name{"none"};
+  const char* primary_transport_name{"none"};
+  const char* recovery_transport_name{"none"};
+
+  MhiTransportErrorDetail last_error{};
+  MhiTransportErrorDetail primary_failure{};
+  MhiTransportErrorDetail recovery_failure{};
+
+  uint32_t state_since_ms{0U};
+  uint32_t last_transition_ms{0U};
+  uint32_t last_valid_frame_age_ms{0U};
+
+  uint32_t state_changes{0U};
+  uint32_t recovery_attempts{0U};
+  uint32_t recovery_activations{0U};
+  uint32_t recovery_failures{0U};
+  uint32_t safe_mode_entries{0U};
+
+  bool transport_healthy{false};
+  bool recovery_active{false};
+  bool safe_mode{false};
 };
 
 // Conservative defaults for automatic runtime recovery. These values are
