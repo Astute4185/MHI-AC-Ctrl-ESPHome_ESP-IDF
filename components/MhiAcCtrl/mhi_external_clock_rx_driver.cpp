@@ -1,9 +1,12 @@
-#include "mhi_external_clock_rx_driver.h"
+#include "esphome/core/defines.h"
+
+#ifdef MHI_USE_TRANSPORT_EXTERNAL_CLOCK
 
 #include <algorithm>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_external_clock_rx_driver.h"
 
 #ifdef USE_ESP_IDF
 #include <driver/gpio.h>
@@ -392,3 +395,5 @@ std::size_t MhiExternalClockRxDriver::expected_frame_size_() const {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+
+#endif  // MHI_USE_TRANSPORT_EXTERNAL_CLOCK

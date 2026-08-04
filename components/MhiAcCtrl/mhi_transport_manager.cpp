@@ -31,10 +31,13 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   transport_driver_name_ = integrated_duplex ? rx_driver_name_ : "split";
   tx_driver_name_ = tx_driver.empty() ? (integrated_duplex ? rx_driver_name_ : "fast_gpio_tx") : tx_driver;
 
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
   MhiFastGpioRxConfig fast_gpio_rx_config{};
   fast_gpio_rx_config.frame_size_hint = frame_size_hint;
   fast_gpio_rx_config.frame_start_idle_ms = frame_start_idle_ms;
   fast_gpio_rx_.set_config(fast_gpio_rx_config);
+#endif
+
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   MhiFastGpioTxConfig fast_gpio_tx_config{};
   fast_gpio_tx_config.frame_size_hint = frame_size_hint;
@@ -109,7 +112,11 @@ void MhiTransportManager::resolve_drivers() {
   }
 #else
   if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
     rx_ = &fast_gpio_rx_;
+#else
+    rx_ = nullptr;
+#endif
     tx_ = nullptr;
     ESP_LOGW(TAG, "Split FastGPIO TX is not built for this target; TX disabled");
     return;
@@ -167,7 +174,11 @@ void MhiTransportManager::resolve_drivers() {
 
   rx_driver_name_ = "fast_gpio_rx";
   tx_driver_name_ = "fast_gpio_tx";
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
   rx_ = &fast_gpio_rx_;
+#else
+  rx_ = nullptr;
+#endif
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   tx_ = &fast_gpio_tx_;
 #else
@@ -200,14 +211,24 @@ bool MhiTransportManager::setup() {
     transport_driver_name_ = "split";
     rx_driver_name_ = "fast_gpio_rx";
     tx_driver_name_ = "fast_gpio_tx";
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
     rx_ = &fast_gpio_rx_;
+#else
+    rx_ = nullptr;
+#endif
 #if MHI_ENABLE_SPLIT_TX_DRIVER
     tx_ = &fast_gpio_tx_;
 #else
     tx_ = nullptr;
 #endif
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
     rx_ready_ = rx_->setup(pins_);
     tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
+#else
+    rx_ready_ = false;
+    tx_ready_ = false;
+    ESP_LOGE(TAG, "FastGPIO recovery transport is not compiled into this firmware");
+#endif
   }
   if (diagnostics_ != nullptr) {
     diagnostics_->set_rx_driver_name(this->rx_name());
@@ -425,14 +446,23 @@ void MhiTransportManager::update_duplex_diagnostics_() {
 }
 
 void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
   fast_gpio_rx_.set_byte_critical_sections(enabled);
+#endif
 #if MHI_ENABLE_SPLIT_TX_DRIVER
   fast_gpio_tx_.set_byte_critical_sections(enabled);
+#endif
+#if !MHI_ENABLE_FAST_GPIO_TRANSPORT && !MHI_ENABLE_SPLIT_TX_DRIVER
+  (void)enabled;
 #endif
 }
 
 bool MhiTransportManager::rx_byte_critical_sections() const {
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT
   return fast_gpio_rx_.byte_critical_sections();
+#else
+  return false;
+#endif
 }
 
 bool MhiTransportManager::tx_uses_bus_marker() const {

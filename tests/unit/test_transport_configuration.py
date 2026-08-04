@@ -17,7 +17,6 @@ from mhi_transport_registry import (  # noqa: E402
     VARIANT_ESP32C3,
     VARIANT_ESP32S3,
     TransportConfigurationError,
-    resolve_legacy_build_idf_components,
     resolve_selected_compile_defines,
     resolve_selected_idf_components,
     resolve_transport_tuning,
@@ -163,7 +162,7 @@ class TransportConfigurationTests(unittest.TestCase):
         self.assertTrue(TRANSPORT_DEFINITIONS["rmt_spi_rx"].uses_internal_fast_gpio_recovery)
         self.assertTrue(TRANSPORT_DEFINITIONS["rmt_cs_spi"].uses_internal_fast_gpio_recovery)
 
-    def test_future_compile_plan_adds_fast_gpio_recovery(self):
+    def test_compile_plan_adds_fast_gpio_recovery(self):
         self.assertEqual(
             set(resolve_selected_compile_defines({"rx_driver": "rmt_spi_rx"})),
             {
@@ -184,23 +183,28 @@ class TransportConfigurationTests(unittest.TestCase):
         self.assertEqual(resolve_selected_idf_components({"rx_driver": "rmt_cs_spi"}), ("esp_driver_rmt",))
         self.assertEqual(resolve_selected_idf_components({"rx_driver": "fast_gpio_rx"}), ())
 
-    def test_legacy_manager_dependencies_follow_target_enabled_drivers(self):
-        self.assertEqual(
-            resolve_legacy_build_idf_components(
-                platform=PLATFORM_ESP32,
-                framework=FRAMEWORK_ESP_IDF,
-                variant=VARIANT_ESP32S3,
-            ),
-            ("esp_driver_rmt",),
-        )
-        self.assertEqual(
-            resolve_legacy_build_idf_components(
-                platform=PLATFORM_ESP32,
-                framework=FRAMEWORK_ESP_IDF,
-                variant=VARIANT_ESP32C3,
-            ),
-            (),
-        )
+    def test_each_hardware_compile_plan_contains_only_primary_and_recovery(self):
+        expected = {
+            "external_clock_rx": {
+                "MHI_INTERNAL_FAST_GPIO_RECOVERY",
+                "MHI_USE_TRANSPORT_EXTERNAL_CLOCK",
+                "MHI_USE_TRANSPORT_FAST_GPIO",
+            },
+            "rmt_spi_rx": {
+                "MHI_INTERNAL_FAST_GPIO_RECOVERY",
+                "MHI_USE_TRANSPORT_FAST_GPIO",
+                "MHI_USE_TRANSPORT_RMT_SPI",
+            },
+            "rmt_cs_spi": {
+                "MHI_INTERNAL_FAST_GPIO_RECOVERY",
+                "MHI_USE_TRANSPORT_FAST_GPIO",
+                "MHI_USE_TRANSPORT_RMT_CS_SPI",
+            },
+        }
+
+        for driver, defines in expected.items():
+            with self.subTest(driver=driver):
+                self.assertEqual(set(resolve_selected_compile_defines({"rx_driver": driver})), defines)
 
 
 if __name__ == "__main__":

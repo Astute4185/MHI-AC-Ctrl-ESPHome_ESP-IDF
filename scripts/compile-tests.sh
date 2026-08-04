@@ -42,6 +42,11 @@ validate_configs() {
   echo "All ESPHome compile-test configurations are valid"
 }
 
+clean_builds() {
+  echo "Cleaning generated ESPHome compile-test state"
+  "${SCRIPT_DIR}/clean-test-builds.sh" --all
+}
+
 compile_configs() {
   local config
 
@@ -55,7 +60,14 @@ compile_configs() {
   echo "ESPHome compile tests passed"
 }
 
-MODE="${1:-compile}"
+clean_compile_configs() {
+  clean_builds
+  compile_configs
+}
+
+# A clean matrix is the default because transport dependency and source-file
+# selection changes are otherwise vulnerable to stale ESPHome/CMake state.
+MODE="${1:-clean-compile}"
 
 case "${MODE}" in
   validate)
@@ -66,8 +78,12 @@ case "${MODE}" in
     compile_configs
     ;;
 
+  clean-compile)
+    clean_compile_configs
+    ;;
+
   *)
-    echo "Usage: $0 {validate|compile}" >&2
+    echo "Usage: $0 {validate|compile|clean-compile}" >&2
     exit 2
     ;;
 esac

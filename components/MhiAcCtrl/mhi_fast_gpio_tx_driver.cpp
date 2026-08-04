@@ -1,4 +1,6 @@
-#include "mhi_fast_gpio_tx_driver.h"
+#include "esphome/core/defines.h"
+
+#if defined(MHI_USE_TRANSPORT_FAST_GPIO) && defined(USE_ESP_IDF)
 
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
@@ -10,6 +12,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_fast_gpio_tx_driver.h"
 
 #if defined(ESP32) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) ||                       \
     defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6) || \
@@ -237,3 +240,4 @@ bool MhiFastGpioTxDriver::transmit_frame_(const uint8_t* data, std::size_t len) 
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+#endif  // MHI_USE_TRANSPORT_FAST_GPIO and supported split-TX target
