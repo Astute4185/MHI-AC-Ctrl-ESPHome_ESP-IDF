@@ -7,6 +7,7 @@ from esphome.const import (
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_FREQUENCY,
     DEVICE_CLASS_TEMPERATURE,
+    ENTITY_CATEGORY_DIAGNOSTIC,
     ICON_FAN,
     ICON_THERMOMETER,
     STATE_CLASS_MEASUREMENT,
@@ -16,6 +17,7 @@ from esphome.const import (
     UNIT_HERTZ,
     UNIT_HOUR,
     UNIT_KILOWATT_HOURS,
+    UNIT_SECOND,
 )
 
 from .. import CONF_MHI_AC_CTRL_ID, MhiAcCtrl, mhi_ns
@@ -41,6 +43,9 @@ CONF_OUTDOOR_UNIT_EXPANSION_VALVE = "outdoor_unit_expansion_valve"
 CONF_OUTDOOR_UNIT_DISCHARGE_PIPE = "outdoor_unit_discharge_pipe"
 CONF_OUTDOOR_UNIT_DISCHARGE_PIPE_SUPER_HEAT = "outdoor_unit_discharge_pipe_super_heat"
 CONF_PROTECTION_STATE_NUMBER = "protection_state_number"
+CONF_OPDATA_OLDEST_AGE = "opdata_oldest_age"
+CONF_OPDATA_STALE_COUNT = "opdata_stale_count"
+CONF_OPDATA_TIMEOUT_EVENTS = "opdata_timeout_events"
 
 ICON_SINE = "mdi:sine-wave"
 ICON_CURRENT = "mdi:current-ac"
@@ -48,6 +53,9 @@ ICON_CLOCK = "mdi:clock"
 ICON_LIGHTNING_BOLT = "mdi:lightning-bolt"
 ICON_VALVE = "mdi:valve"
 ICON_ALERT_OUTLINE = "mdi:shield-alert-outline"
+ICON_DATABASE_CLOCK = "mdi:database-clock"
+ICON_DATABASE_ALERT = "mdi:database-alert"
+ICON_TIMER_ALERT = "mdi:timer-alert-outline"
 UNIT_PULSE = "pulse"
 
 MHI_OPDATA_REQ_RETURN_AIR = 1 << 2
@@ -192,6 +200,25 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_ALERT_OUTLINE,
             accuracy_decimals=0,
         ),
+        cv.Optional(CONF_OPDATA_OLDEST_AGE): sensor.sensor_schema(
+            icon=ICON_DATABASE_CLOCK,
+            unit_of_measurement=UNIT_SECOND,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_OPDATA_STALE_COUNT): sensor.sensor_schema(
+            icon=ICON_DATABASE_ALERT,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_OPDATA_TIMEOUT_EVENTS): sensor.sensor_schema(
+            icon=ICON_TIMER_ALERT,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_TOTAL_INCREASING,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -316,6 +343,21 @@ async def to_code(config):
         cg.add(var.set_protection_state_number(sens))
         cg.add(parent.set_protection_state_number_sensor(sens))
         opdata_mask |= MHI_OPDATA_REQ_PROTECTION_NO
+
+    if CONF_OPDATA_OLDEST_AGE in config:
+        sens = await sensor.new_sensor(config[CONF_OPDATA_OLDEST_AGE])
+        cg.add(var.set_opdata_oldest_age(sens))
+        cg.add(parent.set_opdata_oldest_age_sensor(sens))
+
+    if CONF_OPDATA_STALE_COUNT in config:
+        sens = await sensor.new_sensor(config[CONF_OPDATA_STALE_COUNT])
+        cg.add(var.set_opdata_stale_count(sens))
+        cg.add(parent.set_opdata_stale_count_sensor(sens))
+
+    if CONF_OPDATA_TIMEOUT_EVENTS in config:
+        sens = await sensor.new_sensor(config[CONF_OPDATA_TIMEOUT_EVENTS])
+        cg.add(var.set_opdata_timeout_events(sens))
+        cg.add(parent.set_opdata_timeout_events_sensor(sens))
 
     if opdata_mask != 0:
         cg.add(parent.add_opdata_mask(opdata_mask))

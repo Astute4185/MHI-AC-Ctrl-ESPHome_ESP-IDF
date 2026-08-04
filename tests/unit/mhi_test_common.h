@@ -22,6 +22,8 @@
 #include "mhi_frame_sync.h"
 #include "mhi_fan_profile.h"
 #include "mhi_opdata_decoder.h"
+#include "mhi_opdata_freshness.h"
+#include "mhi_opdata_freshness_publisher.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_rmt_cs_spi_mode.h"
 #include "mhi_status_decoder.h"
@@ -242,6 +244,10 @@ void opdata_decoder_decodes_indoor_unit_total_run_time();
 void opdata_decoder_decodes_compressor_total_run_time();
 void opdata_decoder_decodes_energy_used();
 void opdata_decoder_decodes_temperature_and_protection_slice2();
+void opdata_freshness_requires_all_enabled_requests_before_fresh();
+void opdata_freshness_counts_stale_transitions_once();
+void opdata_freshness_reset_keeps_counters_and_restarts_observation_window();
+void opdata_freshness_publisher_publishes_only_meaningful_changes();
 void publish_bridge_republishes_cached_state_after_targets_are_registered();
 void publish_bridge_publishes_sensor_parity_slice1_on_first_opdata_publish();
 void publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();

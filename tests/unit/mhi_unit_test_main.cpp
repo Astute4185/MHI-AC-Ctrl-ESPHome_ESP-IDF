@@ -76,6 +76,10 @@ int main() {
   opdata_decoder_decodes_compressor_total_run_time();
   opdata_decoder_decodes_energy_used();
   opdata_decoder_decodes_temperature_and_protection_slice2();
+  opdata_freshness_requires_all_enabled_requests_before_fresh();
+  opdata_freshness_counts_stale_transitions_once();
+  opdata_freshness_reset_keeps_counters_and_restarts_observation_window();
+  opdata_freshness_publisher_publishes_only_meaningful_changes();
   publish_bridge_republishes_cached_state_after_targets_are_registered();
   publish_bridge_publishes_sensor_parity_slice1_on_first_opdata_publish();
   publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();

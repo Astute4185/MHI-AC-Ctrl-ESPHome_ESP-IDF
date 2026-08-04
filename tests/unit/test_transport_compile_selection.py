@@ -72,6 +72,7 @@ class TransportCompileSelectionTests(unittest.TestCase):
         self.assertIn("build_selected_transports", called_names)
         self.assertIn("set_primary_transport", called_attributes)
         self.assertIn("set_recovery_transport", called_attributes)
+        self.assertIn("set_opdata_freshness_timeout_ms", called_attributes)
 
         for obsolete_setter in (
             "set_sck_pin",

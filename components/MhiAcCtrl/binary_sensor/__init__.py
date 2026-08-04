@@ -18,11 +18,13 @@ CONF_VANES_3D_AUTO_ENABLED = "vanes_3d_auto_enabled"
 CONF_TRANSPORT_HEALTHY = "transport_healthy"
 CONF_TRANSPORT_RECOVERY_ACTIVE = "transport_recovery_active"
 CONF_TRANSPORT_SAFE_MODE = "transport_safe_mode"
+CONF_OPDATA_FRESH = "opdata_fresh"
 
 ICON_3D = "mdi:video-3d"
 ICON_SNOWFLAKE_MELT = "mdi:snowflake-melt"
 ICON_BACKUP_RESTORE = "mdi:backup-restore"
 ICON_SHIELD_ALERT = "mdi:shield-alert"
+ICON_DATABASE_CHECK = "mdi:database-check"
 
 MHI_OPDATA_REQ_DEFROST = 1 << 16
 
@@ -49,6 +51,10 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_TRANSPORT_SAFE_MODE): binary_sensor.binary_sensor_schema(
             icon=ICON_SHIELD_ALERT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_OPDATA_FRESH): binary_sensor.binary_sensor_schema(
+            icon=ICON_DATABASE_CHECK,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
     }
@@ -92,3 +98,8 @@ async def to_code(config):
         sens = await binary_sensor.new_binary_sensor(config[CONF_TRANSPORT_SAFE_MODE])
         cg.add(var.set_transport_safe_mode(sens))
         cg.add(parent.set_transport_safe_mode_binary_sensor(sens))
+
+    if CONF_OPDATA_FRESH in config:
+        sens = await binary_sensor.new_binary_sensor(config[CONF_OPDATA_FRESH])
+        cg.add(var.set_opdata_fresh(sens))
+        cg.add(parent.set_opdata_fresh_binary_sensor(sens))

@@ -381,6 +381,10 @@ void MhiAcCtrl::setup() {
   this->tx_config_.frame_size = this->frame_size_ == 33 ? kMhiFrame33Bytes : kMhiFrame20Bytes;
 
   this->tx_config_.enabled_opdata_mask = this->opdata_mask_;
+  this->opdata_freshness_.set_enabled_mask(this->opdata_mask_);
+  this->opdata_freshness_.set_timeout_ms(this->opdata_freshness_timeout_ms_);
+  this->opdata_freshness_.begin(millis());
+  this->last_opdata_freshness_publish_ms_ = 0U;
 
   this->rx_runtime_.configure(&this->diagnostics_.stats(), this->frame_size_ == 33);
 
@@ -416,6 +420,7 @@ void MhiAcCtrl::setup() {
     ESP_LOGE(TAG, "Transport unavailable; MHI control is in safe mode");
   }
   this->publish_transport_diagnostics_(true);
+  this->service_opdata_freshness_(true);
   this->publish_active_mode_state_();
 
   ESP_LOGCONFIG(TAG, "RX mode: %s",
@@ -482,6 +487,8 @@ void MhiAcCtrl::reset_command_runtime_() {
 void MhiAcCtrl::reset_runtime_for_transport_switch_() {
   this->reset_command_runtime_();
   this->rx_runtime_.reset();
+  this->opdata_freshness_.reset_observations(millis());
+  this->service_opdata_freshness_(true);
 }
 
 void MhiAcCtrl::on_shutdown() {
@@ -555,6 +562,7 @@ void MhiAcCtrl::loop() {
   protocol_health.resync_events = protocol_stats.sync_losses;
   this->transport_.observe_protocol_health(protocol_health);
   this->publish_transport_diagnostics_();
+  this->service_opdata_freshness_();
 
   rx_read_sync_us = elapsed_us_(section_start_us);
 
@@ -578,6 +586,18 @@ void MhiAcCtrl::loop() {
 
 void MhiAcCtrl::publish_transport_diagnostics_(bool force) {
   this->transport_diagnostics_publisher_.publish(this->transport_.diagnostics_snapshot(millis()), force);
+}
+
+void MhiAcCtrl::service_opdata_freshness_(bool force) {
+  const uint32_t now_ms = millis();
+  if (!force && this->last_opdata_freshness_publish_ms_ != 0U &&
+      (now_ms - this->last_opdata_freshness_publish_ms_) < 1000U) {
+    return;
+  }
+
+  const MhiOpDataFreshnessSnapshot snapshot = this->opdata_freshness_.evaluate(now_ms);
+  this->opdata_freshness_publisher_.publish(snapshot, force);
+  this->last_opdata_freshness_publish_ms_ = now_ms;
 }
 
 void MhiAcCtrl::dump_config() {
@@ -631,7 +651,18 @@ void MhiAcCtrl::dump_config() {
                 static_cast<unsigned long>(this->command_worker_start_delay_ms_),
                 static_cast<unsigned long>(this->worker_handles_rx_() ? kCommandWorkerPollMs : 50U));
   ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->transport_.rx_byte_critical_sections() ? "YES" : "NO");
+  const MhiOpDataFreshnessSnapshot opdata_freshness = this->opdata_freshness_.evaluate(millis());
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
+  ESP_LOGCONFIG(TAG, "  Opdata freshness timeout: %lums",
+                static_cast<unsigned long>(this->opdata_freshness_timeout_ms_));
+  ESP_LOGCONFIG(TAG,
+                "  Opdata freshness: fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx "
+                "oldest_age_ms=%lu timeout_events=%lu",
+                opdata_freshness.fresh ? "YES" : "NO", static_cast<unsigned long>(opdata_freshness.observed_mask),
+                static_cast<unsigned long>(opdata_freshness.pending_mask),
+                static_cast<unsigned long>(opdata_freshness.stale_mask),
+                static_cast<unsigned long>(opdata_freshness.oldest_age_ms),
+                static_cast<unsigned long>(opdata_freshness.timeout_events));
   ESP_LOGCONFIG(TAG, "  Frame catalog: enabled latest-slot decode");
 }
 
@@ -665,6 +696,17 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            mhi_transport_error_name(transport_diag.last_error.code),
            transport_diag.last_error.operation == nullptr ? "none" : transport_diag.last_error.operation,
            static_cast<long>(transport_diag.last_error.native_code));
+
+  const MhiOpDataFreshnessSnapshot opdata_freshness = this->opdata_freshness_.evaluate(now);
+  ESP_LOGI(DIAG_TAG,
+           "runtime: opdata fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx stale_count=%u "
+           "oldest_age_ms=%lu timeout_events=%lu",
+           opdata_freshness.fresh ? "YES" : "NO", static_cast<unsigned long>(opdata_freshness.observed_mask),
+           static_cast<unsigned long>(opdata_freshness.pending_mask),
+           static_cast<unsigned long>(opdata_freshness.stale_mask),
+           static_cast<unsigned int>(opdata_freshness.stale_count),
+           static_cast<unsigned long>(opdata_freshness.oldest_age_ms),
+           static_cast<unsigned long>(opdata_freshness.timeout_events));
 
   ESP_LOGI(DIAG_TAG,
            "runtime: rx_bytes=%lu rx_chunks=%lu candidate_frames=%lu valid_frames=%lu invalid_frames=%lu "
@@ -1453,14 +1495,25 @@ bool MhiAcCtrl::apply_status_update_(const MhiDecodedStatus& decoded_status, con
 bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, const MhiFrameBuffer& frame) {
   auto& opdata = this->state_.opdata();
   bool accepted = false;
+  uint32_t freshness_mask = 0U;
+  const uint32_t now_ms = millis();
 
   opdata.valid = true;
-  opdata.last_update_ms = millis();
+  opdata.last_update_ms = now_ms;
+
+  if (decoded_opdata.has_mode && decoded_opdata.mode <= 4U) {
+    freshness_mask |= MHI_OPDATA_REQ_MODE;
+  }
+
+  if (decoded_opdata.has_setpoint && in_range(decoded_opdata.setpoint_c, 16.0f, 30.0f)) {
+    freshness_mask |= MHI_OPDATA_REQ_TSETPOINT;
+  }
 
   if (decoded_opdata.has_outdoor_temp) {
     if (in_range(decoded_opdata.outdoor_temp_c, -60.0f, 80.0f)) {
       opdata.has_outdoor_temp = true;
       opdata.outdoor_temp_c = decoded_opdata.outdoor_temp_c;
+      freshness_mask |= MHI_OPDATA_REQ_OUTDOOR;
       accepted = true;
     } else {
       this->log_rejected_opdata_("outdoor_temp", decoded_opdata.outdoor_temp_c, frame);
@@ -1471,6 +1524,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.return_air_c, -10.0f, 60.0f)) {
       opdata.has_return_air = true;
       opdata.return_air_c = decoded_opdata.return_air_c;
+      freshness_mask |= MHI_OPDATA_REQ_RETURN_AIR;
       accepted = true;
     } else {
       this->log_rejected_opdata_("return_air", decoded_opdata.return_air_c, frame);
@@ -1481,6 +1535,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.compressor_frequency_hz, 0.0f, 250.0f)) {
       opdata.has_compressor_frequency = true;
       opdata.compressor_frequency_hz = decoded_opdata.compressor_frequency_hz;
+      freshness_mask |= MHI_OPDATA_REQ_COMP;
       accepted = true;
     } else {
       this->log_rejected_opdata_("compressor_frequency", decoded_opdata.compressor_frequency_hz, frame);
@@ -1491,6 +1546,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.current_a, 0.0f, 80.0f)) {
       opdata.has_current = true;
       opdata.current_a = decoded_opdata.current_a;
+      freshness_mask |= MHI_OPDATA_REQ_CT;
       accepted = true;
     } else {
       this->log_rejected_opdata_("current", decoded_opdata.current_a, frame);
@@ -1501,6 +1557,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (decoded_opdata.indoor_unit_fan_speed <= 15U) {
       opdata.has_indoor_unit_fan_speed = true;
       opdata.indoor_unit_fan_speed = decoded_opdata.indoor_unit_fan_speed;
+      freshness_mask |= MHI_OPDATA_REQ_IU_FANSPEED;
       accepted = true;
     } else {
       this->log_rejected_opdata_("indoor_unit_fan_speed", decoded_opdata.indoor_unit_fan_speed, frame);
@@ -1511,6 +1568,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (decoded_opdata.outdoor_unit_fan_speed <= 15U) {
       opdata.has_outdoor_unit_fan_speed = true;
       opdata.outdoor_unit_fan_speed = decoded_opdata.outdoor_unit_fan_speed;
+      freshness_mask |= MHI_OPDATA_REQ_OU_FANSPEED;
       accepted = true;
     } else {
       this->log_rejected_opdata_("outdoor_unit_fan_speed", decoded_opdata.outdoor_unit_fan_speed, frame);
@@ -1520,12 +1578,14 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
   if (decoded_opdata.has_total_indoor_runtime) {
     opdata.has_indoor_unit_total_run_time = true;
     opdata.indoor_unit_total_run_time_hours = decoded_opdata.total_indoor_runtime_hours;
+    freshness_mask |= MHI_OPDATA_REQ_TOTAL_IU_RUN;
     accepted = true;
   }
 
   if (decoded_opdata.has_total_compressor_runtime) {
     opdata.has_compressor_total_run_time = true;
     opdata.compressor_total_run_time_hours = decoded_opdata.total_compressor_runtime_hours;
+    freshness_mask |= MHI_OPDATA_REQ_TOTAL_COMP_RUN;
     accepted = true;
   }
 
@@ -1533,6 +1593,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.energy_used_kwh, 0.0f, 1000000.0f)) {
       opdata.has_energy_used = true;
       opdata.energy_used_kwh = decoded_opdata.energy_used_kwh;
+      freshness_mask |= MHI_OPDATA_REQ_KWH;
       accepted = true;
     } else {
       this->log_rejected_opdata_("energy_used", decoded_opdata.energy_used_kwh, frame);
@@ -1543,6 +1604,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.indoor_unit_thi_r1_c, -50.0f, 130.0f)) {
       opdata.has_indoor_unit_thi_r1 = true;
       opdata.indoor_unit_thi_r1_c = decoded_opdata.indoor_unit_thi_r1_c;
+      freshness_mask |= MHI_OPDATA_REQ_THI_R1;
       accepted = true;
     } else {
       this->log_rejected_opdata_("indoor_unit_thi_r1", decoded_opdata.indoor_unit_thi_r1_c, frame);
@@ -1553,6 +1615,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.indoor_unit_thi_r2_c, -50.0f, 130.0f)) {
       opdata.has_indoor_unit_thi_r2 = true;
       opdata.indoor_unit_thi_r2_c = decoded_opdata.indoor_unit_thi_r2_c;
+      freshness_mask |= MHI_OPDATA_REQ_THI_R2;
       accepted = true;
     } else {
       this->log_rejected_opdata_("indoor_unit_thi_r2", decoded_opdata.indoor_unit_thi_r2_c, frame);
@@ -1563,6 +1626,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.indoor_unit_thi_r3_c, -50.0f, 130.0f)) {
       opdata.has_indoor_unit_thi_r3 = true;
       opdata.indoor_unit_thi_r3_c = decoded_opdata.indoor_unit_thi_r3_c;
+      freshness_mask |= MHI_OPDATA_REQ_THI_R3;
       accepted = true;
     } else {
       this->log_rejected_opdata_("indoor_unit_thi_r3", decoded_opdata.indoor_unit_thi_r3_c, frame);
@@ -1573,6 +1637,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.outdoor_unit_tho_r1_c, -50.0f, 130.0f)) {
       opdata.has_outdoor_unit_tho_r1 = true;
       opdata.outdoor_unit_tho_r1_c = decoded_opdata.outdoor_unit_tho_r1_c;
+      freshness_mask |= MHI_OPDATA_REQ_THO_R1;
       accepted = true;
     } else {
       this->log_rejected_opdata_("outdoor_unit_tho_r1", decoded_opdata.outdoor_unit_tho_r1_c, frame);
@@ -1582,6 +1647,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
   if (decoded_opdata.has_outdoor_unit_expansion_valve) {
     opdata.has_outdoor_unit_expansion_valve = true;
     opdata.outdoor_unit_expansion_valve_pulses = decoded_opdata.outdoor_unit_expansion_valve_pulses;
+    freshness_mask |= MHI_OPDATA_REQ_OU_EEV1;
     accepted = true;
   }
 
@@ -1589,6 +1655,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.outdoor_unit_discharge_pipe_c, 0.0f, 140.0f)) {
       opdata.has_outdoor_unit_discharge_pipe = true;
       opdata.outdoor_unit_discharge_pipe_c = decoded_opdata.outdoor_unit_discharge_pipe_c;
+      freshness_mask |= MHI_OPDATA_REQ_TD;
       accepted = true;
     } else {
       this->log_rejected_opdata_("outdoor_unit_discharge_pipe", decoded_opdata.outdoor_unit_discharge_pipe_c, frame);
@@ -1599,6 +1666,7 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     if (in_range(decoded_opdata.outdoor_unit_discharge_pipe_super_heat_c, 0.0f, 120.0f)) {
       opdata.has_outdoor_unit_discharge_pipe_super_heat = true;
       opdata.outdoor_unit_discharge_pipe_super_heat_c = decoded_opdata.outdoor_unit_discharge_pipe_super_heat_c;
+      freshness_mask |= MHI_OPDATA_REQ_TDSH;
       accepted = true;
     } else {
       this->log_rejected_opdata_("outdoor_unit_discharge_pipe_super_heat",
@@ -1609,15 +1677,18 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
   if (decoded_opdata.has_protection_state_number) {
     opdata.has_protection_state_number = true;
     opdata.protection_state_number = decoded_opdata.protection_state_number;
+    freshness_mask |= MHI_OPDATA_REQ_PROTECTION_NO;
     accepted = true;
   }
 
   if (decoded_opdata.has_defrost) {
     opdata.has_defrost = true;
     opdata.defrost = decoded_opdata.defrost;
+    freshness_mask |= MHI_OPDATA_REQ_DEFROST;
     accepted = true;
   }
 
+  this->opdata_freshness_.observe(freshness_mask, now_ms);
   return accepted;
 }
 
