@@ -85,9 +85,9 @@ bool MhiSplitTransport::queue_tx(const MhiTxEnvelope& envelope) {
       completion.success = false;
       completion.completed_at_ms = millis();
 
-      portENTER_CRITICAL(&tx_mux_);
+      this->lock_tx_();
       const bool stored = tx_completions_.push(completion);
-      portEXIT_CRITICAL(&tx_mux_);
+      this->unlock_tx_();
       if (!stored) {
         tx_failures_.fetch_add(1U, std::memory_order_relaxed);
       }
@@ -100,16 +100,16 @@ bool MhiSplitTransport::queue_tx(const MhiTxEnvelope& envelope) {
 }
 
 bool MhiSplitTransport::take_tx_completion(MhiTxCompletion& completion) {
-  portENTER_CRITICAL(&tx_mux_);
+  this->lock_tx_();
   const bool available = tx_completions_.pop(completion);
-  portEXIT_CRITICAL(&tx_mux_);
+  this->unlock_tx_();
   return available;
 }
 
 bool MhiSplitTransport::has_pending_tx() const {
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->lock_tx_();
   const bool pending = pending_tx_ || tx_in_progress_;
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->unlock_tx_();
   return pending;
 }
 
@@ -128,32 +128,32 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
   MhiTxEnvelope envelope{};
   uint32_t send_generation = 0U;
 
-  portENTER_CRITICAL(&tx_mux_);
+  this->lock_tx_();
   if (!this->pending_tx_available_() || tx_in_progress_) {
-    portEXIT_CRITICAL(&tx_mux_);
+    this->unlock_tx_();
     return false;
   }
   if (tx_backoff_until_ms_ != 0U && static_cast<int32_t>(now_ms - tx_backoff_until_ms_) < 0) {
-    portEXIT_CRITICAL(&tx_mux_);
+    this->unlock_tx_();
     return false;
   }
   if (marker.sequence == last_consumed_bus_marker_sequence_ ||
       marker.sequence == pending_tx_queued_after_marker_sequence_) {
-    portEXIT_CRITICAL(&tx_mux_);
+    this->unlock_tx_();
     return false;
   }
   if (marker_age_us > tx_marker_arm_max_age_us_) {
     if (marker.sequence != last_stale_bus_marker_sequence_) {
       last_stale_bus_marker_sequence_ = marker.sequence;
       const std::size_t pending_len = pending_tx_envelope_.len;
-      (void)pending_len;
-      portEXIT_CRITICAL(&tx_mux_);
+      (void) pending_len;
+      this->unlock_tx_();
       ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
                 static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
                 static_cast<unsigned long>(tx_marker_arm_max_age_us_), static_cast<unsigned int>(pending_len));
       return false;
     }
-    portEXIT_CRITICAL(&tx_mux_);
+    this->unlock_tx_();
     return false;
   }
 
@@ -161,7 +161,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
   envelope = pending_tx_envelope_;
   send_generation = pending_tx_generation_;
   tx_in_progress_ = true;
-  portEXIT_CRITICAL(&tx_mux_);
+  this->unlock_tx_();
 
   const bool ok = tx_->send(envelope.frame.data(), envelope.len);
   if (ok) {
@@ -180,7 +180,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
     completion.completed_at_ms = millis();
   }
 
-  portENTER_CRITICAL(&tx_mux_);
+  this->lock_tx_();
   tx_in_progress_ = false;
   bool completion_stored = true;
   if (envelope.is_command()) {
@@ -191,7 +191,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
       this->clear_pending_tx_();
     }
     tx_backoff_until_ms_ = 0U;
-    portEXIT_CRITICAL(&tx_mux_);
+    this->unlock_tx_();
     if (!completion_stored) {
       tx_failures_.fetch_add(1U, std::memory_order_relaxed);
     }
@@ -201,7 +201,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
   if (pending_tx_generation_ == send_generation) {
     tx_backoff_until_ms_ = millis() + tx_failure_backoff_ms_;
   }
-  portEXIT_CRITICAL(&tx_mux_);
+  this->unlock_tx_();
   if (!completion_stored) {
     tx_failures_.fetch_add(1U, std::memory_order_relaxed);
   }
@@ -238,53 +238,71 @@ MhiTransportCapabilities MhiSplitTransport::capabilities() const {
   capabilities.integrated_duplex = false;
   capabilities.uses_bus_marker = uses_bus_marker_;
   capabilities.supports_classified_worker = supports_classified_worker_;
-  capabilities.supports_rx_byte_critical_sections = rx_ != nullptr && rx_->supports_byte_critical_sections();
+  capabilities.supports_rx_byte_critical_sections =
+      rx_ != nullptr && rx_->supports_byte_critical_sections();
   return capabilities;
 }
 
 std::size_t MhiSplitTransport::tx_completion_queue_depth() const {
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->lock_tx_();
   const std::size_t value = tx_completions_.size();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->unlock_tx_();
   return value;
 }
 
 std::size_t MhiSplitTransport::tx_completion_queue_high_water() const {
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->lock_tx_();
   const std::size_t value = tx_completions_.high_water_mark();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->unlock_tx_();
   return value;
 }
 
 uint32_t MhiSplitTransport::tx_completion_queue_dropped() const {
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->lock_tx_();
   const uint32_t value = tx_completions_.dropped();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  this->unlock_tx_();
   return value;
 }
 
-void MhiSplitTransport::reset_tx_state_() {
+
+void MhiSplitTransport::lock_tx_() const {
+#ifdef USE_ESP_IDF
   portENTER_CRITICAL(&tx_mux_);
+#else
+  tx_mux_.lock();
+#endif
+}
+
+void MhiSplitTransport::unlock_tx_() const {
+#ifdef USE_ESP_IDF
+  portEXIT_CRITICAL(&tx_mux_);
+#else
+  tx_mux_.unlock();
+#endif
+}
+
+void MhiSplitTransport::reset_tx_state_() {
+  this->lock_tx_();
   pending_tx_ = false;
   pending_tx_envelope_ = {};
   tx_completions_.reset();
   tx_in_progress_ = false;
   pending_tx_generation_ = 0U;
   pending_tx_queued_after_marker_sequence_ = 0U;
-  portEXIT_CRITICAL(&tx_mux_);
+  this->unlock_tx_();
   last_consumed_bus_marker_sequence_ = 0U;
   last_stale_bus_marker_sequence_ = 0U;
   tx_backoff_until_ms_ = 0U;
 }
 
 void MhiSplitTransport::queue_pending_tx_(const MhiTxEnvelope& envelope) {
-  portENTER_CRITICAL(&tx_mux_);
+  this->lock_tx_();
   pending_tx_envelope_ = envelope;
   pending_tx_ = pending_tx_envelope_.valid();
   pending_tx_generation_++;
   const MhiBusMarker marker = rx_ == nullptr ? MhiBusMarker{} : rx_->bus_marker();
   pending_tx_queued_after_marker_sequence_ = marker.valid ? marker.sequence : 0U;
-  portEXIT_CRITICAL(&tx_mux_);
+  this->unlock_tx_();
 }
 
 bool MhiSplitTransport::pending_tx_available_() const {

@@ -1,7 +1,11 @@
 #pragma once
 
+#ifdef USE_ESP_IDF
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
+#else
+#include <mutex>
+#endif
 
 #include <atomic>
 #include <cstddef>
@@ -70,6 +74,9 @@ class MhiSplitTransport final : public IMhiTransport {
     return static_cast<uint32_t>(now_us - then_us);
   }
 
+  void lock_tx_() const;
+  void unlock_tx_() const;
+
   void reset_tx_state_();
   void queue_pending_tx_(const MhiTxEnvelope& envelope);
   bool pending_tx_available_() const;
@@ -85,7 +92,11 @@ class MhiSplitTransport final : public IMhiTransport {
   bool tx_ready_{false};
   bool auto_tx_flush_{true};
 
+#ifdef USE_ESP_IDF
   mutable portMUX_TYPE tx_mux_ = portMUX_INITIALIZER_UNLOCKED;
+#else
+  mutable std::mutex tx_mux_{};
+#endif
   MhiTxEnvelope pending_tx_envelope_{};
   MhiTxCompletionQueue<8U> tx_completions_{};
   bool pending_tx_{false};
