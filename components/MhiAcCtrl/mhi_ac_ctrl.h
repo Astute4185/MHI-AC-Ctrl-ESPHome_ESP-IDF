@@ -28,6 +28,7 @@
 #include "mhi_publish_bridge.h"
 #include "mhi_state.h"
 #include "mhi_status_decoder.h"
+#include "mhi_transport_diagnostics_publisher.h"
 #include "mhi_transport_manager.h"
 #include "mhi_tx_builder.h"
 #include "mhi_worker_decoded_store.h"
@@ -314,6 +315,30 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->refresh_publish_targets_();
   }
 
+  void set_transport_healthy_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->transport_diagnostics_publisher_.set_healthy_binary_sensor(sensor);
+  }
+
+  void set_transport_recovery_active_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->transport_diagnostics_publisher_.set_recovery_active_binary_sensor(sensor);
+  }
+
+  void set_transport_safe_mode_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->transport_diagnostics_publisher_.set_safe_mode_binary_sensor(sensor);
+  }
+
+  void set_active_transport_text_sensor(text_sensor::TextSensor* sensor) {
+    this->transport_diagnostics_publisher_.set_active_transport_text_sensor(sensor);
+  }
+
+  void set_transport_state_text_sensor(text_sensor::TextSensor* sensor) {
+    this->transport_diagnostics_publisher_.set_state_text_sensor(sensor);
+  }
+
+  void set_last_transport_error_text_sensor(text_sensor::TextSensor* sensor) {
+    this->transport_diagnostics_publisher_.set_last_error_text_sensor(sensor);
+  }
+
   void set_vertical_vanes_select(select::Select* select) {
     this->publish_targets_.vertical_vanes_select = select;
     this->refresh_publish_targets_();
@@ -357,6 +382,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void on_transport_recovery_ready() override;
   void on_transport_safe_mode(const MhiTransportErrorDetail& reason) override;
   void reset_runtime_for_transport_switch_();
+  void publish_transport_diagnostics_(bool force = false);
 
   void refresh_publish_targets_();
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
@@ -439,6 +465,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   portMUX_TYPE worker_decoded_store_mux_ = portMUX_INITIALIZER_UNLOCKED;
   MhiTransportManager transport_{};
   MhiDiagnostics diagnostics_{};
+  MhiTransportDiagnosticsPublisher transport_diagnostics_publisher_{};
 
   MhiPublishTargets publish_targets_{};
   MhiPublishBridge publish_bridge_{};

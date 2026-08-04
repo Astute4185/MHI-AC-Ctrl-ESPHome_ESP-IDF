@@ -74,6 +74,7 @@ class MhiTransportManager {
     return safe_mode_;
   }
   MhiTransportState state() const;
+  MhiTransportDiagnosticsSnapshot diagnostics_snapshot(uint32_t now_ms) const;
 
   bool rx_ready() const {
     return active_ != nullptr && active_->rx_ready();
@@ -106,6 +107,7 @@ class MhiTransportManager {
   void reset_runtime_health_window_(uint32_t now_ms);
   void evaluate_runtime_health_(uint32_t now_ms);
   void mark_runtime_healthy_();
+  void set_state_(MhiTransportState state, uint32_t now_ms);
   static uint32_t elapsed_ms_(uint32_t now_ms, uint32_t then_ms) {
     return static_cast<uint32_t>(now_ms - then_ms);
   }
@@ -135,6 +137,14 @@ class MhiTransportManager {
   bool traffic_observed_{false};
   bool active_health_confirmed_{false};
   bool recovery_ready_notified_{false};
+
+  uint32_t state_since_ms_{0U};
+  uint32_t last_transition_ms_{0U};
+  uint32_t state_changes_{0U};
+  uint32_t recovery_attempts_{0U};
+  uint32_t recovery_activations_{0U};
+  uint32_t recovery_failures_{0U};
+  uint32_t safe_mode_entries_{0U};
 
   uint32_t last_transport_tx_completed_{0U};
   uint32_t last_transport_tx_failures_{0U};

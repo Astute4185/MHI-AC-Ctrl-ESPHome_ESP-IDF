@@ -15,6 +15,14 @@ void MhiTransportManager::set_primary(IMhiTransport* transport) {
   recovery_attempted_ = false;
   safe_mode_ = false;
   state_ = MhiTransportState::STOPPED;
+  const uint32_t now_ms = millis();
+  state_since_ms_ = now_ms;
+  last_transition_ms_ = 0U;
+  state_changes_ = 0U;
+  recovery_attempts_ = 0U;
+  recovery_activations_ = 0U;
+  recovery_failures_ = 0U;
+  safe_mode_entries_ = 0U;
   last_transport_error_ = {};
   primary_failure_ = {};
   recovery_failure_ = {};
@@ -32,7 +40,15 @@ bool MhiTransportManager::setup() {
   recovery_active_ = false;
   recovery_attempted_ = false;
   safe_mode_ = false;
-  state_ = MhiTransportState::STARTING;
+  state_changes_ = 0U;
+  recovery_attempts_ = 0U;
+  recovery_activations_ = 0U;
+  recovery_failures_ = 0U;
+  safe_mode_entries_ = 0U;
+  state_ = MhiTransportState::STOPPED;
+  state_since_ms_ = millis();
+  last_transition_ms_ = 0U;
+  this->set_state_(MhiTransportState::STARTING, millis());
   last_transport_error_ = {};
   primary_failure_ = {};
   recovery_failure_ = {};
@@ -63,7 +79,7 @@ bool MhiTransportManager::setup() {
     last_transport_error_ = setup_result.error;
     ready = this->activate_recovery_(setup_result);
   } else {
-    state_ = MhiTransportState::WAITING_FOR_TRAFFIC;
+    this->set_state_(MhiTransportState::WAITING_FOR_TRAFFIC, millis());
     this->reset_runtime_health_window_(millis());
   }
 
@@ -88,6 +104,7 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
     return this->enter_safe_mode_(primary_result.error);
   }
   recovery_attempted_ = true;
+  recovery_attempts_++;
 
   if (transition_listener_ != nullptr) {
     transition_listener_->on_transport_switch_begin(primary_result.error);
@@ -124,6 +141,7 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
 
   if (!recovery_result.ok) {
     recovery_failure_ = recovery_result.error;
+    recovery_failures_++;
     last_transport_error_ = recovery_result.error;
     recovery_->shutdown();
     ESP_LOGE(TAG, "Internal recovery transport %s failed: error=%s operation=%s native=%ld", recovery_->name(),
@@ -136,7 +154,7 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
   active_ = recovery_;
   recovery_active_ = true;
   safe_mode_ = false;
-  state_ = MhiTransportState::WAITING_FOR_TRAFFIC;
+  this->set_state_(MhiTransportState::WAITING_FOR_TRAFFIC, millis());
   this->reset_runtime_health_window_(millis());
   this->reset_transport_diagnostic_cursors_();
 
@@ -145,6 +163,10 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
 }
 
 bool MhiTransportManager::enter_safe_mode_(const MhiTransportErrorDetail& reason) {
+  if (safe_mode_) {
+    return false;
+  }
+
   if (active_ != nullptr) {
     active_->shutdown();
   }
@@ -152,7 +174,8 @@ bool MhiTransportManager::enter_safe_mode_(const MhiTransportErrorDetail& reason
   active_ = nullptr;
   recovery_active_ = false;
   safe_mode_ = true;
-  state_ = MhiTransportState::SAFE_MODE;
+  safe_mode_entries_++;
+  this->set_state_(MhiTransportState::SAFE_MODE, millis());
   last_transport_error_ = reason;
   this->reset_transport_diagnostic_cursors_();
 
@@ -185,7 +208,7 @@ void MhiTransportManager::shutdown() {
     active_->shutdown();
   }
   active_ = nullptr;
-  state_ = MhiTransportState::STOPPED;
+  this->set_state_(MhiTransportState::STOPPED, millis());
 }
 
 std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
@@ -301,12 +324,50 @@ MhiTransportState MhiTransportManager::state() const {
   return state_;
 }
 
+MhiTransportDiagnosticsSnapshot MhiTransportManager::diagnostics_snapshot(uint32_t now_ms) const {
+  MhiTransportDiagnosticsSnapshot snapshot{};
+  snapshot.state = state_;
+  snapshot.active_transport_name = active_ == nullptr ? "none" : active_->name();
+  snapshot.primary_transport_name = this->primary_name();
+  snapshot.recovery_transport_name = this->recovery_name();
+  snapshot.last_error = last_transport_error_;
+  snapshot.primary_failure = primary_failure_;
+  snapshot.recovery_failure = recovery_failure_;
+  snapshot.state_since_ms = state_since_ms_;
+  snapshot.last_transition_ms = last_transition_ms_;
+  snapshot.last_valid_frame_age_ms =
+      protocol_health_.last_valid_frame_ms == 0U || now_ms < protocol_health_.last_valid_frame_ms
+          ? 0U
+          : this->elapsed_ms_(now_ms, protocol_health_.last_valid_frame_ms);
+  snapshot.state_changes = state_changes_;
+  snapshot.recovery_attempts = recovery_attempts_;
+  snapshot.recovery_activations = recovery_activations_;
+  snapshot.recovery_failures = recovery_failures_;
+  snapshot.safe_mode_entries = safe_mode_entries_;
+  snapshot.transport_healthy = state_ == MhiTransportState::HEALTHY || state_ == MhiTransportState::RECOVERY_ACTIVE;
+  snapshot.recovery_active = recovery_active_;
+  snapshot.safe_mode = safe_mode_;
+  return snapshot;
+}
+
+void MhiTransportManager::set_state_(MhiTransportState state, uint32_t now_ms) {
+  if (state_ == state) {
+    return;
+  }
+
+  state_ = state;
+  state_since_ms_ = now_ms;
+  last_transition_ms_ = now_ms;
+  state_changes_++;
+}
+
 bool MhiTransportManager::handle_runtime_failure_(const MhiTransportErrorDetail& reason) {
   last_transport_error_ = reason;
-  state_ = MhiTransportState::FAILED;
+  this->set_state_(MhiTransportState::FAILED, millis());
 
   if (recovery_active_) {
     recovery_failure_ = reason;
+    recovery_failures_++;
     ESP_LOGE(TAG, "Internal recovery transport %s failed at runtime: error=%s operation=%s",
              active_ == nullptr ? "none" : active_->name(), mhi_transport_error_name(reason.code),
              reason.operation == nullptr ? "none" : reason.operation);
@@ -329,9 +390,10 @@ void MhiTransportManager::reset_runtime_health_window_(uint32_t now_ms) {
 
 void MhiTransportManager::mark_runtime_healthy_() {
   active_health_confirmed_ = true;
-  state_ = recovery_active_ ? MhiTransportState::RECOVERY_ACTIVE : MhiTransportState::HEALTHY;
+  this->set_state_(recovery_active_ ? MhiTransportState::RECOVERY_ACTIVE : MhiTransportState::HEALTHY, millis());
 
   if (recovery_active_ && !recovery_ready_notified_) {
+    recovery_activations_++;
     recovery_ready_notified_ = true;
     if (transition_listener_ != nullptr) {
       transition_listener_->on_transport_recovery_ready();
@@ -389,7 +451,7 @@ void MhiTransportManager::evaluate_runtime_health_(uint32_t now_ms) {
     return;
   }
 
-  state_ = MhiTransportState::WAITING_FOR_TRAFFIC;
+  this->set_state_(MhiTransportState::WAITING_FOR_TRAFFIC, now_ms);
   const uint32_t startup_age_ms = this->elapsed_ms_(now_ms, active_started_ms_);
   if (startup_age_ms < health_policy_.startup_grace_ms) {
     return;
@@ -406,7 +468,7 @@ void MhiTransportManager::evaluate_runtime_health_(uint32_t now_ms) {
     return;
   }
 
-  state_ = MhiTransportState::DEGRADED;
+  this->set_state_(MhiTransportState::DEGRADED, now_ms);
   if (health_policy_.invalid_traffic_timeout_ms > 0U &&
       this->elapsed_ms_(now_ms, first_traffic_seen_ms_) >= health_policy_.invalid_traffic_timeout_ms) {
     const MhiTransportErrorDetail error =

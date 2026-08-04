@@ -24,10 +24,25 @@ class MhiBinarySensors : public Component, public Parented<MhiAcCtrl> {
     this->vanes_3d_auto_enabled_sensor_ = sensor;
   }
 
+  void set_transport_healthy(binary_sensor::BinarySensor* sensor) {
+    this->transport_healthy_sensor_ = sensor;
+  }
+
+  void set_transport_recovery_active(binary_sensor::BinarySensor* sensor) {
+    this->transport_recovery_active_sensor_ = sensor;
+  }
+
+  void set_transport_safe_mode(binary_sensor::BinarySensor* sensor) {
+    this->transport_safe_mode_sensor_ = sensor;
+  }
+
  protected:
   binary_sensor::BinarySensor* power_sensor_{nullptr};
   binary_sensor::BinarySensor* defrost_sensor_{nullptr};
   binary_sensor::BinarySensor* vanes_3d_auto_enabled_sensor_{nullptr};
+  binary_sensor::BinarySensor* transport_healthy_sensor_{nullptr};
+  binary_sensor::BinarySensor* transport_recovery_active_sensor_{nullptr};
+  binary_sensor::BinarySensor* transport_safe_mode_sensor_{nullptr};
 };
 
 }  // namespace mhi_ac_ctrl
