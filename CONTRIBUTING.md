@@ -131,3 +131,22 @@ A pull request should:
 - avoid committing `.esphome`, `.test-build`, logs, secrets, or generated build output.
 
 Prefer a small sequence of reviewable pull requests over one change that combines protocol behaviour, transport timing, broad refactoring, and documentation cleanup.
+
+## Consolidated release gate
+
+For transport or cross-cutting runtime changes, use the consolidated gate:
+
+```bash
+./scripts/release-gate.sh validate
+```
+
+Before a release or integration into `master`, run the full compile gate:
+
+```bash
+rm -rf tests/components/MhiAcCtrl/.esphome
+./scripts/release-gate.sh compile
+```
+
+The host-test script uses an explicit source manifest and fails early when a listed file was deleted or a new `test_*.cpp` file was not added. This prevents stale test-runner and linker failures after cleanup phases.
+
+See [`TRANSPORT_REFACTOR_VALIDATION.md`](TRANSPORT_REFACTOR_VALIDATION.md) for the final software and hardware evidence checklist.
