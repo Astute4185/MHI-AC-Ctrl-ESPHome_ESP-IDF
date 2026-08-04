@@ -385,6 +385,7 @@ void MhiAcCtrl::setup() {
   this->opdata_freshness_.set_timeout_ms(this->opdata_freshness_timeout_ms_);
   this->opdata_freshness_.begin(millis());
   this->last_opdata_freshness_publish_ms_ = 0U;
+  this->power_estimator_.begin();
 
   this->rx_runtime_.configure(&this->diagnostics_.stats(), this->frame_size_ == 33);
 
@@ -488,6 +489,7 @@ void MhiAcCtrl::reset_runtime_for_transport_switch_() {
   this->reset_command_runtime_();
   this->rx_runtime_.reset();
   this->opdata_freshness_.reset_observations(millis());
+  this->power_estimator_.reset_sample_window();
   this->service_opdata_freshness_(true);
 }
 
@@ -655,6 +657,19 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
   ESP_LOGCONFIG(TAG, "  Opdata freshness timeout: %lums",
                 static_cast<unsigned long>(this->opdata_freshness_timeout_ms_));
+  const MhiPowerEstimateSnapshot power_estimate = this->power_estimator_.snapshot();
+  ESP_LOGCONFIG(TAG, "  Power estimation: %s", power_estimate.enabled ? "ENABLED" : "DISABLED");
+  if (power_estimate.enabled) {
+    ESP_LOGCONFIG(TAG,
+                  "    Voltage=%.1fV power_factor=%.3f standby=%.1fW max_sample_interval=%lums "
+                  "samples=%lu integrated=%lu skipped=%lu",
+                  this->power_estimator_.nominal_voltage_v(), this->power_estimator_.power_factor(),
+                  this->power_estimator_.standby_power_w(),
+                  static_cast<unsigned long>(this->power_estimator_.max_sample_interval_ms()),
+                  static_cast<unsigned long>(power_estimate.sample_count),
+                  static_cast<unsigned long>(power_estimate.integrated_intervals),
+                  static_cast<unsigned long>(power_estimate.skipped_intervals));
+  }
   ESP_LOGCONFIG(TAG,
                 "  Opdata freshness: fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx "
                 "oldest_age_ms=%lu timeout_events=%lu",
@@ -1548,6 +1563,15 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
       opdata.current_a = decoded_opdata.current_a;
       freshness_mask |= MHI_OPDATA_REQ_CT;
       accepted = true;
+
+      const auto& status = this->state_.status();
+      if (this->power_estimator_.observe_current(decoded_opdata.current_a, status.valid, status.power, now_ms)) {
+        const MhiPowerEstimateSnapshot estimate = this->power_estimator_.snapshot();
+        opdata.has_estimated_power = estimate.power_valid;
+        opdata.estimated_power_w = estimate.power_w;
+        opdata.has_estimated_energy = estimate.energy_valid;
+        opdata.estimated_energy_kwh = static_cast<float>(std::round(estimate.energy_kwh * 1000.0) / 1000.0);
+      }
     } else {
       this->log_rejected_opdata_("current", decoded_opdata.current_a, frame);
     }

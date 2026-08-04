@@ -59,6 +59,14 @@ void MhiSensors::setup() {
     this->parent_->set_energy_used_sensor(this->energy_used_sensor_);
   }
 
+  if (this->estimated_power_sensor_ != nullptr) {
+    this->parent_->set_estimated_power_sensor(this->estimated_power_sensor_);
+  }
+
+  if (this->estimated_energy_sensor_ != nullptr) {
+    this->parent_->set_estimated_energy_sensor(this->estimated_energy_sensor_);
+  }
+
   if (this->indoor_unit_thi_r1_sensor_ != nullptr) {
     this->parent_->set_indoor_unit_thi_r1_sensor(this->indoor_unit_thi_r1_sensor_);
   }
@@ -120,6 +128,8 @@ void MhiSensors::dump_config() {
   ESP_LOGCONFIG(TAG, "  Compressor total run time: %s",
                 this->compressor_total_run_time_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Energy used: %s", this->energy_used_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Estimated power: %s", this->estimated_power_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Estimated energy: %s", this->estimated_energy_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Indoor unit THI R1: %s", this->indoor_unit_thi_r1_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Indoor unit THI R2: %s", this->indoor_unit_thi_r2_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Indoor unit THI R3: %s", this->indoor_unit_thi_r3_sensor_ != nullptr ? "YES" : "NO");

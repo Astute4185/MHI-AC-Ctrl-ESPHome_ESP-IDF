@@ -27,6 +27,11 @@ MhiAcCtrl:
   command_worker: true
   command_worker_start_delay_ms: 0
   opdata_freshness_timeout: 120s
+  power_estimation:
+    nominal_voltage: 230.0
+    power_factor: 0.95
+    standby_power: 5.0
+    max_sample_interval: 5min
 
 climate:
   - platform: MhiAcCtrl
@@ -56,3 +61,7 @@ sensor:
       name: MHI Opdata Stale Count
     opdata_timeout_events:
       name: MHI Opdata Timeout Events
+    estimated_power:
+      name: MHI Estimated Power
+    estimated_energy:
+      name: MHI Estimated Energy

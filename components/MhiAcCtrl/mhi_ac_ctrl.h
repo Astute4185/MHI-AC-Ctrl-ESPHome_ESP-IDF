@@ -24,6 +24,7 @@
 #include "mhi_opdata_decoder.h"
 #include "mhi_opdata_freshness.h"
 #include "mhi_opdata_freshness_publisher.h"
+#include "mhi_power_estimator.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_rx_runtime.h"
 #include "mhi_state.h"
@@ -223,6 +224,23 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void set_energy_used_sensor(sensor::Sensor* sensor) {
     this->publish_targets_.energy_used_sensor = sensor;
     this->refresh_publish_targets_();
+  }
+
+  void set_estimated_power_sensor(sensor::Sensor* sensor) {
+    this->publish_targets_.estimated_power_sensor = sensor;
+    this->power_estimator_.set_enabled(true);
+    this->refresh_publish_targets_();
+  }
+
+  void set_estimated_energy_sensor(sensor::Sensor* sensor) {
+    this->publish_targets_.estimated_energy_sensor = sensor;
+    this->power_estimator_.set_enabled(true);
+    this->refresh_publish_targets_();
+  }
+
+  void configure_power_estimation(float nominal_voltage_v, float power_factor, float standby_power_w,
+                                  uint32_t max_sample_interval_ms) {
+    this->power_estimator_.configure(nominal_voltage_v, power_factor, standby_power_w, max_sample_interval_ms);
   }
 
   void set_indoor_unit_thi_r1_sensor(sensor::Sensor* sensor) {
@@ -451,6 +469,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   MhiTransportDiagnosticsPublisher transport_diagnostics_publisher_{};
   MhiOpDataFreshnessTracker opdata_freshness_{};
   MhiOpDataFreshnessPublisher opdata_freshness_publisher_{};
+  MhiPowerEstimator power_estimator_{};
 
   MhiPublishTargets publish_targets_{};
   MhiPublishBridge publish_bridge_{};

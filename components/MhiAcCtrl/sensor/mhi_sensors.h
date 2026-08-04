@@ -58,6 +58,14 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
     this->energy_used_sensor_ = sensor;
   }
 
+  void set_estimated_power(sensor::Sensor* sensor) {
+    this->estimated_power_sensor_ = sensor;
+  }
+
+  void set_estimated_energy(sensor::Sensor* sensor) {
+    this->estimated_energy_sensor_ = sensor;
+  }
+
   void set_indoor_unit_thi_r1(sensor::Sensor* sensor) {
     this->indoor_unit_thi_r1_sensor_ = sensor;
   }
@@ -114,6 +122,8 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
   sensor::Sensor* indoor_unit_total_run_time_sensor_{nullptr};
   sensor::Sensor* compressor_total_run_time_sensor_{nullptr};
   sensor::Sensor* energy_used_sensor_{nullptr};
+  sensor::Sensor* estimated_power_sensor_{nullptr};
+  sensor::Sensor* estimated_energy_sensor_{nullptr};
   sensor::Sensor* indoor_unit_thi_r1_sensor_{nullptr};
   sensor::Sensor* indoor_unit_thi_r2_sensor_{nullptr};
   sensor::Sensor* indoor_unit_thi_r3_sensor_{nullptr};

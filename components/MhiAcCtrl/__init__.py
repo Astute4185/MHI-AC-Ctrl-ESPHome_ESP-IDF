@@ -33,6 +33,11 @@ CONF_ROOM_TEMP_TIMEOUT = "room_temp_timeout"
 CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL = "room_temperature_publish_interval"
 CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA = "room_temperature_immediate_delta"
 CONF_OPDATA_FRESHNESS_TIMEOUT = "opdata_freshness_timeout"
+CONF_POWER_ESTIMATION = "power_estimation"
+CONF_NOMINAL_VOLTAGE = "nominal_voltage"
+CONF_POWER_FACTOR = "power_factor"
+CONF_STANDBY_POWER = "standby_power"
+CONF_MAX_SAMPLE_INTERVAL = "max_sample_interval"
 CONF_VANES_UD = "initial_vertical_vanes_position"
 CONF_VANES_LR = "initial_horizontal_vanes_position"
 CONF_SCK_PIN = "sck_pin"
@@ -96,6 +101,14 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL, default="15s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA, default=1.0): cv.float_range(min=0.0, max=10.0),
             cv.Optional(CONF_OPDATA_FRESHNESS_TIMEOUT, default="120s"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_POWER_ESTIMATION): cv.Schema(
+                {
+                    cv.Optional(CONF_NOMINAL_VOLTAGE, default=230.0): cv.float_range(min=1.0, max=500.0),
+                    cv.Optional(CONF_POWER_FACTOR, default=1.0): cv.float_range(min=0.1, max=1.0),
+                    cv.Optional(CONF_STANDBY_POWER, default=0.0): cv.float_range(min=0.0, max=500.0),
+                    cv.Optional(CONF_MAX_SAMPLE_INTERVAL, default="5min"): cv.positive_time_period_milliseconds,
+                }
+            ),
             cv.Optional(CONF_VANES_UD): cv.int_range(min=0, max=5),
             cv.Optional(CONF_VANES_LR): cv.int_range(min=0, max=8),
             cv.Optional(CONF_SCK_PIN): cv.int_,
@@ -138,6 +151,16 @@ async def to_code(config):
     cg.add(var.set_room_temperature_publish_interval_ms(config[CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL]))
     cg.add(var.set_room_temperature_immediate_delta(config[CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA]))
     cg.add(var.set_opdata_freshness_timeout_ms(config[CONF_OPDATA_FRESHNESS_TIMEOUT]))
+    if CONF_POWER_ESTIMATION in config:
+        estimation = config[CONF_POWER_ESTIMATION]
+        cg.add(
+            var.configure_power_estimation(
+                estimation[CONF_NOMINAL_VOLTAGE],
+                estimation[CONF_POWER_FACTOR],
+                estimation[CONF_STANDBY_POWER],
+                estimation[CONF_MAX_SAMPLE_INTERVAL],
+            )
+        )
     effective_tx_driver = resolve_tx_driver(config[CONF_RX_DRIVER], config.get(CONF_TX_DRIVER))
     transport_tuning = resolve_transport_tuning(config)
     transport_inputs = MhiTransportBuildInputs(

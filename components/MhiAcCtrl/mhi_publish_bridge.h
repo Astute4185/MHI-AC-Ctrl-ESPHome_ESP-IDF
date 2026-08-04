@@ -31,6 +31,8 @@ struct MhiPublishTargets {
   sensor::Sensor* indoor_unit_total_run_time_sensor{nullptr};
   sensor::Sensor* compressor_total_run_time_sensor{nullptr};
   sensor::Sensor* energy_used_sensor{nullptr};
+  sensor::Sensor* estimated_power_sensor{nullptr};
+  sensor::Sensor* estimated_energy_sensor{nullptr};
   sensor::Sensor* indoor_unit_thi_r1_sensor{nullptr};
   sensor::Sensor* indoor_unit_thi_r2_sensor{nullptr};
   sensor::Sensor* indoor_unit_thi_r3_sensor{nullptr};

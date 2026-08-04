@@ -46,6 +46,7 @@ fi
   tests/unit/test_status_decoder.cpp \
   tests/unit/test_opdata_decoder.cpp \
   tests/unit/test_opdata_freshness.cpp \
+  tests/unit/test_power_estimator.cpp \
   tests/unit/test_publish_bridge.cpp \
   tests/unit/test_tx_builder.cpp \
   tests/unit/test_tx_builder_3d_auto_command_bits.cpp \
@@ -63,6 +64,7 @@ fi
   components/MhiAcCtrl/mhi_opdata_decoder.cpp \
   components/MhiAcCtrl/mhi_opdata_freshness.cpp \
   components/MhiAcCtrl/mhi_opdata_freshness_publisher.cpp \
+  components/MhiAcCtrl/mhi_power_estimator.cpp \
   components/MhiAcCtrl/mhi_publish_bridge.cpp \
   components/MhiAcCtrl/mhi_rx_runtime.cpp \
   components/MhiAcCtrl/mhi_status_decoder.cpp \

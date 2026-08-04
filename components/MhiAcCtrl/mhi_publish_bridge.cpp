@@ -169,6 +169,18 @@ void MhiPublishBridge::publish_opdata(const MhiOpDataState& opdata) {
     targets_.energy_used_sensor->publish_state(opdata.energy_used_kwh);
   }
 
+  if (opdata.has_estimated_power && targets_.estimated_power_sensor != nullptr &&
+      (first_publish || !last_opdata_.has_estimated_power ||
+       float_changed(last_opdata_.estimated_power_w, opdata.estimated_power_w))) {
+    targets_.estimated_power_sensor->publish_state(opdata.estimated_power_w);
+  }
+
+  if (opdata.has_estimated_energy && targets_.estimated_energy_sensor != nullptr &&
+      (first_publish || !last_opdata_.has_estimated_energy ||
+       float_changed(last_opdata_.estimated_energy_kwh, opdata.estimated_energy_kwh))) {
+    targets_.estimated_energy_sensor->publish_state(opdata.estimated_energy_kwh);
+  }
+
   if (opdata.has_indoor_unit_thi_r1 && targets_.indoor_unit_thi_r1_sensor != nullptr &&
       (first_publish || !last_opdata_.has_indoor_unit_thi_r1 ||
        float_changed(last_opdata_.indoor_unit_thi_r1_c, opdata.indoor_unit_thi_r1_c))) {
