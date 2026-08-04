@@ -22,6 +22,8 @@
 #include "mhi_diag.h"
 #include "mhi_fan_profile.h"
 #include "mhi_opdata_decoder.h"
+#include "mhi_opdata_freshness.h"
+#include "mhi_opdata_freshness_publisher.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_rx_runtime.h"
 #include "mhi_state.h"
@@ -150,6 +152,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void add_opdata_mask(uint32_t mask) {
     this->opdata_mask_ |= mask;
     this->tx_config_.enabled_opdata_mask = this->opdata_mask_;
+    this->opdata_freshness_.set_enabled_mask(this->opdata_mask_);
   }
 
   void set_publish_targets(const MhiPublishTargets& targets) {
@@ -311,6 +314,27 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->transport_diagnostics_publisher_.set_last_error_text_sensor(sensor);
   }
 
+  void set_opdata_freshness_timeout_ms(uint32_t timeout_ms) {
+    this->opdata_freshness_timeout_ms_ = timeout_ms;
+    this->opdata_freshness_.set_timeout_ms(timeout_ms);
+  }
+
+  void set_opdata_fresh_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->opdata_freshness_publisher_.set_fresh_binary_sensor(sensor);
+  }
+
+  void set_opdata_oldest_age_sensor(sensor::Sensor* sensor) {
+    this->opdata_freshness_publisher_.set_oldest_age_sensor(sensor);
+  }
+
+  void set_opdata_stale_count_sensor(sensor::Sensor* sensor) {
+    this->opdata_freshness_publisher_.set_stale_count_sensor(sensor);
+  }
+
+  void set_opdata_timeout_events_sensor(sensor::Sensor* sensor) {
+    this->opdata_freshness_publisher_.set_timeout_events_sensor(sensor);
+  }
+
   void set_vertical_vanes_select(select::Select* select) {
     this->publish_targets_.vertical_vanes_select = select;
     this->refresh_publish_targets_();
@@ -358,6 +382,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void publish_active_mode_state_();
   bool transport_command_path_ready_() const;
   void publish_transport_diagnostics_(bool force = false);
+  void service_opdata_freshness_(bool force = false);
 
   void refresh_publish_targets_();
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
@@ -416,12 +441,16 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
 
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
+  uint32_t opdata_freshness_timeout_ms_{120000U};
+  uint32_t last_opdata_freshness_publish_ms_{0U};
 
   MhiStateStore state_{};
   MhiRxRuntime rx_runtime_{};
   MhiTransportManager transport_{};
   MhiDiagnostics diagnostics_{};
   MhiTransportDiagnosticsPublisher transport_diagnostics_publisher_{};
+  MhiOpDataFreshnessTracker opdata_freshness_{};
+  MhiOpDataFreshnessPublisher opdata_freshness_publisher_{};
 
   MhiPublishTargets publish_targets_{};
   MhiPublishBridge publish_bridge_{};

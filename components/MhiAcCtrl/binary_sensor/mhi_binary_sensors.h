@@ -36,6 +36,10 @@ class MhiBinarySensors : public Component, public Parented<MhiAcCtrl> {
     this->transport_safe_mode_sensor_ = sensor;
   }
 
+  void set_opdata_fresh(binary_sensor::BinarySensor* sensor) {
+    this->opdata_fresh_sensor_ = sensor;
+  }
+
  protected:
   binary_sensor::BinarySensor* power_sensor_{nullptr};
   binary_sensor::BinarySensor* defrost_sensor_{nullptr};
@@ -43,6 +47,7 @@ class MhiBinarySensors : public Component, public Parented<MhiAcCtrl> {
   binary_sensor::BinarySensor* transport_healthy_sensor_{nullptr};
   binary_sensor::BinarySensor* transport_recovery_active_sensor_{nullptr};
   binary_sensor::BinarySensor* transport_safe_mode_sensor_{nullptr};
+  binary_sensor::BinarySensor* opdata_fresh_sensor_{nullptr};
 };
 
 }  // namespace mhi_ac_ctrl

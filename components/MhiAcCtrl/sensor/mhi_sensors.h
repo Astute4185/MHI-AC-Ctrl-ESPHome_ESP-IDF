@@ -90,6 +90,18 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
     this->protection_state_number_sensor_ = sensor;
   }
 
+  void set_opdata_oldest_age(sensor::Sensor* sensor) {
+    this->opdata_oldest_age_sensor_ = sensor;
+  }
+
+  void set_opdata_stale_count(sensor::Sensor* sensor) {
+    this->opdata_stale_count_sensor_ = sensor;
+  }
+
+  void set_opdata_timeout_events(sensor::Sensor* sensor) {
+    this->opdata_timeout_events_sensor_ = sensor;
+  }
+
  protected:
   sensor::Sensor* room_temperature_sensor_{nullptr};
   sensor::Sensor* target_temperature_sensor_{nullptr};
@@ -110,6 +122,9 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
   sensor::Sensor* outdoor_unit_discharge_pipe_sensor_{nullptr};
   sensor::Sensor* outdoor_unit_discharge_pipe_super_heat_sensor_{nullptr};
   sensor::Sensor* protection_state_number_sensor_{nullptr};
+  sensor::Sensor* opdata_oldest_age_sensor_{nullptr};
+  sensor::Sensor* opdata_stale_count_sensor_{nullptr};
+  sensor::Sensor* opdata_timeout_events_sensor_{nullptr};
 };
 
 }  // namespace mhi_ac_ctrl

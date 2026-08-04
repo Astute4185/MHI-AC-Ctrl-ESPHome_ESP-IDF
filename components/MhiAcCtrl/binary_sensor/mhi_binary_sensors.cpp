@@ -38,6 +38,10 @@ void MhiBinarySensors::setup() {
   if (this->transport_safe_mode_sensor_ != nullptr) {
     this->parent_->set_transport_safe_mode_binary_sensor(this->transport_safe_mode_sensor_);
   }
+
+  if (this->opdata_fresh_sensor_ != nullptr) {
+    this->parent_->set_opdata_fresh_binary_sensor(this->opdata_fresh_sensor_);
+  }
 }
 
 void MhiBinarySensors::dump_config() {
@@ -49,6 +53,7 @@ void MhiBinarySensors::dump_config() {
   ESP_LOGCONFIG(TAG, "  Transport recovery active: %s",
                 this->transport_recovery_active_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Transport safe mode: %s", this->transport_safe_mode_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Opdata fresh: %s", this->opdata_fresh_sensor_ != nullptr ? "YES" : "NO");
 }
 
 }  // namespace mhi_ac_ctrl

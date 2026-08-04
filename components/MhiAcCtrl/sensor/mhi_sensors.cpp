@@ -91,6 +91,18 @@ void MhiSensors::setup() {
   if (this->protection_state_number_sensor_ != nullptr) {
     this->parent_->set_protection_state_number_sensor(this->protection_state_number_sensor_);
   }
+
+  if (this->opdata_oldest_age_sensor_ != nullptr) {
+    this->parent_->set_opdata_oldest_age_sensor(this->opdata_oldest_age_sensor_);
+  }
+
+  if (this->opdata_stale_count_sensor_ != nullptr) {
+    this->parent_->set_opdata_stale_count_sensor(this->opdata_stale_count_sensor_);
+  }
+
+  if (this->opdata_timeout_events_sensor_ != nullptr) {
+    this->parent_->set_opdata_timeout_events_sensor(this->opdata_timeout_events_sensor_);
+  }
 }
 
 void MhiSensors::dump_config() {
@@ -119,6 +131,9 @@ void MhiSensors::dump_config() {
   ESP_LOGCONFIG(TAG, "  Outdoor unit discharge pipe super heat: %s",
                 this->outdoor_unit_discharge_pipe_super_heat_sensor_ != nullptr ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Protection state number: %s", this->protection_state_number_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Opdata oldest age: %s", this->opdata_oldest_age_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Opdata stale count: %s", this->opdata_stale_count_sensor_ != nullptr ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Opdata timeout events: %s", this->opdata_timeout_events_sensor_ != nullptr ? "YES" : "NO");
 }
 
 }  // namespace mhi_ac_ctrl
