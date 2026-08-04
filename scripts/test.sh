@@ -37,6 +37,7 @@ fi
   tests/unit/test_duplex_tx_mailbox.cpp \
   tests/unit/test_rmt_cs_spi_mode.cpp \
   tests/unit/test_transport_wrappers.cpp \
+  tests/unit/test_rx_runtime.cpp \
   tests/unit/test_command_coordinator.cpp \
   tests/unit/test_command_coordinator_extended_supersession.cpp \
   tests/unit/test_worker_policy.cpp \
@@ -61,6 +62,7 @@ fi
   components/MhiAcCtrl/mhi_frame_classifier.cpp \
   components/MhiAcCtrl/mhi_opdata_decoder.cpp \
   components/MhiAcCtrl/mhi_publish_bridge.cpp \
+  components/MhiAcCtrl/mhi_rx_runtime.cpp \
   components/MhiAcCtrl/mhi_status_decoder.cpp \
   components/MhiAcCtrl/mhi_stats.cpp \
   components/MhiAcCtrl/mhi_split_transport.cpp \

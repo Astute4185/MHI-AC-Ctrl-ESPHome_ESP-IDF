@@ -11,6 +11,12 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
+class IMhiRxSource {
+ public:
+  virtual std::size_t read_rx(uint8_t* dst, std::size_t max_len) = 0;
+  virtual ~IMhiRxSource() = default;
+};
+
 struct MhiTransportCapabilities {
   bool integrated_duplex{false};
   bool uses_bus_marker{false};

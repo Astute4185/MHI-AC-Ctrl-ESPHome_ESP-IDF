@@ -1,7 +1,6 @@
 #pragma once
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/portmacro.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
@@ -22,16 +21,14 @@
 #include "mhi_defs.h"
 #include "mhi_diag.h"
 #include "mhi_fan_profile.h"
-#include "mhi_frame_catalog.h"
-#include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
 #include "mhi_publish_bridge.h"
+#include "mhi_rx_runtime.h"
 #include "mhi_state.h"
 #include "mhi_status_decoder.h"
 #include "mhi_transport_diagnostics_publisher.h"
 #include "mhi_transport_manager.h"
 #include "mhi_tx_builder.h"
-#include "mhi_worker_decoded_store.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
@@ -388,20 +385,9 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
   bool read_and_sync_rx_frame_();
   bool service_classified_rx_pipeline_();
-  bool ingest_rx_frame_(const MhiFrameBuffer& frame);
   bool decode_cataloged_frames_();
-  bool decode_cataloged_frames_to_worker_store_();
   bool decode_cataloged_frame_(const MhiCatalogedFrame& cataloged_frame);
-  bool decode_cataloged_frame_to_worker_store_(const MhiCatalogedFrame& cataloged_frame,
-                                               bool command_candidate = false);
   bool apply_worker_decoded_snapshots_();
-  bool take_latest_extended_status_(MhiCatalogedFrame& out);
-  bool take_latest_status_(MhiCatalogedFrame& out);
-  bool take_latest_command_candidate_(MhiCatalogedFrame& out);
-  void clear_command_candidate_();
-  bool take_next_opdata_(MhiCatalogedFrame& out);
-  bool take_latest_unknown_(MhiCatalogedFrame& out);
-  MhiCatalogStats catalog_stats_snapshot_();
   void start_command_worker_();
   void stop_command_worker_();
   static void command_worker_task_entry_(void* arg);
@@ -458,11 +444,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
 
   MhiStateStore state_{};
-  MhiFrameSync frame_sync_{};
-  MhiFrameCatalog frame_catalog_{};
-  portMUX_TYPE frame_catalog_mux_ = portMUX_INITIALIZER_UNLOCKED;
-  MhiWorkerDecodedStore worker_decoded_store_{};
-  portMUX_TYPE worker_decoded_store_mux_ = portMUX_INITIALIZER_UNLOCKED;
+  MhiRxRuntime rx_runtime_{};
   MhiTransportManager transport_{};
   MhiDiagnostics diagnostics_{};
   MhiTransportDiagnosticsPublisher transport_diagnostics_publisher_{};
@@ -487,7 +469,6 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   bool rx_byte_critical_sections_enabled_{true};
   std::atomic<bool> transport_commands_enabled_{true};
   bool publish_requested_{false};
-  uint32_t frame_catalog_sequence_{0U};
 
   bool command_worker_enabled_{false};
   bool command_worker_classified_rx_enabled_{false};
