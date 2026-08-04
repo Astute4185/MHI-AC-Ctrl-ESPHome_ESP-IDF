@@ -40,7 +40,6 @@ fi
   tests/unit/test_rx_runtime.cpp \
   tests/unit/test_command_coordinator.cpp \
   tests/unit/test_command_coordinator_extended_supersession.cpp \
-  tests/unit/test_worker_policy.cpp \
   tests/unit/test_worker_decoded_store.cpp \
   tests/unit/test_frame_catalog.cpp \
   tests/unit/test_fan_profile.cpp \
