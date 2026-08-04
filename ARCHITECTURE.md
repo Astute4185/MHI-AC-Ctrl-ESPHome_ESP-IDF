@@ -377,22 +377,29 @@ Retry exhaustion is recorded explicitly. A recovered timeout is still useful dia
 
 ## Transport architecture
 
-`MhiTransportManager` presents a common interface over split and integrated transports.
+ESPHome Python code generation selects and constructs the configured transport before C++ setup runs. `MhiAcCtrl` receives transport interface pointers and orchestrates the protocol, command, publication, and diagnostic runtimes without storing driver names, pins, or driver tuning.
+
+`MhiTransportManager` is a non-owning runtime coordinator over:
+
+- one codegen-owned primary `IMhiTransport`;
+- an internal FastGPIO recovery transport for hardware-assisted selections;
+- generic RX, TX completion, health, recovery, and safe-mode contracts.
 
 ### Split transports
 
-Split transports use one RX driver and `fast_gpio_tx` or diagnostic `none` TX.
+Split strategies compose an RX backend with `fast_gpio_tx` or diagnostic `none` TX behind `MhiSplitTransport`.
 
 ```text
-RX driver ──► validated RX path
-fast_gpio_tx ──► MISO command/background frames
+RX backend ─┐
+            ├─► MhiSplitTransport ─► IMhiTransport
+TX backend ─┘
 ```
 
 Active split RX drivers are:
 
 | Driver | Target position | RX model |
 |---|---|---|
-| `fast_gpio_rx` | Conservative default and fallback | Synchronous software sampling |
+| `fast_gpio_rx` | Conservative default and internal recovery | Synchronous software sampling |
 | `external_clock_rx` | Original ESP32 and ESP32-S3 | Interrupt/external-clock queue-backed sampling |
 | `rmt_spi_rx` | ESP32-S3 | RMT boundary detection plus DMA-backed SPI receive |
 
@@ -400,9 +407,7 @@ Active split RX drivers are:
 
 ### Integrated full-duplex transport
 
-`rmt_cs_spi` is an integrated FIFO-backed transport for the original ESP32 and ESP32-S3.
-
-It owns:
+`rmt_cs_spi` is adapted to the common interface through `MhiDuplexTransportAdapter`. The backend remains responsible for:
 
 - RMT inter-frame gap detection;
 - internally derived chip-select timing;
@@ -419,11 +424,11 @@ The original ESP32 applies a transport-local mode-3 receive-edge correction. ESP
 
 A separate `tx_driver` is not valid when `rmt_cs_spi` is selected.
 
-### Fallback behaviour
+### Compile-time selection and recovery
 
-Unsupported driver combinations or transport setup failures fall back to the split FastGPIO path where the target build supports it.
+The Python transport registry owns target validation, driver-specific schema, ESP-IDF dependencies, compile definitions, and object construction. Known-invalid target selections fail configuration instead of silently substituting another driver.
 
-Fallback is logged and reflected in runtime diagnostics so the configured and active drivers can be distinguished.
+Hardware-assisted primary selections compile an internal FastGPIO recovery path automatically. Runtime setup failure, no traffic, invalid traffic, or a sustained traffic stall can activate that recovery path. Recovery is latched until reboot. If both primary and recovery fail, the component enters stable transport safe mode with TX and commands disabled while diagnostics remain available.
 
 ## Command-worker modes
 
@@ -547,19 +552,23 @@ Changes to the component should preserve these rules:
 
 ## Adding or changing a transport
 
+Transport implementation files remain flat under `components/MhiAcCtrl/` because arbitrary internal source subfolders are not relied on for compilation discovery. A transport should provide a self-contained, consistently prefixed Python module and C++ implementation.
+
 A new transport should:
 
-- implement the RX, TX, or duplex interface matching its ownership model;
+- register its public driver name, nested schema, target support, dependencies, compile definition, builder, and recovery policy in its Python transport definition;
+- construct a complete `IMhiTransport` strategy or adapt an existing split/duplex backend;
+- own runtime pins, peripheral configuration, queues, buffers, and hardware-specific health;
 - return complete bounded chunks without exposing peripheral-owned buffers after return;
 - report real TX completion using `MhiTxCompletion`;
 - expose queue depth, overwrite, drop, and hardware error counters;
+- declare capabilities such as classified-worker safety and marker-owned TX;
 - avoid publishing ESPHome state;
-- declare whether classified worker RX is safe;
 - preserve the common command envelope and generation contract;
 - include target-specific compile coverage;
 - include hardware validation showing clean protocol and command-confirmation behaviour.
 
-A transport should not duplicate command building, retry logic, semantic confirmation, or entity publication.
+Adding a transport must not require concrete-driver changes in `MhiAcCtrl` or `MhiTransportManager`. A transport should not duplicate command building, retry logic, semantic confirmation, or entity publication.
 
 ## Validation model
 
@@ -607,3 +616,62 @@ Remaining work is primarily wider hardware validation, protocol discovery, docum
 - [`notes/FINDINGS_SPI_TRANSPORTS.md`](notes/FINDINGS_SPI_TRANSPORTS.md) — current SPI transport findings
 - [`notes/FINDINGS_FAN_PROFILES.md`](notes/FINDINGS_FAN_PROFILES.md) — fan-profile findings
 - [`notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md`](notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md) — historical worker and transport experiments
+
+## Runtime Active Mode
+
+Active Mode is a controller-level transmit gate implemented through the generic
+transport contract. Disabling it does not stop RX or transport health
+processing. The controller first blocks command generation and clears command
+coordinator state; the active transport then clears staged TX and completions.
+Re-enabling performs another command-state reset before transmission is allowed,
+which prevents stale command replay.
+
+The transport manager preserves the selected Active Mode state across primary
+to FastGPIO recovery transitions. Safe mode always forces Active Mode off.
+
+
+
+## Operation-data freshness
+
+`MhiOpDataFreshnessTracker` maintains one timestamp for each enabled opdata
+request bit. Accepted decoder results refresh only their corresponding request;
+other operation-data traffic cannot conceal a missing field. The tracker
+reports observed, pending, and stale masks, the age of the oldest enabled
+request, and a transition-based timeout counter.
+
+The controller resets the observation window when the active transport changes
+but retains the cumulative timeout counter. `MhiOpDataFreshnessPublisher` owns
+the optional diagnostic entities and suppresses unchanged publication. Existing
+opdata values remain available when stale; freshness is diagnostic metadata and
+does not alter the request scheduler, decoder, state store, or entity values.
+
+## Estimated power and energy
+
+`MhiPowerEstimator` is a derived-data service fed only by accepted CT/current
+opdata. It calculates instantaneous power from configurable nominal voltage and
+power factor. An optional standby floor is applied only when normal status has
+confirmed that the unit is powered off. No fixed standby assumption is embedded
+in the protocol decoder.
+
+Energy uses trapezoidal integration between consecutive current samples.
+Intervals beyond the configured maximum are skipped instead of integrating a
+stale value. Transport transitions reset only the sample window; the current
+boot-session energy total and diagnostic counters remain intact.
+
+Derived values are stored alongside opdata for publication, but remain distinct
+from native `energy_used`. Enabling an estimated power or energy entity adds the
+CT request bit to the opdata mask. The estimator is otherwise inactive and adds
+no protocol request.
+
+## Architecture enforcement
+
+The transport ownership boundaries are enforced by host-side repository tests in `tests/unit/test_transport_compile_selection.py` and `tests/unit/test_repository_hygiene.py`.
+
+The checks prevent:
+
+- concrete transport ownership returning to `MhiTransportManager`;
+- obsolete driver and pin setters returning to `MhiAcCtrl` codegen;
+- transport implementation files moving into unsupported arbitrary source subfolders;
+- stale deleted unit-test files remaining in the explicit host-test build manifest.
+
+Run `./scripts/release-gate.sh validate` after architectural cleanup and `./scripts/release-gate.sh compile` before release integration.

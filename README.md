@@ -12,7 +12,7 @@ This is not a clean-room protocol project. It builds on the original community M
 
 The primary runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. Core climate, fan, vane, 3D Auto, command-confirmation, worker, diagnostics, and transport work is implemented and hardware-tested on the available units.
 
-- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative default and fallback.
+- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative default and the internal recovery path for hardware-assisted transports.
 - `external_clock_rx` with `fast_gpio_tx` is a validated split path on the original ESP32.
 - `rmt_spi_rx` with `fast_gpio_tx` is a validated hardware-assisted split path on ESP32-S3 and completed an approximately 47.5-hour soak with clean RX protocol health.
 - `rmt_cs_spi` is the consolidated FIFO-backed full-duplex path for the original dual-core ESP32 and ESP32-S3. It owns RX and TX, derives an internal chip-select boundary from the SCK idle gap, and uses `SPI_DMA_DISABLED` because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
@@ -25,6 +25,25 @@ The primary runtime targets are the original **ESP32** and **ESP32-S3**, both us
 The remaining work is primarily wider hardware compatibility testing, ESP32-C3 runtime validation, model-specific protocol discovery, documentation, and normal maintenance. No further major backend rewrite is currently planned.
 
 Implemented functionality includes 20-byte and 33-byte frames, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, command confirmation, duplicate suppression, latest-intent command coalescing, common status sensors, opdata sensors, room-temperature publication control, external temperature input, and detailed runtime diagnostics.
+
+
+### Runtime Active Mode
+
+An optional Active Mode switch allows the component to remain connected as a
+receive-only observer without transmitting commands or background frames:
+
+```yaml
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    active_mode:
+      name: MHI Active Mode
+```
+
+Turning Active Mode off keeps RX, state publication, transport health, and
+diagnostics running. Pending commands and staged TX are cleared immediately.
+Turning it back on resumes transmission without replaying work queued before or
+while listen-only mode was active. Active Mode defaults to on after boot.
 
 ## Driver selection
 
@@ -93,7 +112,8 @@ MhiAcCtrl:
   miso_pin: 39
   rx_driver: rmt_spi_rx
   tx_driver: fast_gpio_tx
-  rmt_spi_frame_gap_us: 1000
+  rmt_spi_rx:
+    frame_gap_us: 1000
 ```
 
 See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
@@ -123,7 +143,7 @@ external_components:
 | [`examples/rmt_cs_spi.yaml`](examples/rmt_cs_spi.yaml) | Minimal hardware-assisted ESP32/ESP32-S3 configuration | Integrated `rmt_cs_spi` with `command_worker` |
 | [`examples/full.yaml`](examples/full.yaml) | Full entity and sensor configuration | Integrated `rmt_cs_spi` with `command_worker` |
 | [`examples/external_sensor.yaml`](examples/external_sensor.yaml) | Home Assistant room-temperature input | Integrated `rmt_cs_spi` with `command_worker` |
-| [`examples/simple-energy-measurement.yaml`](examples/simple-energy-measurement.yaml) | Derived power and daily energy | Integrated `rmt_cs_spi` with `command_worker` |
+| [`examples/simple-energy-measurement.yaml`](examples/simple-energy-measurement.yaml) | Estimated power and session energy | Integrated `rmt_cs_spi` with `command_worker` |
 | [`examples/UniversalAircoController.yaml`](examples/UniversalAircoController.yaml) | Universal Airco Controller v1.0 | Integrated `rmt_cs_spi` with board-specific pins |
 
 The example pin values are not universal. Confirm the board mapping before flashing. The Universal Airco Controller installation guide is in [`UniversalAircoController/README.md`](UniversalAircoController/README.md).
@@ -166,6 +186,10 @@ command_worker_core_id
 tx_background_interval_ms
 frame_start_idle_ms
 rmt_spi_frame_gap_us
+fast_gpio_rx
+external_clock_rx
+rmt_spi_rx
+rmt_cs_spi
 room_temp_timeout
 room_temperature_publish_interval
 room_temperature_immediate_delta
@@ -387,6 +411,10 @@ sensor:
       name: Compressor total run time
     energy_used:
       name: Energy used
+    estimated_power:
+      name: Estimated power
+    estimated_energy:
+      name: Estimated energy
     indoor_unit_thi_r1:
       name: Indoor unit THI R1
     indoor_unit_thi_r2:
@@ -406,6 +434,40 @@ sensor:
 ```
 
 Opdata sensors are validity-gated. If the air conditioner does not provide a field, the entity should remain unavailable instead of publishing a bogus zero.
+
+### Estimated power and energy
+
+Units that expose CT/current opdata but not native energy can publish optional derived values:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  power_estimation:
+    nominal_voltage: 230.0
+    power_factor: 0.95
+    standby_power: 0.0
+    max_sample_interval: 5min
+
+sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    estimated_power:
+      name: MHI Estimated Power
+    estimated_energy:
+      name: MHI Estimated Energy
+```
+
+`estimated_power` is calculated from decoded current, configured voltage, and
+power factor. `standby_power` is an optional floor used only when decoded status
+confirms that the AC is off. No standby consumption is assumed by default.
+
+`estimated_energy` integrates consecutive fresh current samples and skips
+intervals longer than `max_sample_interval`, preventing a stale current value
+from being integrated across an outage or transport change. It is a boot-session
+total and may reset after restart; Home Assistant can handle resets for
+`total_increasing` sensors. Native `energy_used` remains separate and should be
+preferred when the unit provides it. These values are estimates, not
+revenue-grade measurements.
 
 ## External room temperature
 
@@ -562,7 +624,7 @@ Run lint:
 
 - Keep sensor and opdata fields validity-gated.
 - Keep confirmed decoded state authoritative.
-- Keep `fast_gpio_rx` as the conservative default and fallback.
+- Keep `fast_gpio_rx` as the conservative default and internal recovery transport.
 - Treat `rx_driver` as the primary selector and auto-resolve TX for split drivers.
 - Preserve explicit `tx_driver` support for valid split configurations and RX-only diagnostics.
 - Give full-duplex transports exclusive ownership of RX and TX.
@@ -620,3 +682,48 @@ This project builds on prior MHI reverse-engineering and ESPHome integration wor
 ## License
 
 See `LICENSE`.
+
+### Operation-data freshness diagnostics
+
+Operation-data values are requested in a rotating cycle, so a previously valid
+sensor can remain unchanged even when its individual response has stopped. The
+component tracks the last accepted response for every enabled operation-data
+request and exposes optional diagnostic entities:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  opdata_freshness_timeout: 120s
+
+binary_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    opdata_fresh:
+      name: MHI Operation Data Fresh
+
+sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    opdata_oldest_age:
+      name: MHI Oldest Operation Data Age
+    opdata_stale_count:
+      name: MHI Stale Operation Data Requests
+    opdata_timeout_events:
+      name: MHI Operation Data Timeout Events
+```
+
+`opdata_fresh` becomes true only after every enabled request has produced an
+accepted response and none has exceeded the configured timeout. Timeout events
+count transitions into a stale state rather than every polling cycle. Existing
+operation-data values are retained; this phase adds observability without
+changing the current scheduler or publication behaviour.
+
+## Refactor validation
+
+The modular transport architecture, recovery path, Active Mode, operation-data freshness, and optional estimated-energy features have a consolidated software gate:
+
+```bash
+./scripts/release-gate.sh validate
+```
+
+Use `./scripts/release-gate.sh compile` for the representative ESP-IDF compile matrix and footprint report. Hardware validation remains a separate requirement for timing-sensitive transports. See [`TRANSPORT_REFACTOR_VALIDATION.md`](TRANSPORT_REFACTOR_VALIDATION.md).
