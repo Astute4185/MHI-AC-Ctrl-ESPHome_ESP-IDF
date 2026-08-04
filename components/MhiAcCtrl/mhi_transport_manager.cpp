@@ -159,17 +159,34 @@ bool MhiTransportManager::setup() {
   ESP_LOGCONFIG(TAG, "Transport setup: requested RX=%s TX=%s", requested_rx_driver_name_.c_str(),
                 requested_tx_driver_name_.c_str());
 
-  bool ready = active_ != nullptr && active_->setup(pins_);
+  last_transport_error_ = {};
+  MhiTransportResult setup_result =
+      active_ == nullptr ? MhiTransportResult::failure(MhiTransportError::DRIVER_NOT_BOUND, "resolve_active_transport")
+                         : active_->setup(pins_);
+  bool ready = setup_result.ok;
+  if (!ready) {
+    last_transport_error_ = setup_result.error;
+  }
+
   if (!ready && recovery_ != nullptr && recovery_ != active_) {
-    ESP_LOGW(TAG, "Primary transport RX=%s TX=%s failed to start; activating internal FastGPIO recovery",
-             active_ == nullptr ? "none" : active_->rx_name(), active_ == nullptr ? "none" : active_->tx_name());
+    ESP_LOGW(TAG,
+             "Primary transport RX=%s TX=%s failed to start: error=%s operation=%s native=%ld; activating internal "
+             "FastGPIO recovery",
+             active_ == nullptr ? "none" : active_->rx_name(), active_ == nullptr ? "none" : active_->tx_name(),
+             mhi_transport_error_name(setup_result.error.code),
+             setup_result.error.operation == nullptr ? "none" : setup_result.error.operation,
+             static_cast<long>(setup_result.error.native_code));
     if (active_ != nullptr) {
       active_->shutdown();
     }
     active_ = recovery_;
     recovery_active_ = true;
     this->reset_transport_diagnostic_cursors_();
-    ready = active_->setup(pins_);
+    setup_result = active_->setup(pins_);
+    ready = setup_result.ok;
+    if (!ready) {
+      last_transport_error_ = setup_result.error;
+    }
   }
 
   if (diagnostics_ != nullptr) {

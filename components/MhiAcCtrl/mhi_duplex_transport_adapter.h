@@ -16,7 +16,7 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
  public:
   void bind(IMhiDuplexTransport* backend, bool supports_classified_worker = true);
 
-  bool setup(const MhiTransportPins& pins) override;
+  MhiTransportResult setup(const MhiTransportPins& pins) override;
   void loop() override;
   void shutdown() override;
 
@@ -51,6 +51,10 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   bool rx_ready() const override;
   bool tx_ready() const override;
   MhiTransportCapabilities capabilities() const override;
+  MhiTransportHealth health() const override;
+  MhiTransportErrorDetail last_error() const override {
+    return last_error_;
+  }
 
   uint32_t completed_tx_frames() const override;
   uint32_t tx_failures() const override;
@@ -65,6 +69,8 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   IMhiDuplexTransport* backend_{nullptr};
   bool supports_classified_worker_{true};
   std::atomic<uint32_t> staging_failures_{0U};
+  MhiTransportHealth health_{};
+  MhiTransportErrorDetail last_error_{};
 };
 
 }  // namespace mhi_ac_ctrl

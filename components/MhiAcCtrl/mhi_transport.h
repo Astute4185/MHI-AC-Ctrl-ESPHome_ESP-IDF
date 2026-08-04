@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "mhi_transport_health.h"
 #include "mhi_transport_pins.h"
+#include "mhi_transport_result.h"
 #include "mhi_tx_contract.h"
 
 namespace esphome {
@@ -12,8 +14,11 @@ namespace mhi_ac_ctrl {
 struct MhiTransportCapabilities {
   bool integrated_duplex{false};
   bool uses_bus_marker{false};
+  bool supports_tx{false};
   bool supports_classified_worker{false};
   bool supports_rx_byte_critical_sections{false};
+  bool can_restart{true};
+  bool can_report_rx_activity{true};
 };
 
 // Unified operational transport contract used by the manager.
@@ -22,7 +27,7 @@ struct MhiTransportCapabilities {
 // but the rest of the component sees one complete transport strategy.
 class IMhiTransport {
  public:
-  virtual bool setup(const MhiTransportPins& pins) = 0;
+  virtual MhiTransportResult setup(const MhiTransportPins& pins) = 0;
   virtual void loop() = 0;
   virtual void shutdown() = 0;
 
@@ -45,6 +50,8 @@ class IMhiTransport {
   virtual bool rx_ready() const = 0;
   virtual bool tx_ready() const = 0;
   virtual MhiTransportCapabilities capabilities() const = 0;
+  virtual MhiTransportHealth health() const = 0;
+  virtual MhiTransportErrorDetail last_error() const = 0;
 
   // Monotonic counters allow the manager to feed common diagnostics without
   // coupling transport implementations to MhiDiagnostics.

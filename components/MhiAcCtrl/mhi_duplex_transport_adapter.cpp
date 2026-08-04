@@ -1,5 +1,7 @@
 #include "mhi_duplex_transport_adapter.h"
 
+#include "esphome/core/hal.h"
+
 namespace esphome {
 namespace mhi_ac_ctrl {
 
@@ -7,11 +9,35 @@ void MhiDuplexTransportAdapter::bind(IMhiDuplexTransport* backend, bool supports
   backend_ = backend;
   supports_classified_worker_ = supports_classified_worker;
   staging_failures_.store(0U, std::memory_order_relaxed);
+  health_ = {};
+  last_error_ = {};
 }
 
-bool MhiDuplexTransportAdapter::setup(const MhiTransportPins& pins) {
+MhiTransportResult MhiDuplexTransportAdapter::setup(const MhiTransportPins& pins) {
   staging_failures_.store(0U, std::memory_order_relaxed);
-  return backend_ != nullptr && backend_->setup(pins);
+  health_ = {};
+  health_.state = MhiTransportState::STARTING;
+  health_.setup_at_ms = millis();
+  last_error_ = {};
+
+  if (backend_ == nullptr) {
+    last_error_ = MhiTransportResult::failure(MhiTransportError::DRIVER_NOT_BOUND, "bind_duplex").error;
+    health_.state = MhiTransportState::FAILED;
+    health_.fault_latched = true;
+    health_.transport_errors = 1U;
+    return {false, last_error_};
+  }
+
+  if (!backend_->setup(pins)) {
+    last_error_ = MhiTransportResult::failure(MhiTransportError::DUPLEX_SETUP_FAILED, backend_->name()).error;
+    health_.state = MhiTransportState::FAILED;
+    health_.fault_latched = true;
+    health_.transport_errors = 1U;
+    return {false, last_error_};
+  }
+
+  health_.state = MhiTransportState::WAITING_FOR_TRAFFIC;
+  return MhiTransportResult::success();
 }
 
 void MhiDuplexTransportAdapter::loop() {
@@ -24,10 +50,18 @@ void MhiDuplexTransportAdapter::shutdown() {
   if (backend_ != nullptr) {
     backend_->shutdown();
   }
+  health_.state = MhiTransportState::STOPPED;
 }
 
 std::size_t MhiDuplexTransportAdapter::read(uint8_t* dst, std::size_t max_len) {
-  return backend_ == nullptr ? 0U : backend_->read(dst, max_len);
+  const std::size_t len = backend_ == nullptr ? 0U : backend_->read(dst, max_len);
+  if (len > 0U) {
+    health_.traffic_seen = true;
+    health_.last_rx_activity_ms = millis();
+    health_.rx_bytes += static_cast<uint32_t>(len);
+    health_.state = MhiTransportState::HEALTHY;
+  }
+  return len;
 }
 
 bool MhiDuplexTransportAdapter::queue_tx(const MhiTxEnvelope& envelope) {
@@ -71,9 +105,20 @@ MhiTransportCapabilities MhiDuplexTransportAdapter::capabilities() const {
   MhiTransportCapabilities capabilities{};
   capabilities.integrated_duplex = true;
   capabilities.uses_bus_marker = false;
+  capabilities.supports_tx = true;
   capabilities.supports_classified_worker = supports_classified_worker_;
   capabilities.supports_rx_byte_critical_sections = false;
   return capabilities;
+}
+
+MhiTransportHealth MhiDuplexTransportAdapter::health() const {
+  MhiTransportHealth snapshot = health_;
+  snapshot.tx_completed = this->completed_tx_frames();
+  snapshot.tx_failures = this->tx_failures();
+  if (snapshot.tx_failures > 0U && snapshot.state == MhiTransportState::HEALTHY) {
+    snapshot.state = MhiTransportState::DEGRADED;
+  }
+  return snapshot;
 }
 
 uint32_t MhiDuplexTransportAdapter::completed_tx_frames() const {

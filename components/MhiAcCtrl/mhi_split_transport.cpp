@@ -18,17 +18,49 @@ void MhiSplitTransport::bind(IMhiRxDriver* rx, IMhiTxDriver* tx, bool supports_c
   uses_bus_marker_ = uses_bus_marker;
   rx_ready_ = false;
   tx_ready_ = false;
+  health_ = {};
+  last_error_ = {};
   this->reset_tx_state_();
 }
 
-bool MhiSplitTransport::setup(const MhiTransportPins& pins) {
+MhiTransportResult MhiSplitTransport::setup(const MhiTransportPins& pins) {
   this->reset_tx_state_();
   completed_tx_frames_.store(0U, std::memory_order_relaxed);
   tx_failures_.store(0U, std::memory_order_relaxed);
+  health_ = {};
+  health_.state = MhiTransportState::STARTING;
+  health_.setup_at_ms = millis();
+  last_error_ = {};
 
-  rx_ready_ = rx_ != nullptr && rx_->setup(pins);
+  if (rx_ == nullptr) {
+    rx_ready_ = false;
+    tx_ready_ = tx_ == nullptr || tx_->setup(pins);
+    last_error_ = MhiTransportResult::failure(MhiTransportError::DRIVER_NOT_BOUND, "bind_rx").error;
+    health_.state = MhiTransportState::FAILED;
+    health_.fault_latched = true;
+    health_.transport_errors = 1U;
+    return {false, last_error_};
+  }
+
+  rx_ready_ = rx_->setup(pins);
   tx_ready_ = tx_ == nullptr || tx_->setup(pins);
-  return rx_ready_ && tx_ready_;
+
+  if (!rx_ready_) {
+    last_error_ = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, rx_->name()).error;
+  } else if (!tx_ready_) {
+    last_error_ =
+        MhiTransportResult::failure(MhiTransportError::TX_SETUP_FAILED, tx_ == nullptr ? "none" : tx_->name()).error;
+  }
+
+  if (last_error_.present()) {
+    health_.state = MhiTransportState::FAILED;
+    health_.fault_latched = true;
+    health_.transport_errors = 1U;
+    return {false, last_error_};
+  }
+
+  health_.state = MhiTransportState::WAITING_FOR_TRAFFIC;
+  return MhiTransportResult::success();
 }
 
 void MhiSplitTransport::loop() {
@@ -50,6 +82,7 @@ void MhiSplitTransport::shutdown() {
   this->reset_tx_state_();
   rx_ready_ = false;
   tx_ready_ = false;
+  health_.state = MhiTransportState::STOPPED;
 }
 
 std::size_t MhiSplitTransport::read(uint8_t* dst, std::size_t max_len) {
@@ -58,6 +91,12 @@ std::size_t MhiSplitTransport::read(uint8_t* dst, std::size_t max_len) {
   }
 
   const std::size_t len = rx_->read(dst, max_len);
+  if (len > 0U) {
+    health_.traffic_seen = true;
+    health_.last_rx_activity_ms = millis();
+    health_.rx_bytes += static_cast<uint32_t>(len);
+    health_.state = MhiTransportState::HEALTHY;
+  }
   if (auto_tx_flush_) {
     this->flush_tx_on_bus_marker();
   }
@@ -237,9 +276,20 @@ MhiTransportCapabilities MhiSplitTransport::capabilities() const {
   MhiTransportCapabilities capabilities{};
   capabilities.integrated_duplex = false;
   capabilities.uses_bus_marker = uses_bus_marker_;
+  capabilities.supports_tx = tx_ != nullptr && std::strcmp(tx_->name(), "none") != 0;
   capabilities.supports_classified_worker = supports_classified_worker_;
   capabilities.supports_rx_byte_critical_sections = rx_ != nullptr && rx_->supports_byte_critical_sections();
   return capabilities;
+}
+
+MhiTransportHealth MhiSplitTransport::health() const {
+  MhiTransportHealth snapshot = health_;
+  snapshot.tx_completed = completed_tx_frames_.load(std::memory_order_relaxed);
+  snapshot.tx_failures = tx_failures_.load(std::memory_order_relaxed);
+  if (snapshot.tx_failures > 0U && snapshot.state == MhiTransportState::HEALTHY) {
+    snapshot.state = MhiTransportState::DEGRADED;
+  }
+  return snapshot;
 }
 
 std::size_t MhiSplitTransport::tx_completion_queue_depth() const {

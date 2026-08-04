@@ -255,4 +255,59 @@ void duplex_transport_adapter_preserves_backend_contract() {
   EXPECT_EQ(transport.tx_failures(), 3U);
 }
 
+
+void transport_result_preserves_error_context() {
+  const MhiTransportResult result = MhiTransportResult::failure(
+      MhiTransportError::RMT_SETUP_FAILED, "rmt_new_rx_channel", 0x105, "channel allocation failed");
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(static_cast<uint8_t>(result.error.code), static_cast<uint8_t>(MhiTransportError::RMT_SETUP_FAILED));
+  EXPECT_EQ(result.error.native_code, 0x105);
+  EXPECT_TRUE(std::strcmp(result.error.operation, "rmt_new_rx_channel") == 0);
+  EXPECT_TRUE(std::strcmp(mhi_transport_error_name(result.error.code), "rmt_setup_failed") == 0);
+}
+
+void split_transport_reports_setup_failure_and_rx_health() {
+  FakeRxDriver rx{};
+  FakeTxDriver tx{};
+  MhiSplitTransport transport{};
+  transport.bind(&rx, &tx, true, true);
+
+  rx.setup_result = false;
+  const MhiTransportResult failed = transport.setup({8, 38, 39});
+  EXPECT_FALSE(failed.ok);
+  EXPECT_EQ(static_cast<uint8_t>(failed.error.code), static_cast<uint8_t>(MhiTransportError::RX_SETUP_FAILED));
+  EXPECT_EQ(static_cast<uint8_t>(transport.health().state), static_cast<uint8_t>(MhiTransportState::FAILED));
+  EXPECT_TRUE(transport.health().fault_latched);
+
+  rx.setup_result = true;
+  EXPECT_TRUE(transport.setup({8, 38, 39}));
+  EXPECT_EQ(static_cast<uint8_t>(transport.health().state),
+            static_cast<uint8_t>(MhiTransportState::WAITING_FOR_TRAFFIC));
+
+  rx.read_len = 3U;
+  rx.read_data[0] = 0x6CU;
+  rx.read_data[1] = 0x80U;
+  rx.read_data[2] = 0x04U;
+  std::array<uint8_t, 3U> dst{};
+  esphome::test_millis_value = 75U;
+  EXPECT_EQ(transport.read(dst.data(), dst.size()), 3U);
+
+  const MhiTransportHealth health = transport.health();
+  EXPECT_EQ(static_cast<uint8_t>(health.state), static_cast<uint8_t>(MhiTransportState::HEALTHY));
+  EXPECT_TRUE(health.traffic_seen);
+  EXPECT_EQ(health.last_rx_activity_ms, 75U);
+  EXPECT_EQ(health.rx_bytes, 3U);
+}
+
+void duplex_transport_adapter_reports_missing_backend() {
+  MhiDuplexTransportAdapter transport{};
+  const MhiTransportResult result = transport.setup({8, 38, 39});
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(static_cast<uint8_t>(result.error.code), static_cast<uint8_t>(MhiTransportError::DRIVER_NOT_BOUND));
+  EXPECT_EQ(static_cast<uint8_t>(transport.health().state), static_cast<uint8_t>(MhiTransportState::FAILED));
+  EXPECT_TRUE(transport.last_error().present());
+}
+
 }  // namespace mhi_unit_tests

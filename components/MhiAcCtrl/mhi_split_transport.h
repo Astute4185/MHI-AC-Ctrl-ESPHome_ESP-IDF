@@ -25,7 +25,7 @@ class MhiSplitTransport final : public IMhiTransport {
  public:
   void bind(IMhiRxDriver* rx, IMhiTxDriver* tx, bool supports_classified_worker, bool uses_bus_marker);
 
-  bool setup(const MhiTransportPins& pins) override;
+  MhiTransportResult setup(const MhiTransportPins& pins) override;
   void loop() override;
   void shutdown() override;
 
@@ -58,6 +58,10 @@ class MhiSplitTransport final : public IMhiTransport {
     return tx_ready_;
   }
   MhiTransportCapabilities capabilities() const override;
+  MhiTransportHealth health() const override;
+  MhiTransportErrorDetail last_error() const override {
+    return last_error_;
+  }
 
   uint32_t completed_tx_frames() const override {
     return completed_tx_frames_.load(std::memory_order_relaxed);
@@ -112,6 +116,8 @@ class MhiSplitTransport final : public IMhiTransport {
 
   std::atomic<uint32_t> completed_tx_frames_{0U};
   std::atomic<uint32_t> tx_failures_{0U};
+  MhiTransportHealth health_{};
+  MhiTransportErrorDetail last_error_{};
 };
 
 }  // namespace mhi_ac_ctrl
