@@ -23,7 +23,7 @@ void MhiSplitTransport::bind(IMhiRxDriver* rx, IMhiTxDriver* tx, bool supports_c
   this->reset_tx_state_();
 }
 
-MhiTransportResult MhiSplitTransport::setup(const MhiTransportPins& pins) {
+MhiTransportResult MhiSplitTransport::setup() {
   this->reset_tx_state_();
   completed_tx_frames_.store(0U, std::memory_order_relaxed);
   tx_failures_.store(0U, std::memory_order_relaxed);
@@ -34,7 +34,7 @@ MhiTransportResult MhiSplitTransport::setup(const MhiTransportPins& pins) {
 
   if (rx_ == nullptr) {
     rx_ready_ = false;
-    tx_ready_ = tx_ == nullptr || tx_->setup(pins);
+    tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
     last_error_ = MhiTransportResult::failure(MhiTransportError::DRIVER_NOT_BOUND, "bind_rx").error;
     health_.state = MhiTransportState::FAILED;
     health_.fault_latched = true;
@@ -42,8 +42,8 @@ MhiTransportResult MhiSplitTransport::setup(const MhiTransportPins& pins) {
     return {false, last_error_};
   }
 
-  rx_ready_ = rx_->setup(pins);
-  tx_ready_ = tx_ == nullptr || tx_->setup(pins);
+  rx_ready_ = rx_->setup(pins_);
+  tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
 
   if (!rx_ready_) {
     last_error_ = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, rx_->name()).error;

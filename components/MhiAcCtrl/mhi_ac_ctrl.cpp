@@ -331,10 +331,6 @@ void MhiAcCtrl::setup() {
   this->frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
 
   this->transport_.set_diagnostics(&this->diagnostics_);
-  this->transport_.set_rmt_spi_frame_gap_us(this->rmt_spi_frame_gap_us_);
-
-  this->transport_.configure(this->pins_.sck, this->pins_.mosi, this->pins_.miso, this->rx_driver_, this->tx_driver_,
-                             static_cast<uint8_t>(this->frame_size_), this->frame_start_idle_ms_);
 
   this->rx_byte_critical_sections_enabled_ = true;
   this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);

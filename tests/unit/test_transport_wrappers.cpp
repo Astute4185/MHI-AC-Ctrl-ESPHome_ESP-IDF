@@ -6,6 +6,7 @@
 #include "esphome/core/hal.h"
 #include "mhi_duplex_transport_adapter.h"
 #include "mhi_split_transport.h"
+#include "mhi_transport_manager.h"
 #include "mhi_test_common.h"
 
 namespace mhi_unit_tests {
@@ -167,6 +168,91 @@ class FakeDuplexTransport final : public IMhiDuplexTransport {
   std::array<uint8_t, kMhiMaxFrameBytes> read_data{};
 };
 
+class FakeUnifiedTransport final : public IMhiTransport {
+ public:
+  explicit FakeUnifiedTransport(const char* transport_name) : transport_name_(transport_name) {}
+
+  MhiTransportResult setup() override {
+    setup_count++;
+    ready_ = setup_result.ok;
+    return setup_result;
+  }
+  void loop() override {
+    loop_count++;
+  }
+  void shutdown() override {
+    ready_ = false;
+    shutdown_count++;
+  }
+  std::size_t read(uint8_t* dst, std::size_t max_len) override {
+    (void) dst;
+    (void) max_len;
+    return 0U;
+  }
+  bool queue_tx(const MhiTxEnvelope& envelope) override {
+    return ready_ && envelope.valid();
+  }
+  bool take_tx_completion(MhiTxCompletion& completion) override {
+    (void) completion;
+    return false;
+  }
+  bool has_pending_tx() const override {
+    return false;
+  }
+  bool flush_tx_on_bus_marker() override {
+    return false;
+  }
+  void set_auto_tx_flush(bool enabled) override {
+    auto_tx_flush_ = enabled;
+  }
+  bool auto_tx_flush() const override {
+    return auto_tx_flush_;
+  }
+  void set_rx_byte_critical_sections(bool enabled) override {
+    critical_sections_ = enabled;
+  }
+  bool rx_byte_critical_sections() const override {
+    return critical_sections_;
+  }
+  const char* name() const override {
+    return transport_name_;
+  }
+  const char* rx_name() const override {
+    return transport_name_;
+  }
+  const char* tx_name() const override {
+    return transport_name_;
+  }
+  bool rx_ready() const override {
+    return ready_;
+  }
+  bool tx_ready() const override {
+    return ready_;
+  }
+  MhiTransportCapabilities capabilities() const override {
+    MhiTransportCapabilities capabilities{};
+    capabilities.supports_tx = true;
+    return capabilities;
+  }
+  MhiTransportHealth health() const override {
+    MhiTransportHealth health{};
+    health.state = ready_ ? MhiTransportState::WAITING_FOR_TRAFFIC : MhiTransportState::FAILED;
+    return health;
+  }
+  MhiTransportErrorDetail last_error() const override {
+    return setup_result.error;
+  }
+
+  const char* transport_name_{nullptr};
+  MhiTransportResult setup_result{MhiTransportResult::success()};
+  bool ready_{false};
+  bool auto_tx_flush_{true};
+  bool critical_sections_{true};
+  int setup_count{0};
+  int shutdown_count{0};
+  int loop_count{0};
+};
+
 MhiTxEnvelope make_command_envelope() {
   MhiTxEnvelope envelope{};
   envelope.len = kMhiFrame20Bytes;
@@ -186,7 +272,8 @@ void split_transport_delegates_rx_and_marker_armed_tx() {
   transport.bind(&rx, &tx, true, true);
 
   const MhiTransportPins pins{8, 38, 39};
-  EXPECT_TRUE(transport.setup(pins));
+  transport.set_pins(pins.sck, pins.mosi, pins.miso);
+  EXPECT_TRUE(transport.setup());
   EXPECT_TRUE(transport.rx_ready());
   EXPECT_TRUE(transport.tx_ready());
   EXPECT_TRUE(transport.capabilities().supports_classified_worker);
@@ -217,7 +304,8 @@ void split_transport_preserves_null_tx_completion_contract() {
   FakeTxDriver null_tx{"none"};
   MhiSplitTransport transport{};
   transport.bind(&rx, &null_tx, true, false);
-  EXPECT_TRUE(transport.setup({8, 38, 39}));
+  transport.set_pins(8, 38, 39);
+  EXPECT_TRUE(transport.setup());
 
   const MhiTxEnvelope envelope = make_command_envelope();
   EXPECT_TRUE(transport.queue_tx(envelope));
@@ -233,8 +321,9 @@ void duplex_transport_adapter_preserves_backend_contract() {
   FakeDuplexTransport backend{};
   MhiDuplexTransportAdapter transport{};
   transport.bind(&backend, true);
+  transport.set_pins(8, 38, 39);
 
-  EXPECT_TRUE(transport.setup({8, 38, 39}));
+  EXPECT_TRUE(transport.setup());
   EXPECT_TRUE(transport.capabilities().integrated_duplex);
   EXPECT_TRUE(transport.capabilities().supports_classified_worker);
   EXPECT_FALSE(transport.capabilities().uses_bus_marker);
@@ -273,15 +362,16 @@ void split_transport_reports_setup_failure_and_rx_health() {
   MhiSplitTransport transport{};
   transport.bind(&rx, &tx, true, true);
 
+  transport.set_pins(8, 38, 39);
   rx.setup_result = false;
-  const MhiTransportResult failed = transport.setup({8, 38, 39});
+  const MhiTransportResult failed = transport.setup();
   EXPECT_FALSE(failed.ok);
   EXPECT_EQ(static_cast<uint8_t>(failed.error.code), static_cast<uint8_t>(MhiTransportError::RX_SETUP_FAILED));
   EXPECT_EQ(static_cast<uint8_t>(transport.health().state), static_cast<uint8_t>(MhiTransportState::FAILED));
   EXPECT_TRUE(transport.health().fault_latched);
 
   rx.setup_result = true;
-  EXPECT_TRUE(transport.setup({8, 38, 39}));
+  EXPECT_TRUE(transport.setup());
   EXPECT_EQ(static_cast<uint8_t>(transport.health().state),
             static_cast<uint8_t>(MhiTransportState::WAITING_FOR_TRAFFIC));
 
@@ -302,12 +392,47 @@ void split_transport_reports_setup_failure_and_rx_health() {
 
 void duplex_transport_adapter_reports_missing_backend() {
   MhiDuplexTransportAdapter transport{};
-  const MhiTransportResult result = transport.setup({8, 38, 39});
+  transport.set_pins(8, 38, 39);
+  const MhiTransportResult result = transport.setup();
 
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(static_cast<uint8_t>(result.error.code), static_cast<uint8_t>(MhiTransportError::DRIVER_NOT_BOUND));
   EXPECT_EQ(static_cast<uint8_t>(transport.health().state), static_cast<uint8_t>(MhiTransportState::FAILED));
   EXPECT_TRUE(transport.last_error().present());
+}
+
+
+void transport_manager_uses_injected_primary_transport() {
+  FakeUnifiedTransport primary{"primary"};
+  MhiTransportManager manager{};
+  manager.set_primary(&primary);
+
+  EXPECT_TRUE(manager.setup());
+  EXPECT_EQ(primary.setup_count, 1);
+  EXPECT_TRUE(std::strcmp(manager.rx_name(), "primary") == 0);
+  EXPECT_FALSE(manager.recovery_active());
+
+  manager.loop();
+  EXPECT_EQ(primary.loop_count, 1);
+  manager.shutdown();
+  EXPECT_EQ(primary.shutdown_count, 1);
+}
+
+void transport_manager_activates_injected_recovery_after_setup_failure() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  primary.setup_result = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, "primary_setup");
+
+  MhiTransportManager manager{};
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  EXPECT_TRUE(manager.setup());
+  EXPECT_EQ(primary.setup_count, 1);
+  EXPECT_EQ(primary.shutdown_count, 1);
+  EXPECT_EQ(recovery.setup_count, 1);
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_TRUE(std::strcmp(manager.rx_name(), "fast_gpio_recovery") == 0);
 }
 
 }  // namespace mhi_unit_tests

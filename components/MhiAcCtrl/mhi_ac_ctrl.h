@@ -70,6 +70,14 @@ class MhiAcCtrl : public Component {
     this->tx_driver_ = driver;
   }
 
+  void set_primary_transport(IMhiTransport* transport) {
+    this->transport_.set_primary(transport);
+  }
+
+  void set_recovery_transport(IMhiTransport* transport) {
+    this->transport_.set_recovery(transport);
+  }
+
   void set_fan_profile(const std::string& profile) {
     this->fan_profile_ = mhi_fan_profile_from_name(profile);
     this->publish_bridge_.set_fan_profile(this->fan_profile_);

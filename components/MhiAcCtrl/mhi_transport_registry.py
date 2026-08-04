@@ -24,6 +24,7 @@ DEFAULT_FRAME_START_IDLE_MS = 10
 DEFAULT_RMT_SPI_FRAME_GAP_US = 1000
 
 SchemaFactory = Callable[[], Any]
+TransportBuilder = Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class MhiTransportDefinition:
 
     name: str
     schema_factory: SchemaFactory
+    builder: TransportBuilder
     compile_define: str
     supported_platforms: frozenset[str]
     supported_frameworks: frozenset[str]
@@ -191,6 +193,20 @@ def resolve_selected_idf_components(config: Mapping[str, Any]) -> tuple[str, ...
         components.update(get_transport_definition("fast_gpio_rx").required_idf_components)
 
     return tuple(sorted(components))
+
+
+async def build_selected_transports(config: Mapping[str, Any], inputs: Any):
+    """Construct the selected primary and implicit FastGPIO recovery transports."""
+
+    selected = get_transport_definition(_selected_driver(config))
+    primary = await selected.builder(config, inputs, recovery=False)
+
+    recovery = None
+    if selected.uses_internal_fast_gpio_recovery:
+        fast_gpio = get_transport_definition("fast_gpio_rx")
+        recovery = await fast_gpio.builder(config, inputs, recovery=True)
+
+    return primary, recovery
 
 
 def resolve_transport_tuning(config: Mapping[str, Any]) -> MhiTransportTuning:

@@ -2,70 +2,21 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
-#include "esphome/core/defines.h"
 #include "mhi_defs.h"
 #include "mhi_diag.h"
-#include "mhi_duplex_transport_adapter.h"
-#include "mhi_split_transport.h"
-#include "mhi_transport_pins.h"
-#include "mhi_worker_policy.h"
-
-#ifdef USE_ESP_IDF
-#include <sdkconfig.h>
-#endif
-
-#if defined(MHI_USE_TRANSPORT_FAST_GPIO)
-#define MHI_ENABLE_FAST_GPIO_TRANSPORT 1
-#include "mhi_fast_gpio_rx_driver.h"
-#if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
-#define MHI_ENABLE_SPLIT_TX_DRIVER 1
-#include "mhi_fast_gpio_tx_driver.h"
-#include "mhi_null_tx_driver.h"
-#else
-#define MHI_ENABLE_SPLIT_TX_DRIVER 0
-#endif
-#else
-#define MHI_ENABLE_FAST_GPIO_TRANSPORT 0
-#define MHI_ENABLE_SPLIT_TX_DRIVER 0
-#endif
-
-#if defined(MHI_USE_TRANSPORT_EXTERNAL_CLOCK)
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 1
-#include "mhi_external_clock_rx_driver.h"
-#else
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 0
-#endif
-
-#if defined(MHI_USE_TRANSPORT_RMT_SPI)
-#define MHI_ENABLE_RMT_SPI_RX_DRIVER 1
-#include "mhi_rmt_spi_rx_driver.h"
-#else
-#define MHI_ENABLE_RMT_SPI_RX_DRIVER 0
-#endif
-
-#if defined(MHI_USE_TRANSPORT_RMT_CS_SPI)
-#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 1
-#include "mhi_rmt_cs_spi_transport.h"
-#else
-#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 0
-#endif
+#include "mhi_transport.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
 
+// Generic, non-owning runtime coordinator for one configured primary transport
+// and an optional internal recovery transport. Concrete transport construction,
+// pin configuration, and driver-specific tuning are owned by ESPHome codegen.
 class MhiTransportManager {
  public:
-  void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
-                 uint8_t frame_size_hint = 20U, uint32_t frame_start_idle_ms = 10U,
-                 uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
-                 uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
-                 uint32_t external_clock_sample_delay_nops = 0U);
-
-  void set_rmt_spi_frame_gap_us(uint32_t frame_gap_us) {
-    rmt_spi_frame_gap_us_ = frame_gap_us;
-  }
+  void set_primary(IMhiTransport* transport);
+  void set_recovery(IMhiTransport* transport);
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -99,6 +50,15 @@ class MhiTransportManager {
 
   const char* rx_name() const;
   const char* tx_name() const;
+  const char* primary_name() const {
+    return primary_ == nullptr ? "none" : primary_->name();
+  }
+  const char* recovery_name() const {
+    return recovery_ == nullptr ? "none" : recovery_->name();
+  }
+  bool recovery_active() const {
+    return recovery_active_;
+  }
 
   bool rx_ready() const {
     return active_ != nullptr && active_->rx_ready();
@@ -117,41 +77,19 @@ class MhiTransportManager {
   }
 
  private:
-  void resolve_transports_();
+  bool activate_recovery_(const MhiTransportResult& primary_result);
   void update_transport_diagnostics_();
   void reset_transport_diagnostic_cursors_();
-
-  MhiTransportPins pins_{};
-  std::string requested_rx_driver_name_{"fast_gpio_rx"};
-  std::string requested_tx_driver_name_{"fast_gpio_tx"};
-
-#if MHI_ENABLE_FAST_GPIO_TRANSPORT
-  MhiFastGpioRxDriver fast_gpio_rx_{};
-#endif
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  MhiFastGpioTxDriver fast_gpio_tx_{};
-  MhiNullTxDriver null_tx_{};
-#endif
-#if MHI_ENABLE_RMT_SPI_RX_DRIVER
-  MhiRmtSpiRxDriver rmt_spi_rx_{};
-#endif
-#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
-  MhiRmtCsSpiTransport rmt_cs_spi_{};
-#endif
-#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
-  MhiExternalClockRxDriver external_clock_rx_{};
-#endif
-
-  MhiSplitTransport primary_split_transport_{};
-  MhiSplitTransport recovery_split_transport_{};
-  MhiDuplexTransportAdapter primary_duplex_transport_{};
+  void publish_driver_diagnostics_();
 
   IMhiTransport* primary_{nullptr};
   IMhiTransport* recovery_{nullptr};
   IMhiTransport* active_{nullptr};
   bool recovery_active_{false};
 
-  uint32_t rmt_spi_frame_gap_us_{1000U};
+  bool auto_tx_flush_{true};
+  bool rx_byte_critical_sections_{true};
+
   uint32_t last_transport_tx_completed_{0U};
   uint32_t last_transport_tx_failures_{0U};
   MhiTransportErrorDetail last_transport_error_{};

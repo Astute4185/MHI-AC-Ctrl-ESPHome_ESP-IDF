@@ -20,7 +20,7 @@ TRANSPORT_SOURCES = {
     ),
     "mhi_null_tx_driver.cpp": (
         "#if defined(MHI_USE_TRANSPORT_FAST_GPIO) && defined(USE_ESP_IDF)",
-        "#endif  // MHI_USE_TRANSPORT_FAST_GPIO and supported split-TX target",
+        "#endif  // MHI_USE_TRANSPORT_FAST_GPIO and USE_ESP_IDF",
     ),
     "mhi_external_clock_rx_driver.cpp": (
         "#ifdef MHI_USE_TRANSPORT_EXTERNAL_CLOCK",
@@ -65,19 +65,33 @@ class TransportCompileSelectionTests(unittest.TestCase):
         self.assertIn("resolve_selected_idf_components", called_names)
         self.assertIn("add_define", called_attributes)
         self.assertIn("include_builtin_idf_component", called_names)
+        self.assertIn("build_selected_transports", imported_names)
+        self.assertIn("build_selected_transports", called_names)
+        self.assertIn("set_primary_transport", called_attributes)
+        self.assertIn("set_recovery_transport", called_attributes)
 
-    def test_manager_enables_concrete_drivers_only_from_codegen_defines(self):
+    def test_manager_is_non_owning_and_has_no_concrete_driver_selection(self):
         source = MANAGER_HEADER.read_text(encoding="utf-8")
 
-        self.assertIn("defined(MHI_USE_TRANSPORT_FAST_GPIO)", source)
-        self.assertIn("defined(MHI_USE_TRANSPORT_EXTERNAL_CLOCK)", source)
-        self.assertIn("defined(MHI_USE_TRANSPORT_RMT_SPI)", source)
-        self.assertIn("defined(MHI_USE_TRANSPORT_RMT_CS_SPI)", source)
-        self.assertIn("MHI_ENABLE_SPLIT_TX_DRIVER", source)
-        self.assertIn(
-            "defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3)",
-            source,
-        )
+        self.assertIn("IMhiTransport* primary_", source)
+        self.assertIn("IMhiTransport* recovery_", source)
+        self.assertIn("void set_primary(IMhiTransport* transport)", source)
+        self.assertIn("void set_recovery(IMhiTransport* transport)", source)
+
+        for forbidden in (
+            "MHI_USE_TRANSPORT_FAST_GPIO",
+            "MHI_USE_TRANSPORT_EXTERNAL_CLOCK",
+            "MHI_USE_TRANSPORT_RMT_SPI",
+            "MHI_USE_TRANSPORT_RMT_CS_SPI",
+            "MhiFastGpioRxDriver",
+            "MhiFastGpioTxDriver",
+            "MhiExternalClockRxDriver",
+            "MhiRmtSpiRxDriver",
+            "MhiRmtCsSpiTransport",
+            "MhiTransportPins pins_",
+            "requested_rx_driver_name_",
+        ):
+            self.assertNotIn(forbidden, source)
 
     def test_each_transport_implementation_has_a_whole_unit_guard(self):
         for filename, (opening_guard, closing_guard) in TRANSPORT_SOURCES.items():

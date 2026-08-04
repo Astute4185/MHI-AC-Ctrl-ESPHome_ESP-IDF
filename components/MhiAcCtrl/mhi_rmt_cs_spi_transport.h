@@ -51,6 +51,14 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   void set_config(const MhiRmtCsSpiConfig& config) {
     config_ = config;
   }
+  void set_frame_size_hint(int frame_size) {
+    config_.frame_size_hint = frame_size == 33 ? 33U : 20U;
+  }
+  void set_frame_gap_us(int frame_gap_us) {
+    if (frame_gap_us >= 500 && frame_gap_us <= 5000) {
+      config_.frame_gap_us = static_cast<uint32_t>(frame_gap_us);
+    }
+  }
 
   bool setup(const MhiTransportPins& pins) override;
   void loop() override;

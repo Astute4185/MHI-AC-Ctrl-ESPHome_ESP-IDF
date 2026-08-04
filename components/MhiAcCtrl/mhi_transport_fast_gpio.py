@@ -1,4 +1,4 @@
-"""FastGPIO transport schema and compile-time metadata."""
+"""FastGPIO transport schema, codegen, and compile-time metadata."""
 
 try:
     from .mhi_transport_registry import (
@@ -32,9 +32,41 @@ def build_config_schema():
     )
 
 
+async def build_transport(config, inputs, *, recovery=False):
+    import esphome.codegen as cg
+
+    from .mhi_transport_codegen import (
+        CONF_PRIMARY_FAST_GPIO_RX_ID,
+        CONF_PRIMARY_SPLIT_TRANSPORT_ID,
+        CONF_RECOVERY_FAST_GPIO_RX_ID,
+        CONF_RECOVERY_SPLIT_TRANSPORT_ID,
+        build_split_tx,
+        configure_split_transport,
+    )
+
+    rx_id = CONF_RECOVERY_FAST_GPIO_RX_ID if recovery else CONF_PRIMARY_FAST_GPIO_RX_ID
+    split_id = CONF_RECOVERY_SPLIT_TRANSPORT_ID if recovery else CONF_PRIMARY_SPLIT_TRANSPORT_ID
+
+    rx = cg.new_Pvariable(config[rx_id])
+    cg.add(rx.set_frame_size_hint(inputs.frame_size))
+    cg.add(rx.set_frame_start_idle_ms(inputs.frame_start_idle_ms))
+
+    tx, uses_bus_marker = build_split_tx(config, inputs, recovery=recovery)
+    transport = cg.new_Pvariable(config[split_id])
+    return configure_split_transport(
+        transport,
+        inputs,
+        rx,
+        tx,
+        classified_worker=False,
+        uses_bus_marker=uses_bus_marker,
+    )
+
+
 TRANSPORT_DEFINITION = MhiTransportDefinition(
     name="fast_gpio_rx",
     schema_factory=build_config_schema,
+    builder=build_transport,
     compile_define="MHI_USE_TRANSPORT_FAST_GPIO",
     supported_platforms=frozenset({PLATFORM_ESP32}),
     supported_frameworks=frozenset({FRAMEWORK_ESP_IDF}),
