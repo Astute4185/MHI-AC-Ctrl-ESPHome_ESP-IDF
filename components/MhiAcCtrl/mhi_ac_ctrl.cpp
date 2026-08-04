@@ -478,6 +478,16 @@ void MhiAcCtrl::loop() {
   } else {
     state_changed = this->read_and_sync_rx_frame_();
   }
+
+  const MhiStatsSnapshot protocol_stats = this->diagnostics_.stats().snapshot();
+  MhiProtocolHealth protocol_health{};
+  protocol_health.last_valid_frame_ms = protocol_stats.last_valid_frame_ms;
+  protocol_health.valid_frames = protocol_stats.valid_frames;
+  protocol_health.invalid_frames = protocol_stats.invalid_frames;
+  protocol_health.checksum_failures = protocol_stats.checksum_failures;
+  protocol_health.resync_events = protocol_stats.sync_losses;
+  this->transport_.observe_protocol_health(protocol_health);
+
   rx_read_sync_us = elapsed_us_(section_start_us);
 
   section_start_us = micros();

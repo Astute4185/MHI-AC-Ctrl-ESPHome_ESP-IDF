@@ -21,6 +21,10 @@ class MhiTransportManager {
   void set_transition_listener(IMhiTransportTransitionListener* listener) {
     transition_listener_ = listener;
   }
+  void set_health_policy(const MhiTransportHealthPolicy& policy) {
+    health_policy_ = policy;
+  }
+  void observe_protocol_health(const MhiProtocolHealth& health);
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -81,7 +85,9 @@ class MhiTransportManager {
     return this->rx_ready() && active_->capabilities().supports_classified_worker;
   }
   MhiTransportHealth transport_health() const {
-    return active_ == nullptr ? MhiTransportHealth{} : active_->health();
+    MhiTransportHealth snapshot = active_ == nullptr ? MhiTransportHealth{} : active_->health();
+    snapshot.state = state_;
+    return snapshot;
   }
   MhiTransportErrorDetail last_transport_error() const {
     return last_transport_error_;
@@ -95,7 +101,14 @@ class MhiTransportManager {
 
  private:
   bool activate_recovery_(const MhiTransportResult& primary_result);
+  bool handle_runtime_failure_(const MhiTransportErrorDetail& reason);
   bool enter_safe_mode_(const MhiTransportErrorDetail& reason);
+  void reset_runtime_health_window_(uint32_t now_ms);
+  void evaluate_runtime_health_(uint32_t now_ms);
+  void mark_runtime_healthy_();
+  static uint32_t elapsed_ms_(uint32_t now_ms, uint32_t then_ms) {
+    return static_cast<uint32_t>(now_ms - then_ms);
+  }
   void update_transport_diagnostics_();
   void reset_transport_diagnostic_cursors_();
   void publish_driver_diagnostics_();
@@ -111,6 +124,17 @@ class MhiTransportManager {
 
   bool auto_tx_flush_{true};
   bool rx_byte_critical_sections_{true};
+
+  MhiTransportHealthPolicy health_policy_{};
+  MhiProtocolHealth protocol_health_{};
+  uint32_t active_started_ms_{0U};
+  uint32_t first_traffic_seen_ms_{0U};
+  uint32_t valid_frames_at_activation_{0U};
+  uint32_t last_health_check_ms_{0U};
+  bool protocol_health_observed_{false};
+  bool traffic_observed_{false};
+  bool active_health_confirmed_{false};
+  bool recovery_ready_notified_{false};
 
   uint32_t last_transport_tx_completed_{0U};
   uint32_t last_transport_tx_failures_{0U};

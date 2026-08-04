@@ -54,8 +54,20 @@ struct MhiTransportHealth {
 struct MhiProtocolHealth {
   uint32_t last_valid_frame_ms{0U};
   uint32_t valid_frames{0U};
+  uint32_t invalid_frames{0U};
   uint32_t checksum_failures{0U};
   uint32_t resync_events{0U};
+};
+
+// Conservative defaults for automatic runtime recovery. These values are
+// intentionally internal during the first hardware validation cycle.
+struct MhiTransportHealthPolicy {
+  uint32_t startup_grace_ms{10000U};
+  uint32_t no_traffic_timeout_ms{15000U};
+  uint32_t invalid_traffic_timeout_ms{15000U};
+  uint32_t stalled_traffic_timeout_ms{15000U};
+  uint32_t health_check_interval_ms{250U};
+  uint32_t healthy_frame_count{4U};
 };
 
 }  // namespace mhi_ac_ctrl

@@ -175,6 +175,9 @@ class FakeUnifiedTransport final : public IMhiTransport {
   MhiTransportResult setup() override {
     setup_count++;
     ready_ = setup_result.ok;
+    health_snapshot = {};
+    health_snapshot.setup_at_ms = esphome::millis();
+    health_snapshot.state = ready_ ? MhiTransportState::WAITING_FOR_TRAFFIC : MhiTransportState::FAILED;
     return setup_result;
   }
   void loop() override {
@@ -185,9 +188,16 @@ class FakeUnifiedTransport final : public IMhiTransport {
     shutdown_count++;
   }
   std::size_t read(uint8_t* dst, std::size_t max_len) override {
-    (void) dst;
-    (void) max_len;
-    return 0U;
+    if (!ready_ || dst == nullptr || max_len < read_len) {
+      return 0U;
+    }
+    if (read_len > 0U) {
+      std::memcpy(dst, read_data.data(), read_len);
+      health_snapshot.traffic_seen = true;
+      health_snapshot.last_rx_activity_ms = esphome::millis();
+      health_snapshot.rx_bytes += static_cast<uint32_t>(read_len);
+    }
+    return read_len;
   }
   bool queue_tx(const MhiTxEnvelope& envelope) override {
     return ready_ && envelope.valid();
@@ -235,12 +245,10 @@ class FakeUnifiedTransport final : public IMhiTransport {
     return capabilities;
   }
   MhiTransportHealth health() const override {
-    MhiTransportHealth health{};
-    health.state = ready_ ? MhiTransportState::WAITING_FOR_TRAFFIC : MhiTransportState::FAILED;
-    return health;
+    return health_snapshot;
   }
   MhiTransportErrorDetail last_error() const override {
-    return setup_result.error;
+    return runtime_error.present() ? runtime_error : setup_result.error;
   }
 
   const char* transport_name_{nullptr};
@@ -251,6 +259,10 @@ class FakeUnifiedTransport final : public IMhiTransport {
   int setup_count{0};
   int shutdown_count{0};
   int loop_count{0};
+  std::size_t read_len{0U};
+  std::array<uint8_t, kMhiMaxFrameBytes> read_data{};
+  MhiTransportHealth health_snapshot{};
+  MhiTransportErrorDetail runtime_error{};
 };
 
 class FakeTransportTransitionListener final : public IMhiTransportTransitionListener {
@@ -474,21 +486,41 @@ void transport_manager_recovery_transition_is_ordered_and_latched() {
   manager.set_primary(&primary);
   manager.set_recovery(&recovery);
 
+  MhiTransportHealthPolicy policy{};
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+  manager.set_health_policy(policy);
+
+  esphome::test_millis_value = 0U;
   EXPECT_TRUE(manager.setup());
   EXPECT_EQ(listener.switch_begin_count, 1);
   EXPECT_TRUE(listener.command_state_cleared);
-  EXPECT_EQ(listener.recovery_ready_count, 1);
+  EXPECT_EQ(listener.recovery_ready_count, 0);
   EXPECT_EQ(listener.safe_mode_count, 0);
-  EXPECT_TRUE(listener.commands_enabled);
+  EXPECT_FALSE(listener.commands_enabled);
   EXPECT_TRUE(manager.recovery_attempted());
   EXPECT_TRUE(manager.recovery_active());
   EXPECT_FALSE(manager.safe_mode());
-  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::RECOVERY_ACTIVE));
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()),
+            static_cast<uint8_t>(MhiTransportState::WAITING_FOR_TRAFFIC));
   EXPECT_EQ(primary.shutdown_count, 1);
   EXPECT_EQ(recovery.setup_count, 1);
   EXPECT_EQ(static_cast<uint8_t>(manager.primary_failure().code),
             static_cast<uint8_t>(MhiTransportError::RMT_SETUP_FAILED));
   EXPECT_FALSE(manager.recovery_failure().present());
+
+  recovery.health_snapshot.traffic_seen = true;
+  recovery.health_snapshot.last_rx_activity_ms = 10U;
+  MhiProtocolHealth protocol_health{};
+  protocol_health.valid_frames = 2U;
+  protocol_health.last_valid_frame_ms = 10U;
+  manager.observe_protocol_health(protocol_health);
+  esphome::test_millis_value = 10U;
+  manager.loop();
+
+  EXPECT_EQ(listener.recovery_ready_count, 1);
+  EXPECT_TRUE(listener.commands_enabled);
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::RECOVERY_ACTIVE));
 }
 
 void transport_manager_enters_safe_mode_when_recovery_fails() {
@@ -540,6 +572,213 @@ void transport_manager_enters_safe_mode_without_recovery() {
   EXPECT_TRUE(manager.recovery_attempted());
   EXPECT_TRUE(manager.safe_mode());
   EXPECT_EQ(primary.shutdown_count, 1);
+}
+
+
+void transport_manager_recovers_after_startup_no_traffic() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  FakeTransportTransitionListener listener{};
+  MhiTransportManager manager{};
+
+  MhiTransportHealthPolicy policy{};
+  policy.startup_grace_ms = 0U;
+  policy.no_traffic_timeout_ms = 100U;
+  policy.invalid_traffic_timeout_ms = 100U;
+  policy.stalled_traffic_timeout_ms = 100U;
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+
+  manager.set_health_policy(policy);
+  manager.set_transition_listener(&listener);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+
+  esphome::test_millis_value = 99U;
+  manager.loop();
+  EXPECT_FALSE(manager.recovery_active());
+
+  esphome::test_millis_value = 100U;
+  manager.loop();
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_EQ(listener.switch_begin_count, 1);
+  EXPECT_EQ(static_cast<uint8_t>(manager.primary_failure().code),
+            static_cast<uint8_t>(MhiTransportError::NO_TRAFFIC));
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()),
+            static_cast<uint8_t>(MhiTransportState::WAITING_FOR_TRAFFIC));
+}
+
+void transport_manager_recovers_after_invalid_startup_traffic() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  MhiTransportManager manager{};
+
+  MhiTransportHealthPolicy policy{};
+  policy.startup_grace_ms = 0U;
+  policy.no_traffic_timeout_ms = 100U;
+  policy.invalid_traffic_timeout_ms = 100U;
+  policy.stalled_traffic_timeout_ms = 100U;
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+
+  manager.set_health_policy(policy);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+  primary.health_snapshot.traffic_seen = true;
+  primary.health_snapshot.last_rx_activity_ms = 10U;
+
+  esphome::test_millis_value = 10U;
+  manager.loop();
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::DEGRADED));
+
+  esphome::test_millis_value = 109U;
+  manager.loop();
+  EXPECT_FALSE(manager.recovery_active());
+
+  esphome::test_millis_value = 110U;
+  manager.loop();
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_EQ(static_cast<uint8_t>(manager.primary_failure().code),
+            static_cast<uint8_t>(MhiTransportError::INVALID_TRAFFIC));
+}
+
+void transport_manager_marks_valid_protocol_traffic_healthy() {
+  FakeUnifiedTransport primary{"primary"};
+  MhiTransportManager manager{};
+
+  MhiTransportHealthPolicy policy{};
+  policy.startup_grace_ms = 0U;
+  policy.no_traffic_timeout_ms = 100U;
+  policy.invalid_traffic_timeout_ms = 100U;
+  policy.stalled_traffic_timeout_ms = 100U;
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+
+  manager.set_health_policy(policy);
+  manager.set_primary(&primary);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+  primary.health_snapshot.traffic_seen = true;
+  primary.health_snapshot.last_rx_activity_ms = 10U;
+
+  MhiProtocolHealth protocol_health{};
+  protocol_health.valid_frames = 2U;
+  protocol_health.last_valid_frame_ms = 10U;
+  manager.observe_protocol_health(protocol_health);
+
+  esphome::test_millis_value = 10U;
+  manager.loop();
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::HEALTHY));
+  EXPECT_FALSE(manager.recovery_attempted());
+}
+
+void transport_manager_recovers_after_valid_traffic_stalls() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  MhiTransportManager manager{};
+
+  MhiTransportHealthPolicy policy{};
+  policy.startup_grace_ms = 0U;
+  policy.no_traffic_timeout_ms = 100U;
+  policy.invalid_traffic_timeout_ms = 100U;
+  policy.stalled_traffic_timeout_ms = 100U;
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+
+  manager.set_health_policy(policy);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+  primary.health_snapshot.traffic_seen = true;
+  primary.health_snapshot.last_rx_activity_ms = 10U;
+
+  MhiProtocolHealth protocol_health{};
+  protocol_health.valid_frames = 2U;
+  protocol_health.last_valid_frame_ms = 10U;
+  manager.observe_protocol_health(protocol_health);
+  esphome::test_millis_value = 10U;
+  manager.loop();
+  EXPECT_EQ(static_cast<uint8_t>(manager.state()), static_cast<uint8_t>(MhiTransportState::HEALTHY));
+
+  esphome::test_millis_value = 109U;
+  manager.loop();
+  EXPECT_FALSE(manager.recovery_active());
+
+  esphome::test_millis_value = 110U;
+  manager.loop();
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_EQ(static_cast<uint8_t>(manager.primary_failure().code),
+            static_cast<uint8_t>(MhiTransportError::RX_STALLED));
+}
+
+
+void transport_manager_recovers_after_latched_driver_fault() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  MhiTransportManager manager{};
+
+  MhiTransportHealthPolicy policy{};
+  policy.health_check_interval_ms = 0U;
+  manager.set_health_policy(policy);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+
+  primary.health_snapshot.fault_latched = true;
+  primary.health_snapshot.state = MhiTransportState::FAILED;
+  primary.runtime_error =
+      MhiTransportResult::failure(MhiTransportError::RMT_SETUP_FAILED, "runtime_rmt_fault", 77).error;
+
+  esphome::test_millis_value = 1U;
+  manager.loop();
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_EQ(static_cast<uint8_t>(manager.primary_failure().code),
+            static_cast<uint8_t>(MhiTransportError::RMT_SETUP_FAILED));
+  EXPECT_EQ(manager.primary_failure().native_code, 77);
+}
+
+void transport_manager_enters_safe_mode_when_recovery_has_no_traffic() {
+  FakeUnifiedTransport primary{"primary"};
+  FakeUnifiedTransport recovery{"fast_gpio_recovery"};
+  FakeTransportTransitionListener listener{};
+  primary.setup_result = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, "primary_setup");
+
+  MhiTransportHealthPolicy policy{};
+  policy.startup_grace_ms = 0U;
+  policy.no_traffic_timeout_ms = 100U;
+  policy.invalid_traffic_timeout_ms = 100U;
+  policy.stalled_traffic_timeout_ms = 100U;
+  policy.health_check_interval_ms = 0U;
+  policy.healthy_frame_count = 2U;
+
+  MhiTransportManager manager{};
+  manager.set_health_policy(policy);
+  manager.set_transition_listener(&listener);
+  manager.set_primary(&primary);
+  manager.set_recovery(&recovery);
+
+  esphome::test_millis_value = 0U;
+  EXPECT_TRUE(manager.setup());
+  EXPECT_TRUE(manager.recovery_active());
+  EXPECT_FALSE(manager.safe_mode());
+
+  esphome::test_millis_value = 100U;
+  manager.loop();
+  EXPECT_TRUE(manager.safe_mode());
+  EXPECT_EQ(listener.safe_mode_count, 1);
+  EXPECT_EQ(static_cast<uint8_t>(manager.recovery_failure().code),
+            static_cast<uint8_t>(MhiTransportError::NO_TRAFFIC));
 }
 
 }  // namespace mhi_unit_tests

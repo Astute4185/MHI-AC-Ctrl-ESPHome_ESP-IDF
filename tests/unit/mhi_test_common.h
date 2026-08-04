@@ -320,5 +320,11 @@ void transport_manager_activates_injected_recovery_after_setup_failure();
 void transport_manager_recovery_transition_is_ordered_and_latched();
 void transport_manager_enters_safe_mode_when_recovery_fails();
 void transport_manager_enters_safe_mode_without_recovery();
+void transport_manager_recovers_after_startup_no_traffic();
+void transport_manager_recovers_after_invalid_startup_traffic();
+void transport_manager_marks_valid_protocol_traffic_healthy();
+void transport_manager_recovers_after_valid_traffic_stalls();
+void transport_manager_recovers_after_latched_driver_fault();
+void transport_manager_enters_safe_mode_when_recovery_has_no_traffic();
 
 }  // namespace mhi_unit_tests

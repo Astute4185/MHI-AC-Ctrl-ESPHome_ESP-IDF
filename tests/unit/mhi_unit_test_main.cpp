@@ -146,6 +146,12 @@ int main() {
   transport_manager_recovery_transition_is_ordered_and_latched();
   transport_manager_enters_safe_mode_when_recovery_fails();
   transport_manager_enters_safe_mode_without_recovery();
+  transport_manager_recovers_after_startup_no_traffic();
+  transport_manager_recovers_after_invalid_startup_traffic();
+  transport_manager_marks_valid_protocol_traffic_healthy();
+  transport_manager_recovers_after_valid_traffic_stalls();
+  transport_manager_recovers_after_latched_driver_fault();
+  transport_manager_enters_safe_mode_when_recovery_has_no_traffic();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;
