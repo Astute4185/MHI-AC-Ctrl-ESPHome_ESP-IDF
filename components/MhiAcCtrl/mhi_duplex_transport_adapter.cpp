@@ -65,6 +65,10 @@ std::size_t MhiDuplexTransportAdapter::read(uint8_t* dst, std::size_t max_len) {
 }
 
 bool MhiDuplexTransportAdapter::queue_tx(const MhiTxEnvelope& envelope) {
+  if (!this->active_mode()) {
+    return false;
+  }
+
   if (backend_ == nullptr || !backend_->ready() || !envelope.valid()) {
     staging_failures_.fetch_add(1U, std::memory_order_relaxed);
     return false;
@@ -78,7 +82,14 @@ bool MhiDuplexTransportAdapter::queue_tx(const MhiTxEnvelope& envelope) {
 }
 
 bool MhiDuplexTransportAdapter::take_tx_completion(MhiTxCompletion& completion) {
-  return backend_ != nullptr && backend_->take_tx_completion(completion);
+  return this->active_mode() && backend_ != nullptr && backend_->take_tx_completion(completion);
+}
+
+void MhiDuplexTransportAdapter::set_active_mode(bool enabled) {
+  active_mode_enabled_.store(enabled, std::memory_order_release);
+  if (backend_ != nullptr) {
+    backend_->set_active_mode(enabled);
+  }
 }
 
 const char* MhiDuplexTransportAdapter::name() const {
@@ -108,8 +119,10 @@ MhiTransportCapabilities MhiDuplexTransportAdapter::capabilities() const {
   capabilities.supports_tx = true;
   capabilities.supports_classified_worker = supports_classified_worker_;
   capabilities.supports_rx_byte_critical_sections = false;
+  capabilities.supports_active_mode = true;
   return capabilities;
 }
+
 
 MhiTransportHealth MhiDuplexTransportAdapter::health() const {
   MhiTransportHealth snapshot = health_;
@@ -126,7 +139,8 @@ uint32_t MhiDuplexTransportAdapter::completed_tx_frames() const {
 }
 
 uint32_t MhiDuplexTransportAdapter::tx_failures() const {
-  return (backend_ == nullptr ? 0U : backend_->tx_failures()) + staging_failures_.load(std::memory_order_relaxed);
+  return (backend_ == nullptr ? 0U : backend_->tx_failures()) +
+         staging_failures_.load(std::memory_order_relaxed);
 }
 
 std::size_t MhiDuplexTransportAdapter::tx_completion_queue_depth() const {

@@ -33,12 +33,6 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-struct MhiPins {
-  int sck{-1};
-  int mosi{-1};
-  int miso{-1};
-};
-
 class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
  public:
   void setup() override;
@@ -51,29 +45,22 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->frame_size_ = frame_size;
   }
 
-  void set_sck_pin(int pin) {
-    this->pins_.sck = pin;
-  }
-  void set_mosi_pin(int pin) {
-    this->pins_.mosi = pin;
-  }
-  void set_miso_pin(int pin) {
-    this->pins_.miso = pin;
-  }
-
-  void set_rx_driver(const std::string& driver) {
-    this->rx_driver_ = driver;
-  }
-  void set_tx_driver(const std::string& driver) {
-    this->tx_driver_ = driver;
-  }
-
   void set_primary_transport(IMhiTransport* transport) {
     this->transport_.set_primary(transport);
   }
 
   void set_recovery_transport(IMhiTransport* transport) {
     this->transport_.set_recovery(transport);
+  }
+
+  bool set_active_mode(bool enabled);
+  bool active_mode() const {
+    return active_mode_enabled_.load(std::memory_order_acquire);
+  }
+
+  void set_active_mode_switch(switch_::Switch* sw) {
+    active_mode_switch_ = sw;
+    this->publish_active_mode_state_();
   }
 
   void set_fan_profile(const std::string& profile) {
@@ -87,18 +74,6 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
 
   bool fan_profile_supports_quiet() const {
     return mhi_fan_profile_supports_quiet(this->fan_profile_);
-  }
-
-  void set_frame_start_idle_ms(int idle_ms) {
-    if (idle_ms > 0) {
-      this->frame_start_idle_ms_ = static_cast<uint32_t>(idle_ms);
-    }
-  }
-
-  void set_rmt_spi_frame_gap_us(int frame_gap_us) {
-    if (frame_gap_us >= 500 && frame_gap_us <= 5000) {
-      this->rmt_spi_frame_gap_us_ = static_cast<uint32_t>(frame_gap_us);
-    }
   }
 
   void set_tx_background_interval_ms(int interval_ms) {
@@ -378,7 +353,10 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void on_transport_switch_begin(const MhiTransportErrorDetail& reason) override;
   void on_transport_recovery_ready() override;
   void on_transport_safe_mode(const MhiTransportErrorDetail& reason) override;
+  void reset_command_runtime_();
   void reset_runtime_for_transport_switch_();
+  void publish_active_mode_state_();
+  bool transport_command_path_ready_() const;
   void publish_transport_diagnostics_(bool force = false);
 
   void refresh_publish_targets_();
@@ -433,10 +411,6 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   int initial_vertical_vanes_position_{0};
   int initial_horizontal_vanes_position_{0};
 
-  MhiPins pins_{};
-
-  std::string rx_driver_{"fast_gpio_rx"};
-  std::string tx_driver_{"fast_gpio_tx"};
   MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
@@ -457,8 +431,6 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   MhiCommandCoordinator command_coordinator_{};
   SemaphoreHandle_t command_mutex_{nullptr};
 
-  uint32_t frame_start_idle_ms_{10U};
-  uint32_t rmt_spi_frame_gap_us_{1000U};
   uint32_t tx_background_interval_ms_{250U};
   uint32_t last_background_tx_ms_{0U};
   uint32_t tx_background_interval_deferrals_{0U};
@@ -466,8 +438,9 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   uint32_t tx_background_attempts_{0U};
   uint32_t tx_background_failures_{0U};
   uint32_t tx_command_priority_attempts_{0U};
-  bool rx_byte_critical_sections_enabled_{true};
   std::atomic<bool> transport_commands_enabled_{true};
+  std::atomic<bool> active_mode_enabled_{true};
+  switch_::Switch* active_mode_switch_{nullptr};
   bool publish_requested_{false};
 
   bool command_worker_enabled_{false};

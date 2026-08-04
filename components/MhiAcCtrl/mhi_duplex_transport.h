@@ -28,6 +28,10 @@ class IMhiDuplexTransport {
   // the bus transaction has actually finished.
   virtual bool take_tx_completion(MhiTxCompletion& completion) = 0;
 
+  // Disables MISO command participation while keeping RX transactions alive.
+  virtual void set_active_mode(bool enabled) = 0;
+  virtual bool active_mode() const = 0;
+
   virtual const char* name() const = 0;
   virtual bool ready() const = 0;
 

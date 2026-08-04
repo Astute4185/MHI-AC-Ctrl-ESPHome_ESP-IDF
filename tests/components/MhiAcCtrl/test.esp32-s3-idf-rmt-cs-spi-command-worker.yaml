@@ -31,3 +31,10 @@ climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: MHI Climate
+
+
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    active_mode:
+      name: MHI Active Mode

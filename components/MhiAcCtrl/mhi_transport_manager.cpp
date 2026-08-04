@@ -10,6 +10,9 @@ static const char* const TAG = "mhi_transport";
 
 void MhiTransportManager::set_primary(IMhiTransport* transport) {
   primary_ = transport;
+  if (primary_ != nullptr) {
+    primary_->set_active_mode(active_mode_enabled_);
+  }
   active_ = transport;
   recovery_active_ = false;
   recovery_attempted_ = false;
@@ -33,6 +36,9 @@ void MhiTransportManager::set_primary(IMhiTransport* transport) {
 
 void MhiTransportManager::set_recovery(IMhiTransport* transport) {
   recovery_ = transport;
+  if (recovery_ != nullptr) {
+    recovery_->set_active_mode(active_mode_enabled_);
+  }
 }
 
 bool MhiTransportManager::setup() {
@@ -66,10 +72,12 @@ bool MhiTransportManager::setup() {
 
   primary_->set_auto_tx_flush(auto_tx_flush_);
   primary_->set_rx_byte_critical_sections(rx_byte_critical_sections_);
+  primary_->set_active_mode(active_mode_enabled_);
 
   MhiTransportResult setup_result = primary_->setup();
   if (setup_result.ok && (!primary_->rx_ready() || !primary_->tx_ready())) {
-    setup_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "primary_ready_after_setup", 0,
+    setup_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT,
+                                               "primary_ready_after_setup", 0,
                                                "transport setup succeeded without ready RX/TX");
   }
 
@@ -124,7 +132,8 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
     return this->enter_safe_mode_(primary_result.error);
   }
 
-  ESP_LOGW(TAG, "Primary transport %s failed: error=%s operation=%s native=%ld; activating internal recovery %s",
+  ESP_LOGW(TAG,
+           "Primary transport %s failed: error=%s operation=%s native=%ld; activating internal recovery %s",
            failed_primary == nullptr ? "none" : failed_primary->name(),
            mhi_transport_error_name(primary_result.error.code),
            primary_result.error.operation == nullptr ? "none" : primary_result.error.operation,
@@ -132,11 +141,13 @@ bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_r
 
   recovery_->set_auto_tx_flush(auto_tx_flush_);
   recovery_->set_rx_byte_critical_sections(rx_byte_critical_sections_);
+  recovery_->set_active_mode(active_mode_enabled_);
 
   MhiTransportResult recovery_result = recovery_->setup();
   if (recovery_result.ok && (!recovery_->rx_ready() || !recovery_->tx_ready())) {
-    recovery_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "recovery_ready_after_setup",
-                                                  0, "recovery setup succeeded without ready RX/TX");
+    recovery_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT,
+                                                  "recovery_ready_after_setup", 0,
+                                                  "recovery setup succeeded without ready RX/TX");
   }
 
   if (!recovery_result.ok) {
@@ -183,8 +194,9 @@ bool MhiTransportManager::enter_safe_mode_(const MhiTransportErrorDetail& reason
     transition_listener_->on_transport_safe_mode(reason);
   }
 
-  ESP_LOGE(TAG, "Transport safe mode entered: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
-           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
+  ESP_LOGE(TAG, "Transport safe mode entered: error=%s operation=%s native=%ld",
+           mhi_transport_error_name(reason.code), reason.operation == nullptr ? "none" : reason.operation,
+           static_cast<long>(reason.native_code));
   return false;
 }
 
@@ -227,6 +239,10 @@ std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
 }
 
 bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
+  if (!active_mode_enabled_) {
+    return false;
+  }
+
   if (active_ == nullptr || safe_mode_) {
     if (diagnostics_ != nullptr) {
       diagnostics_->stats().on_tx_failure();
@@ -240,15 +256,25 @@ bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
 }
 
 bool MhiTransportManager::take_tx_completion(MhiTxCompletion& completion) {
-  return active_ != nullptr && !safe_mode_ && active_->take_tx_completion(completion);
+  return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->take_tx_completion(completion);
+}
+
+void MhiTransportManager::set_active_mode(bool enabled) {
+  active_mode_enabled_ = enabled;
+  if (primary_ != nullptr) {
+    primary_->set_active_mode(enabled);
+  }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_active_mode(enabled);
+  }
 }
 
 bool MhiTransportManager::has_pending_tx() const {
-  return active_ != nullptr && !safe_mode_ && active_->has_pending_tx();
+  return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->has_pending_tx();
 }
 
 bool MhiTransportManager::flush_tx_on_bus_marker() {
-  if (active_ == nullptr || safe_mode_) {
+  if (!active_mode_enabled_ || active_ == nullptr || safe_mode_) {
     return false;
   }
   const bool flushed = active_->flush_tx_on_bus_marker();
@@ -419,7 +445,8 @@ void MhiTransportManager::evaluate_runtime_health_(uint32_t now_ms) {
   if (transport_health.fault_latched) {
     MhiTransportErrorDetail error = active_->last_error();
     if (!error.present()) {
-      error = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "transport_fault_latched").error;
+      error = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT,
+                                          "transport_fault_latched").error;
     }
     this->handle_runtime_failure_(error);
     return;

@@ -2,12 +2,13 @@
 
 #ifdef MHI_USE_TRANSPORT_RMT_CS_SPI
 
+#include "mhi_rmt_cs_spi_transport.h"
+
 #include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-#include "mhi_rmt_cs_spi_transport.h"
 #if MHI_RMT_CS_SPI_SUPPORTED
 #include <driver/gpio.h>
 #include <esp_err.h>
@@ -228,7 +229,8 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
   (void)envelope;
   return false;
 #else
-  if (!ready_.load(std::memory_order_acquire) || !envelope.valid() || envelope.len != config_.frame_size_hint) {
+  if (!this->active_mode() || !ready_.load(std::memory_order_acquire) || !envelope.valid() ||
+      envelope.len != config_.frame_size_hint) {
     return false;
   }
 
@@ -238,11 +240,29 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
   return staged;
 #endif
 }
+void MhiRmtCsSpiTransport::set_active_mode(bool enabled) {
+  active_mode_enabled_.store(enabled, std::memory_order_release);
+#if MHI_RMT_CS_SPI_SUPPORTED
+  portENTER_CRITICAL(&mux_);
+  tx_mailbox_.clear();
+  tx_completions_.reset();
+  for (auto& slot : transaction_slots_) {
+    slot.tx_envelope = {};
+  }
+  portEXIT_CRITICAL(&mux_);
+#else
+  (void) enabled;
+#endif
+}
+
 bool MhiRmtCsSpiTransport::take_tx_completion(MhiTxCompletion& completion) {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   (void)completion;
   return false;
 #else
+  if (!this->active_mode()) {
+    return false;
+  }
   portENTER_CRITICAL(&mux_);
   const bool available = tx_completions_.pop(completion);
   portEXIT_CRITICAL(&mux_);
@@ -543,7 +563,9 @@ bool MhiRmtCsSpiTransport::queue_transaction_(TransactionSlot& slot) {
   slot.tx_envelope = {};
 
   portENTER_CRITICAL(&mux_);
-  tx_mailbox_.take(slot.tx_buffer, kTransferBytes, slot.tx_envelope);
+  if (active_mode_enabled_.load(std::memory_order_acquire)) {
+    tx_mailbox_.take(slot.tx_buffer, kTransferBytes, slot.tx_envelope);
+  }
   portEXIT_CRITICAL(&mux_);
   slot.transaction = {};
   slot.transaction.length = kTransferBytes * 8U;
@@ -669,7 +691,7 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
     invalid_length_transactions_++;
   }
 
-  if (slot->tx_envelope.valid()) {
+  if (active_mode_enabled_.load(std::memory_order_acquire) && slot->tx_envelope.valid()) {
     const bool tx_success = valid_frame_len && received_bytes == slot->tx_envelope.len;
     if (tx_success) {
       completed_tx_frames_++;

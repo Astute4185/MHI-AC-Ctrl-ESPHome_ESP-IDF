@@ -28,6 +28,11 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   bool queue_tx(const MhiTxEnvelope& envelope) override;
   bool take_tx_completion(MhiTxCompletion& completion) override;
 
+  void set_active_mode(bool enabled) override;
+  bool active_mode() const override {
+    return active_mode_enabled_.load(std::memory_order_acquire);
+  }
+
   bool has_pending_tx() const override {
     return false;
   }
@@ -36,14 +41,14 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   }
 
   void set_auto_tx_flush(bool enabled) override {
-    (void)enabled;
+    (void) enabled;
   }
   bool auto_tx_flush() const override {
     return false;
   }
 
   void set_rx_byte_critical_sections(bool enabled) override {
-    (void)enabled;
+    (void) enabled;
   }
   bool rx_byte_critical_sections() const override {
     return false;
@@ -74,6 +79,7 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   IMhiDuplexTransport* backend_{nullptr};
   bool supports_classified_worker_{true};
   std::atomic<uint32_t> staging_failures_{0U};
+  std::atomic<bool> active_mode_enabled_{true};
   MhiTransportHealth health_{};
   MhiTransportErrorDetail last_error_{};
 };

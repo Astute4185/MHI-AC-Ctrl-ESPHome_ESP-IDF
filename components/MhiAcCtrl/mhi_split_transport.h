@@ -37,6 +37,11 @@ class MhiSplitTransport final : public IMhiTransport {
   bool queue_tx(const MhiTxEnvelope& envelope) override;
   bool take_tx_completion(MhiTxCompletion& completion) override;
 
+  void set_active_mode(bool enabled) override;
+  bool active_mode() const override {
+    return active_mode_enabled_.load(std::memory_order_acquire);
+  }
+
   bool has_pending_tx() const override;
   bool flush_tx_on_bus_marker() override;
 
@@ -86,6 +91,7 @@ class MhiSplitTransport final : public IMhiTransport {
   void unlock_tx_() const;
 
   void reset_tx_state_();
+  void clear_tx_for_active_mode_();
   void queue_pending_tx_(const MhiTxEnvelope& envelope);
   bool pending_tx_available_() const;
   void clear_pending_tx_();
@@ -100,6 +106,7 @@ class MhiSplitTransport final : public IMhiTransport {
   bool rx_ready_{false};
   bool tx_ready_{false};
   bool auto_tx_flush_{true};
+  std::atomic<bool> active_mode_enabled_{true};
 
 #ifdef USE_ESP_IDF
   mutable portMUX_TYPE tx_mux_ = portMUX_INITIALIZER_UNLOCKED;

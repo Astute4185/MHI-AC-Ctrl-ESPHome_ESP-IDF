@@ -48,8 +48,9 @@ MhiTransportResult MhiSplitTransport::setup() {
   if (!rx_ready_) {
     last_error_ = MhiTransportResult::failure(MhiTransportError::RX_SETUP_FAILED, rx_->name()).error;
   } else if (!tx_ready_) {
-    last_error_ =
-        MhiTransportResult::failure(MhiTransportError::TX_SETUP_FAILED, tx_ == nullptr ? "none" : tx_->name()).error;
+    last_error_ = MhiTransportResult::failure(MhiTransportError::TX_SETUP_FAILED,
+                                              tx_ == nullptr ? "none" : tx_->name())
+                      .error;
   }
 
   if (last_error_.present()) {
@@ -104,6 +105,10 @@ std::size_t MhiSplitTransport::read(uint8_t* dst, std::size_t max_len) {
 }
 
 bool MhiSplitTransport::queue_tx(const MhiTxEnvelope& envelope) {
+  if (!this->active_mode()) {
+    return false;
+  }
+
   if (!tx_ready_ || !envelope.valid()) {
     tx_failures_.fetch_add(1U, std::memory_order_relaxed);
     return false;
@@ -139,13 +144,29 @@ bool MhiSplitTransport::queue_tx(const MhiTxEnvelope& envelope) {
 }
 
 bool MhiSplitTransport::take_tx_completion(MhiTxCompletion& completion) {
+  if (!this->active_mode()) {
+    return false;
+  }
+
   this->lock_tx_();
   const bool available = tx_completions_.pop(completion);
   this->unlock_tx_();
   return available;
 }
 
+void MhiSplitTransport::set_active_mode(bool enabled) {
+  active_mode_enabled_.store(enabled, std::memory_order_release);
+  // Clear both staged frames and old completions on every transition. A TX
+  // already inside the hardware send call may finish, so preserve the
+  // in-progress flag until that call returns.
+  this->clear_tx_for_active_mode_();
+}
+
 bool MhiSplitTransport::has_pending_tx() const {
+  if (!this->active_mode()) {
+    return false;
+  }
+
   this->lock_tx_();
   const bool pending = pending_tx_ || tx_in_progress_;
   this->unlock_tx_();
@@ -153,7 +174,7 @@ bool MhiSplitTransport::has_pending_tx() const {
 }
 
 bool MhiSplitTransport::flush_tx_on_bus_marker() {
-  if (!uses_bus_marker_ || tx_ == nullptr || !tx_ready_ || rx_ == nullptr || !rx_ready_) {
+  if (!this->active_mode() || !uses_bus_marker_ || tx_ == nullptr || !tx_ready_ || rx_ == nullptr || !rx_ready_) {
     return false;
   }
 
@@ -185,7 +206,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
     if (marker.sequence != last_stale_bus_marker_sequence_) {
       last_stale_bus_marker_sequence_ = marker.sequence;
       const std::size_t pending_len = pending_tx_envelope_.len;
-      (void)pending_len;
+      (void) pending_len;
       this->unlock_tx_();
       ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
                 static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
@@ -221,9 +242,13 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
 
   this->lock_tx_();
   tx_in_progress_ = false;
+  const bool still_active = active_mode_enabled_.load(std::memory_order_acquire);
   bool completion_stored = true;
-  if (envelope.is_command()) {
+  if (still_active && envelope.is_command()) {
     completion_stored = tx_completions_.push(completion);
+  }
+  if (!still_active) {
+    this->clear_pending_tx_();
   }
   if (ok) {
     if (pending_tx_generation_ == send_generation) {
@@ -278,9 +303,12 @@ MhiTransportCapabilities MhiSplitTransport::capabilities() const {
   capabilities.uses_bus_marker = uses_bus_marker_;
   capabilities.supports_tx = tx_ != nullptr && std::strcmp(tx_->name(), "none") != 0;
   capabilities.supports_classified_worker = supports_classified_worker_;
-  capabilities.supports_rx_byte_critical_sections = rx_ != nullptr && rx_->supports_byte_critical_sections();
+  capabilities.supports_rx_byte_critical_sections =
+      rx_ != nullptr && rx_->supports_byte_critical_sections();
+  capabilities.supports_active_mode = true;
   return capabilities;
 }
+
 
 MhiTransportHealth MhiSplitTransport::health() const {
   MhiTransportHealth snapshot = health_;
@@ -313,6 +341,7 @@ uint32_t MhiSplitTransport::tx_completion_queue_dropped() const {
   return value;
 }
 
+
 void MhiSplitTransport::lock_tx_() const {
 #ifdef USE_ESP_IDF
   portENTER_CRITICAL(&tx_mux_);
@@ -339,6 +368,19 @@ void MhiSplitTransport::reset_tx_state_() {
   pending_tx_queued_after_marker_sequence_ = 0U;
   this->unlock_tx_();
   last_consumed_bus_marker_sequence_ = 0U;
+  last_stale_bus_marker_sequence_ = 0U;
+  tx_backoff_until_ms_ = 0U;
+}
+
+
+void MhiSplitTransport::clear_tx_for_active_mode_() {
+  this->lock_tx_();
+  pending_tx_ = false;
+  pending_tx_envelope_ = {};
+  tx_completions_.reset();
+  pending_tx_generation_++;
+  pending_tx_queued_after_marker_sequence_ = 0U;
+  this->unlock_tx_();
   last_stale_bus_marker_sequence_ = 0U;
   tx_backoff_until_ms_ = 0U;
 }
