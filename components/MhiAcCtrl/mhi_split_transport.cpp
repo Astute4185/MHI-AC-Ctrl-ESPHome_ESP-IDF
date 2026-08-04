@@ -1,0 +1,304 @@
+#include "mhi_split_transport.h"
+
+#include <cstring>
+
+#include "esphome/core/hal.h"
+#include "esphome/core/log.h"
+
+namespace esphome {
+namespace mhi_ac_ctrl {
+
+static const char* const TAG = "mhi_split_transport";
+
+void MhiSplitTransport::bind(IMhiRxDriver* rx, IMhiTxDriver* tx, bool supports_classified_worker,
+                             bool uses_bus_marker) {
+  rx_ = rx;
+  tx_ = tx;
+  supports_classified_worker_ = supports_classified_worker;
+  uses_bus_marker_ = uses_bus_marker;
+  rx_ready_ = false;
+  tx_ready_ = false;
+  this->reset_tx_state_();
+}
+
+bool MhiSplitTransport::setup(const MhiTransportPins& pins) {
+  this->reset_tx_state_();
+  completed_tx_frames_.store(0U, std::memory_order_relaxed);
+  tx_failures_.store(0U, std::memory_order_relaxed);
+
+  rx_ready_ = rx_ != nullptr && rx_->setup(pins);
+  tx_ready_ = tx_ == nullptr || tx_->setup(pins);
+  return rx_ready_ && tx_ready_;
+}
+
+void MhiSplitTransport::loop() {
+  if (rx_ != nullptr) {
+    rx_->loop();
+  }
+  if (tx_ != nullptr) {
+    tx_->loop();
+  }
+  if (auto_tx_flush_) {
+    this->flush_tx_on_bus_marker();
+  }
+}
+
+void MhiSplitTransport::shutdown() {
+  if (rx_ != nullptr) {
+    rx_->shutdown();
+  }
+  this->reset_tx_state_();
+  rx_ready_ = false;
+  tx_ready_ = false;
+}
+
+std::size_t MhiSplitTransport::read(uint8_t* dst, std::size_t max_len) {
+  if (!rx_ready_ || rx_ == nullptr || dst == nullptr || max_len == 0U) {
+    return 0U;
+  }
+
+  const std::size_t len = rx_->read(dst, max_len);
+  if (auto_tx_flush_) {
+    this->flush_tx_on_bus_marker();
+  }
+  return len;
+}
+
+bool MhiSplitTransport::queue_tx(const MhiTxEnvelope& envelope) {
+  if (!tx_ready_ || !envelope.valid()) {
+    tx_failures_.fetch_add(1U, std::memory_order_relaxed);
+    return false;
+  }
+
+  if (tx_ == nullptr) {
+    tx_failures_.fetch_add(1U, std::memory_order_relaxed);
+    return false;
+  }
+
+  if (this->tx_disabled_()) {
+    if (envelope.is_command()) {
+      MhiTxCompletion completion{};
+      completion.generation = envelope.generation;
+      completion.kind = envelope.kind;
+      completion.command_mask = envelope.command_mask;
+      completion.intent = envelope.intent;
+      completion.success = false;
+      completion.completed_at_ms = millis();
+
+      portENTER_CRITICAL(&tx_mux_);
+      const bool stored = tx_completions_.push(completion);
+      portEXIT_CRITICAL(&tx_mux_);
+      if (!stored) {
+        tx_failures_.fetch_add(1U, std::memory_order_relaxed);
+      }
+    }
+    return true;
+  }
+
+  this->queue_pending_tx_(envelope);
+  return true;
+}
+
+bool MhiSplitTransport::take_tx_completion(MhiTxCompletion& completion) {
+  portENTER_CRITICAL(&tx_mux_);
+  const bool available = tx_completions_.pop(completion);
+  portEXIT_CRITICAL(&tx_mux_);
+  return available;
+}
+
+bool MhiSplitTransport::has_pending_tx() const {
+  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  const bool pending = pending_tx_ || tx_in_progress_;
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  return pending;
+}
+
+bool MhiSplitTransport::flush_tx_on_bus_marker() {
+  if (!uses_bus_marker_ || tx_ == nullptr || !tx_ready_ || rx_ == nullptr || !rx_ready_) {
+    return false;
+  }
+
+  const MhiBusMarker marker = rx_->bus_marker();
+  if (!marker.valid || marker.sequence == 0U) {
+    return false;
+  }
+
+  const uint32_t marker_age_us = elapsed_us_(micros(), marker.frame_end_us);
+  const uint32_t now_ms = millis();
+  MhiTxEnvelope envelope{};
+  uint32_t send_generation = 0U;
+
+  portENTER_CRITICAL(&tx_mux_);
+  if (!this->pending_tx_available_() || tx_in_progress_) {
+    portEXIT_CRITICAL(&tx_mux_);
+    return false;
+  }
+  if (tx_backoff_until_ms_ != 0U && static_cast<int32_t>(now_ms - tx_backoff_until_ms_) < 0) {
+    portEXIT_CRITICAL(&tx_mux_);
+    return false;
+  }
+  if (marker.sequence == last_consumed_bus_marker_sequence_ ||
+      marker.sequence == pending_tx_queued_after_marker_sequence_) {
+    portEXIT_CRITICAL(&tx_mux_);
+    return false;
+  }
+  if (marker_age_us > tx_marker_arm_max_age_us_) {
+    if (marker.sequence != last_stale_bus_marker_sequence_) {
+      last_stale_bus_marker_sequence_ = marker.sequence;
+      const std::size_t pending_len = pending_tx_envelope_.len;
+      (void)pending_len;
+      portEXIT_CRITICAL(&tx_mux_);
+      ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
+                static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
+                static_cast<unsigned long>(tx_marker_arm_max_age_us_), static_cast<unsigned int>(pending_len));
+      return false;
+    }
+    portEXIT_CRITICAL(&tx_mux_);
+    return false;
+  }
+
+  last_consumed_bus_marker_sequence_ = marker.sequence;
+  envelope = pending_tx_envelope_;
+  send_generation = pending_tx_generation_;
+  tx_in_progress_ = true;
+  portEXIT_CRITICAL(&tx_mux_);
+
+  const bool ok = tx_->send(envelope.frame.data(), envelope.len);
+  if (ok) {
+    completed_tx_frames_.fetch_add(1U, std::memory_order_relaxed);
+  } else {
+    tx_failures_.fetch_add(1U, std::memory_order_relaxed);
+  }
+
+  MhiTxCompletion completion{};
+  if (envelope.is_command()) {
+    completion.generation = envelope.generation;
+    completion.kind = envelope.kind;
+    completion.command_mask = envelope.command_mask;
+    completion.intent = envelope.intent;
+    completion.success = ok;
+    completion.completed_at_ms = millis();
+  }
+
+  portENTER_CRITICAL(&tx_mux_);
+  tx_in_progress_ = false;
+  bool completion_stored = true;
+  if (envelope.is_command()) {
+    completion_stored = tx_completions_.push(completion);
+  }
+  if (ok) {
+    if (pending_tx_generation_ == send_generation) {
+      this->clear_pending_tx_();
+    }
+    tx_backoff_until_ms_ = 0U;
+    portEXIT_CRITICAL(&tx_mux_);
+    if (!completion_stored) {
+      tx_failures_.fetch_add(1U, std::memory_order_relaxed);
+    }
+    return true;
+  }
+
+  if (pending_tx_generation_ == send_generation) {
+    tx_backoff_until_ms_ = millis() + tx_failure_backoff_ms_;
+  }
+  portEXIT_CRITICAL(&tx_mux_);
+  if (!completion_stored) {
+    tx_failures_.fetch_add(1U, std::memory_order_relaxed);
+  }
+
+  ESP_LOGD(TAG, "TX frame missed armed bus marker sequence=%lu age=%luus len=%u backoff=%lums",
+           static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
+           static_cast<unsigned int>(envelope.len), static_cast<unsigned long>(tx_failure_backoff_ms_));
+  return false;
+}
+
+void MhiSplitTransport::set_rx_byte_critical_sections(bool enabled) {
+  if (rx_ != nullptr) {
+    rx_->set_byte_critical_sections(enabled);
+  }
+  if (tx_ != nullptr) {
+    tx_->set_byte_critical_sections(enabled);
+  }
+}
+
+bool MhiSplitTransport::rx_byte_critical_sections() const {
+  return rx_ != nullptr && rx_->byte_critical_sections();
+}
+
+const char* MhiSplitTransport::rx_name() const {
+  return rx_ == nullptr ? "none" : rx_->name();
+}
+
+const char* MhiSplitTransport::tx_name() const {
+  return tx_ == nullptr ? "none" : tx_->name();
+}
+
+MhiTransportCapabilities MhiSplitTransport::capabilities() const {
+  MhiTransportCapabilities capabilities{};
+  capabilities.integrated_duplex = false;
+  capabilities.uses_bus_marker = uses_bus_marker_;
+  capabilities.supports_classified_worker = supports_classified_worker_;
+  capabilities.supports_rx_byte_critical_sections = rx_ != nullptr && rx_->supports_byte_critical_sections();
+  return capabilities;
+}
+
+std::size_t MhiSplitTransport::tx_completion_queue_depth() const {
+  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  const std::size_t value = tx_completions_.size();
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  return value;
+}
+
+std::size_t MhiSplitTransport::tx_completion_queue_high_water() const {
+  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  const std::size_t value = tx_completions_.high_water_mark();
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  return value;
+}
+
+uint32_t MhiSplitTransport::tx_completion_queue_dropped() const {
+  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  const uint32_t value = tx_completions_.dropped();
+  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
+  return value;
+}
+
+void MhiSplitTransport::reset_tx_state_() {
+  portENTER_CRITICAL(&tx_mux_);
+  pending_tx_ = false;
+  pending_tx_envelope_ = {};
+  tx_completions_.reset();
+  tx_in_progress_ = false;
+  pending_tx_generation_ = 0U;
+  pending_tx_queued_after_marker_sequence_ = 0U;
+  portEXIT_CRITICAL(&tx_mux_);
+  last_consumed_bus_marker_sequence_ = 0U;
+  last_stale_bus_marker_sequence_ = 0U;
+  tx_backoff_until_ms_ = 0U;
+}
+
+void MhiSplitTransport::queue_pending_tx_(const MhiTxEnvelope& envelope) {
+  portENTER_CRITICAL(&tx_mux_);
+  pending_tx_envelope_ = envelope;
+  pending_tx_ = pending_tx_envelope_.valid();
+  pending_tx_generation_++;
+  const MhiBusMarker marker = rx_ == nullptr ? MhiBusMarker{} : rx_->bus_marker();
+  pending_tx_queued_after_marker_sequence_ = marker.valid ? marker.sequence : 0U;
+  portEXIT_CRITICAL(&tx_mux_);
+}
+
+bool MhiSplitTransport::pending_tx_available_() const {
+  return pending_tx_ && pending_tx_envelope_.valid();
+}
+
+void MhiSplitTransport::clear_pending_tx_() {
+  pending_tx_ = false;
+  pending_tx_envelope_ = {};
+}
+
+bool MhiSplitTransport::tx_disabled_() const {
+  return tx_ != nullptr && std::strcmp(tx_->name(), "none") == 0;
+}
+
+}  // namespace mhi_ac_ctrl
+}  // namespace esphome

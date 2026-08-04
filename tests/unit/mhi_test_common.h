@@ -309,5 +309,8 @@ void worker_policy_keeps_synchronous_rx_in_main_loop();
 void rmt_cs_spi_supports_esp32_and_s3();
 void rmt_cs_spi_exposes_single_driver_name();
 void rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
+void split_transport_delegates_rx_and_marker_armed_tx();
+void split_transport_preserves_null_tx_completion_contract();
+void duplex_transport_adapter_preserves_backend_contract();
 
 }  // namespace mhi_unit_tests

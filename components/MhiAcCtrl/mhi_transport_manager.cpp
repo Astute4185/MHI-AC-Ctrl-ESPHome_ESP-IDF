@@ -1,8 +1,5 @@
 #include "mhi_transport_manager.h"
 
-#include <algorithm>
-#include <cstring>
-
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -11,13 +8,6 @@ namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_transport";
 
-namespace {
-
-inline uint32_t elapsed_us(uint32_t now_us, uint32_t then_us) {
-  return static_cast<uint32_t>(now_us - then_us);
-}
-
-}  // namespace
 void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver,
                                     const std::string& tx_driver, uint8_t frame_size_hint, uint32_t frame_start_idle_ms,
                                     uint32_t external_clock_byte_gap_us, uint32_t external_clock_frame_gap_us,
@@ -26,10 +16,18 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   pins_.sck = sck_pin;
   pins_.mosi = mosi_pin;
   pins_.miso = miso_pin;
-  rx_driver_name_ = rx_driver.empty() ? "fast_gpio_rx" : rx_driver;
-  const bool integrated_duplex = rx_driver_name_ == "rmt_cs_spi";
-  transport_driver_name_ = integrated_duplex ? rx_driver_name_ : "split";
-  tx_driver_name_ = tx_driver.empty() ? (integrated_duplex ? rx_driver_name_ : "fast_gpio_tx") : tx_driver;
+  requested_rx_driver_name_ = rx_driver.empty() ? "fast_gpio_rx" : rx_driver;
+  const bool integrated_duplex = requested_rx_driver_name_ == "rmt_cs_spi";
+  requested_tx_driver_name_ =
+      tx_driver.empty() ? (integrated_duplex ? requested_rx_driver_name_ : "fast_gpio_tx") : tx_driver;
+
+  (void)frame_size_hint;
+  (void)frame_start_idle_ms;
+  (void)external_clock_byte_gap_us;
+  (void)external_clock_frame_gap_us;
+  (void)external_clock_min_edge_gap_us;
+  (void)external_clock_edge;
+  (void)external_clock_sample_delay_nops;
 
 #if MHI_ENABLE_FAST_GPIO_TRANSPORT
   MhiFastGpioRxConfig fast_gpio_rx_config{};
@@ -42,21 +40,24 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   MhiFastGpioTxConfig fast_gpio_tx_config{};
   fast_gpio_tx_config.frame_size_hint = frame_size_hint;
   fast_gpio_tx_config.frame_start_idle_ms = frame_start_idle_ms;
-  fast_gpio_tx_config.max_exchange_time_ms = tx_marker_timeout_ms_;
+  fast_gpio_tx_config.max_exchange_time_ms = 60U;
   fast_gpio_tx_.set_config(fast_gpio_tx_config);
 #endif
+
 #if MHI_ENABLE_RMT_SPI_RX_DRIVER
   MhiRmtSpiRxConfig rmt_spi_rx_config{};
   rmt_spi_rx_config.frame_size_hint = frame_size_hint;
   rmt_spi_rx_config.frame_gap_us = rmt_spi_frame_gap_us_;
   rmt_spi_rx_.set_config(rmt_spi_rx_config);
 #endif
+
 #if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
   MhiRmtCsSpiConfig rmt_cs_spi_config{};
   rmt_cs_spi_config.frame_size_hint = frame_size_hint;
   rmt_cs_spi_config.frame_gap_us = rmt_spi_frame_gap_us_;
   rmt_cs_spi_.set_config(rmt_cs_spi_config);
 #endif
+
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxConfig external_clock_rx_config{};
   external_clock_rx_config.frame_size_hint = frame_size_hint;
@@ -68,551 +69,272 @@ void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, con
   external_clock_rx_config.sample_delay_nops = external_clock_sample_delay_nops;
   external_clock_rx_.set_config(external_clock_rx_config);
 #endif
-  portENTER_CRITICAL(&tx_mux_);
-  pending_tx_ = false;
-  pending_tx_envelope_ = {};
-  tx_completions_.reset();
-  tx_in_progress_ = false;
-  pending_tx_generation_ = 0U;
-  pending_tx_queued_after_marker_sequence_ = 0U;
-  portEXIT_CRITICAL(&tx_mux_);
-  last_consumed_bus_marker_sequence_ = 0U;
-  last_stale_bus_marker_sequence_ = 0U;
-  tx_backoff_until_ms_ = 0U;
-  last_duplex_tx_completed_ = 0U;
-  last_duplex_tx_failures_ = 0U;
 
-  this->resolve_drivers();
+  this->resolve_transports_();
+  this->reset_transport_diagnostic_cursors_();
 }
-void MhiTransportManager::resolve_drivers() {
-  duplex_ = nullptr;
-  if (rx_driver_name_ == "rmt_cs_spi") {
+
+void MhiTransportManager::resolve_transports_() {
+  primary_ = nullptr;
+  recovery_ = nullptr;
+  active_ = nullptr;
+  recovery_active_ = false;
+
+  if (requested_rx_driver_name_ == "rmt_cs_spi") {
 #if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
-    transport_driver_name_ = "rmt_cs_spi";
-    tx_driver_name_ = "rmt_cs_spi";
-    duplex_ = &rmt_cs_spi_;
-    rx_ = nullptr;
-    tx_ = nullptr;
-    return;
+    primary_duplex_transport_.bind(&rmt_cs_spi_, true);
+    primary_ = &primary_duplex_transport_;
 #else
-    ESP_LOGW(TAG,
-             "rmt_cs_spi is only built for ESP-IDF on ESP32 and ESP32-S3; falling back to split "
-             "FastGPIO transport");
-    transport_driver_name_ = "split";
-    rx_driver_name_ = "fast_gpio_rx";
-    tx_driver_name_ = "fast_gpio_tx";
+    ESP_LOGW(TAG, "rmt_cs_spi is not compiled; using FastGPIO transport");
 #endif
   }
-  transport_driver_name_ = "split";
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &fast_gpio_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#else
-  if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
+
+  if (primary_ == nullptr && requested_rx_driver_name_ == "fast_gpio_rx") {
 #if MHI_ENABLE_FAST_GPIO_TRANSPORT
-    rx_ = &fast_gpio_rx_;
-#else
-    rx_ = nullptr;
-#endif
-    tx_ = nullptr;
-    ESP_LOGW(TAG, "Split FastGPIO TX is not built for this target; TX disabled");
-    return;
-  }
-#endif
-#if MHI_ENABLE_RMT_SPI_RX_DRIVER
-  if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "none") {
-    rx_ = &rmt_spi_rx_;
 #if MHI_ENABLE_SPLIT_TX_DRIVER
-    tx_ = &null_tx_;
+    IMhiTxDriver* tx = requested_tx_driver_name_ == "none" ? static_cast<IMhiTxDriver*>(&null_tx_)
+                                                           : static_cast<IMhiTxDriver*>(&fast_gpio_tx_);
+    const bool uses_bus_marker = tx == &fast_gpio_tx_;
 #else
-    tx_ = nullptr;
+    IMhiTxDriver* tx = nullptr;
+    const bool uses_bus_marker = false;
+    if (requested_tx_driver_name_ == "fast_gpio_tx") {
+      ESP_LOGW(TAG, "Split FastGPIO TX is not built for this target; TX disabled");
+    }
 #endif
-    return;
+    primary_split_transport_.bind(&fast_gpio_rx_, tx, false, uses_bus_marker);
+    primary_ = &primary_split_transport_;
+#endif
   }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &rmt_spi_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#endif
-#endif
 
-#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
-  if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "none") {
-    rx_ = &external_clock_rx_;
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-    tx_ = &null_tx_;
+  if (primary_ == nullptr && requested_rx_driver_name_ == "rmt_spi_rx") {
+#if MHI_ENABLE_RMT_SPI_RX_DRIVER && MHI_ENABLE_SPLIT_TX_DRIVER
+    IMhiTxDriver* tx = requested_tx_driver_name_ == "none" ? static_cast<IMhiTxDriver*>(&null_tx_)
+                                                           : static_cast<IMhiTxDriver*>(&fast_gpio_tx_);
+    primary_split_transport_.bind(&rmt_spi_rx_, tx, true, tx == &fast_gpio_tx_);
+    primary_ = &primary_split_transport_;
 #else
-    tx_ = nullptr;
+    ESP_LOGW(TAG, "rmt_spi_rx is not compiled for this target; using FastGPIO transport");
 #endif
-    return;
   }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &external_clock_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#endif
+
+  if (primary_ == nullptr && requested_rx_driver_name_ == "external_clock_rx") {
+#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER && MHI_ENABLE_SPLIT_TX_DRIVER
+    IMhiTxDriver* tx = requested_tx_driver_name_ == "none" ? static_cast<IMhiTxDriver*>(&null_tx_)
+                                                           : static_cast<IMhiTxDriver*>(&fast_gpio_tx_);
+    primary_split_transport_.bind(&external_clock_rx_, tx, true, tx == &fast_gpio_tx_);
+    primary_ = &primary_split_transport_;
 #else
-  if (rx_driver_name_ == "external_clock_rx") {
-    ESP_LOGW(TAG, "external_clock_rx is only built for ESP32 and ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
-  }
+    ESP_LOGW(TAG, "external_clock_rx is not compiled for this target; using FastGPIO transport");
 #endif
-#if !MHI_ENABLE_RMT_SPI_RX_DRIVER
-  if (rx_driver_name_ == "rmt_spi_rx") {
-    ESP_LOGW(TAG, "rmt_spi_rx is only built for ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
   }
-#endif
 
-  ESP_LOGW(TAG, "Unsupported driver combination RX=%s TX=%s; falling back to fast_gpio_rx/fast_gpio_tx",
-           rx_driver_name_.c_str(), tx_driver_name_.c_str());
-
-  rx_driver_name_ = "fast_gpio_rx";
-  tx_driver_name_ = "fast_gpio_tx";
+  if (primary_ == nullptr) {
 #if MHI_ENABLE_FAST_GPIO_TRANSPORT
-  rx_ = &fast_gpio_rx_;
-#else
-  rx_ = nullptr;
-#endif
 #if MHI_ENABLE_SPLIT_TX_DRIVER
-  tx_ = &fast_gpio_tx_;
+    primary_split_transport_.bind(&fast_gpio_rx_, &fast_gpio_tx_, false, true);
 #else
-  tx_ = nullptr;
+    primary_split_transport_.bind(&fast_gpio_rx_, nullptr, false, false);
 #endif
+    primary_ = &primary_split_transport_;
+    requested_rx_driver_name_ = "fast_gpio_rx";
+    requested_tx_driver_name_ = "fast_gpio_tx";
+#else
+    ESP_LOGE(TAG, "No compiled transport can satisfy RX=%s TX=%s", requested_rx_driver_name_.c_str(),
+             requested_tx_driver_name_.c_str());
+#endif
+  }
+
+#if MHI_ENABLE_FAST_GPIO_TRANSPORT && MHI_ENABLE_SPLIT_TX_DRIVER
+  if (requested_rx_driver_name_ != "fast_gpio_rx") {
+    recovery_split_transport_.bind(&fast_gpio_rx_, &fast_gpio_tx_, false, true);
+    recovery_ = &recovery_split_transport_;
+  }
+#endif
+
+  active_ = primary_;
 }
 
 bool MhiTransportManager::setup() {
-  ESP_LOGCONFIG(TAG, "Transport setup: requested transport=%s RX=%s TX=%s", transport_driver_name_.c_str(),
-                rx_driver_name_.c_str(), tx_driver_name_.c_str());
-  if (duplex_ != nullptr) {
-    const bool duplex_ready = duplex_->setup(pins_);
-    rx_ready_ = duplex_ready;
-    tx_ready_ = duplex_ready;
-  } else {
-    rx_ready_ = rx_ != nullptr && rx_->setup(pins_);
-    tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
-  }
+  ESP_LOGCONFIG(TAG, "Transport setup: requested RX=%s TX=%s", requested_rx_driver_name_.c_str(),
+                requested_tx_driver_name_.c_str());
 
-  if (!rx_ready_ || !tx_ready_) {
-    ESP_LOGW(TAG, "Transport %s RX=%s TX=%s failed to start; falling back to fast_gpio_rx/fast_gpio_tx",
-             transport_driver_name_.c_str(), rx_driver_name_.c_str(), tx_driver_name_.c_str());
-    if (duplex_ != nullptr) {
-      duplex_->shutdown();
-      duplex_ = nullptr;
-    } else if (rx_ != nullptr && rx_ready_) {
-      rx_->shutdown();
+  bool ready = active_ != nullptr && active_->setup(pins_);
+  if (!ready && recovery_ != nullptr && recovery_ != active_) {
+    ESP_LOGW(TAG, "Primary transport RX=%s TX=%s failed to start; activating internal FastGPIO recovery",
+             active_ == nullptr ? "none" : active_->rx_name(), active_ == nullptr ? "none" : active_->tx_name());
+    if (active_ != nullptr) {
+      active_->shutdown();
     }
-
-    transport_driver_name_ = "split";
-    rx_driver_name_ = "fast_gpio_rx";
-    tx_driver_name_ = "fast_gpio_tx";
-#if MHI_ENABLE_FAST_GPIO_TRANSPORT
-    rx_ = &fast_gpio_rx_;
-#else
-    rx_ = nullptr;
-#endif
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-    tx_ = &fast_gpio_tx_;
-#else
-    tx_ = nullptr;
-#endif
-#if MHI_ENABLE_FAST_GPIO_TRANSPORT
-    rx_ready_ = rx_->setup(pins_);
-    tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
-#else
-    rx_ready_ = false;
-    tx_ready_ = false;
-    ESP_LOGE(TAG, "FastGPIO recovery transport is not compiled into this firmware");
-#endif
+    active_ = recovery_;
+    recovery_active_ = true;
+    this->reset_transport_diagnostic_cursors_();
+    ready = active_->setup(pins_);
   }
+
   if (diagnostics_ != nullptr) {
     diagnostics_->set_rx_driver_name(this->rx_name());
     diagnostics_->set_tx_driver_name(this->tx_name());
-    diagnostics_->set_rx_driver_ready(rx_ready_);
-    diagnostics_->set_tx_driver_ready(tx_ready_);
+    diagnostics_->set_rx_driver_ready(this->rx_ready());
+    diagnostics_->set_tx_driver_ready(this->tx_ready());
   }
 
-  ESP_LOGCONFIG(TAG, "Transport active: transport=%s RX=%s ready=%s TX=%s ready=%s", transport_driver_name_.c_str(),
-                this->rx_name(), rx_ready_ ? "YES" : "NO", this->tx_name(), tx_ready_ ? "YES" : "NO");
-  if (duplex_ == nullptr) {
-    ESP_LOGCONFIG(TAG, "TX armed marker scheduling: max_marker_age=%luus timeout=%lums fail_backoff=%lums",
-                  static_cast<unsigned long>(tx_marker_arm_max_age_us_),
-                  static_cast<unsigned long>(tx_marker_timeout_ms_),
-                  static_cast<unsigned long>(tx_failure_backoff_ms_));
-  } else {
+  ESP_LOGCONFIG(TAG, "Transport active: strategy=%s RX=%s ready=%s TX=%s ready=%s recovery=%s",
+                active_ == nullptr ? "none" : active_->name(), this->rx_name(), this->rx_ready() ? "YES" : "NO",
+                this->tx_name(), this->tx_ready() ? "YES" : "NO", recovery_active_ ? "YES" : "NO");
+
+  if (active_ != nullptr && active_->capabilities().uses_bus_marker) {
+    ESP_LOGCONFIG(TAG, "TX ownership: split transport uses marker-armed real-time transmission");
+  } else if (active_ != nullptr && active_->capabilities().integrated_duplex) {
     ESP_LOGCONFIG(TAG, "TX ownership: duplex transport stages one frame for the next GP-SPI transaction");
   }
 
-  return rx_ready_ && tx_ready_;
+  return ready && this->rx_ready() && this->tx_ready();
 }
+
 void MhiTransportManager::loop() {
-  if (duplex_ != nullptr) {
-    duplex_->loop();
-    this->update_duplex_diagnostics_();
+  if (active_ == nullptr) {
     return;
   }
-
-  if (rx_ != nullptr) {
-    rx_->loop();
-  }
-
-  if (tx_ != nullptr) {
-    tx_->loop();
-  }
-
-  if (auto_tx_flush_) {
-    this->flush_tx_on_bus_marker();
-  }
+  active_->loop();
+  this->update_transport_diagnostics_();
 }
 
 void MhiTransportManager::shutdown() {
-  if (duplex_ != nullptr) {
-    duplex_->shutdown();
-  } else if (rx_ != nullptr) {
-    rx_->shutdown();
+  if (active_ != nullptr) {
+    active_->shutdown();
   }
-  portENTER_CRITICAL(&tx_mux_);
-  pending_tx_ = false;
-  tx_in_progress_ = false;
-  pending_tx_envelope_ = {};
-  tx_completions_.reset();
-  portEXIT_CRITICAL(&tx_mux_);
-
-  rx_ready_ = false;
-  tx_ready_ = false;
 }
 
 std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
-  const std::size_t len = this->read_rx_raw_(dst, max_len);
-
-  if (duplex_ == nullptr && auto_tx_flush_) {
-    this->flush_tx_on_bus_marker();
-  }
-
-  return len;
-}
-std::size_t MhiTransportManager::read_rx_raw_(uint8_t* dst, std::size_t max_len) {
-  if (!rx_ready_ || dst == nullptr || max_len == 0U) {
+  if (active_ == nullptr) {
     return 0U;
   }
 
-  std::size_t len = 0U;
-  if (duplex_ != nullptr) {
-    len = duplex_->read(dst, max_len);
-  } else if (rx_ != nullptr) {
-    len = rx_->read(dst, max_len);
-  }
+  const std::size_t len = active_->read(dst, max_len);
   if (len > 0U && diagnostics_ != nullptr) {
     const uint32_t now = millis();
     diagnostics_->stats().on_rx_chunk(now);
     diagnostics_->stats().on_rx_bytes(static_cast<uint32_t>(len), now);
   }
-
+  this->update_transport_diagnostics_();
   return len;
 }
 
 bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
-  if (!tx_ready_ || !envelope.valid()) {
+  if (active_ == nullptr) {
     if (diagnostics_ != nullptr) {
       diagnostics_->stats().on_tx_failure();
     }
     return false;
-  }
-  if (duplex_ != nullptr) {
-    const bool staged = duplex_->send(envelope);
-    if (!staged && diagnostics_ != nullptr) {
-      diagnostics_->stats().on_tx_failure();
-    }
-    return staged;
   }
 
-  if (tx_ == nullptr) {
-    if (diagnostics_ != nullptr) {
-      diagnostics_->stats().on_tx_failure();
-    }
-    return false;
-  }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (tx_ == &null_tx_) {
-    if (envelope.is_command()) {
-      MhiTxCompletion completion{};
-      completion.generation = envelope.generation;
-      completion.kind = envelope.kind;
-      completion.command_mask = envelope.command_mask;
-      completion.intent = envelope.intent;
-      completion.success = false;
-      completion.completed_at_ms = millis();
-      portENTER_CRITICAL(&tx_mux_);
-      const bool stored = tx_completions_.push(completion);
-      portEXIT_CRITICAL(&tx_mux_);
-      if (!stored && diagnostics_ != nullptr) {
-        diagnostics_->stats().on_tx_failure();
-      }
-    }
-    return true;
-  }
-#endif
-  this->queue_pending_tx_(envelope);
-  return true;
+  const bool queued = active_->queue_tx(envelope);
+  this->update_transport_diagnostics_();
+  return queued;
 }
 
 bool MhiTransportManager::take_tx_completion(MhiTxCompletion& completion) {
-  if (duplex_ != nullptr) {
-    return duplex_->take_tx_completion(completion);
-  }
-
-  portENTER_CRITICAL(&tx_mux_);
-  const bool available = tx_completions_.pop(completion);
-  portEXIT_CRITICAL(&tx_mux_);
-  return available;
-}
-std::size_t MhiTransportManager::tx_completion_queue_depth() const {
-  if (duplex_ != nullptr) {
-    return duplex_->tx_completion_queue_depth();
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const std::size_t value = tx_completions_.size();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return value;
-}
-std::size_t MhiTransportManager::tx_completion_queue_high_water() const {
-  if (duplex_ != nullptr) {
-    return duplex_->tx_completion_queue_high_water();
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const std::size_t value = tx_completions_.high_water_mark();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return value;
-}
-uint32_t MhiTransportManager::tx_completion_queue_dropped() const {
-  if (duplex_ != nullptr) {
-    return duplex_->tx_completion_queue_dropped();
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const uint32_t value = tx_completions_.dropped();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return value;
-}
-
-std::size_t MhiTransportManager::rx_queue_depth() const {
-  return duplex_ == nullptr ? 0U : duplex_->rx_queue_depth();
-}
-std::size_t MhiTransportManager::rx_queue_high_water() const {
-  return duplex_ == nullptr ? 0U : duplex_->rx_queue_high_water();
-}
-
-uint32_t MhiTransportManager::rx_queue_overwritten() const {
-  return duplex_ == nullptr ? 0U : duplex_->rx_queue_overwritten();
+  return active_ != nullptr && active_->take_tx_completion(completion);
 }
 
 bool MhiTransportManager::has_pending_tx() const {
-  if (duplex_ != nullptr) {
-    return false;
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const bool pending = pending_tx_ || tx_in_progress_;
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return pending;
+  return active_ != nullptr && active_->has_pending_tx();
 }
 
 bool MhiTransportManager::flush_tx_on_bus_marker() {
-  if (duplex_ != nullptr) {
+  if (active_ == nullptr) {
     return false;
   }
-  return this->flush_pending_tx_on_bus_marker_();
+  const bool flushed = active_->flush_tx_on_bus_marker();
+  this->update_transport_diagnostics_();
+  return flushed;
 }
 
-void MhiTransportManager::update_duplex_diagnostics_() {
-  if (duplex_ == nullptr || diagnostics_ == nullptr) {
-    return;
-  }
-  const uint32_t completed = duplex_->completed_tx_frames();
-  const uint32_t failures = duplex_->tx_failures();
+std::size_t MhiTransportManager::tx_completion_queue_depth() const {
+  return active_ == nullptr ? 0U : active_->tx_completion_queue_depth();
+}
 
-  while (last_duplex_tx_completed_ != completed) {
-    diagnostics_->stats().on_tx_frame(millis());
-    last_duplex_tx_completed_++;
-  }
+std::size_t MhiTransportManager::tx_completion_queue_high_water() const {
+  return active_ == nullptr ? 0U : active_->tx_completion_queue_high_water();
+}
 
-  while (last_duplex_tx_failures_ != failures) {
-    diagnostics_->stats().on_tx_failure();
-    last_duplex_tx_failures_++;
+uint32_t MhiTransportManager::tx_completion_queue_dropped() const {
+  return active_ == nullptr ? 0U : active_->tx_completion_queue_dropped();
+}
+
+std::size_t MhiTransportManager::rx_queue_depth() const {
+  return active_ == nullptr ? 0U : active_->rx_queue_depth();
+}
+
+std::size_t MhiTransportManager::rx_queue_high_water() const {
+  return active_ == nullptr ? 0U : active_->rx_queue_high_water();
+}
+
+uint32_t MhiTransportManager::rx_queue_overwritten() const {
+  return active_ == nullptr ? 0U : active_->rx_queue_overwritten();
+}
+
+void MhiTransportManager::set_auto_tx_flush(bool enabled) {
+  if (primary_ != nullptr) {
+    primary_->set_auto_tx_flush(enabled);
   }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_auto_tx_flush(enabled);
+  }
+}
+
+bool MhiTransportManager::auto_tx_flush() const {
+  return active_ != nullptr && active_->auto_tx_flush();
 }
 
 void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
-#if MHI_ENABLE_FAST_GPIO_TRANSPORT
-  fast_gpio_rx_.set_byte_critical_sections(enabled);
-#endif
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  fast_gpio_tx_.set_byte_critical_sections(enabled);
-#endif
-#if !MHI_ENABLE_FAST_GPIO_TRANSPORT && !MHI_ENABLE_SPLIT_TX_DRIVER
-  (void)enabled;
-#endif
+  if (primary_ != nullptr) {
+    primary_->set_rx_byte_critical_sections(enabled);
+  }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_rx_byte_critical_sections(enabled);
+  }
 }
 
 bool MhiTransportManager::rx_byte_critical_sections() const {
-#if MHI_ENABLE_FAST_GPIO_TRANSPORT
-  return fast_gpio_rx_.byte_critical_sections();
-#else
-  return false;
-#endif
+  return active_ != nullptr && active_->rx_byte_critical_sections();
 }
 
 bool MhiTransportManager::tx_uses_bus_marker() const {
-  if (duplex_ != nullptr) {
-    return false;
-  }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  return tx_ == &fast_gpio_tx_;
-#else
-  return false;
-#endif
+  return active_ != nullptr && active_->capabilities().uses_bus_marker;
 }
+
 const char* MhiTransportManager::rx_name() const {
-  if (duplex_ != nullptr) {
-    return duplex_->name();
-  }
-  return rx_ == nullptr ? "none" : rx_->name();
+  return active_ == nullptr ? "none" : active_->rx_name();
 }
 
 const char* MhiTransportManager::tx_name() const {
-  if (duplex_ != nullptr) {
-    return duplex_->name();
-  }
-  return tx_ == nullptr ? "none" : tx_->name();
-}
-void MhiTransportManager::queue_pending_tx_(const MhiTxEnvelope& envelope) {
-  portENTER_CRITICAL(&tx_mux_);
-  pending_tx_envelope_ = envelope;
-  pending_tx_ = pending_tx_envelope_.valid();
-  pending_tx_generation_++;
-
-  const MhiBusMarker marker = rx_ == nullptr ? MhiBusMarker{} : rx_->bus_marker();
-  pending_tx_queued_after_marker_sequence_ = marker.valid ? marker.sequence : 0U;
-  portEXIT_CRITICAL(&tx_mux_);
-}
-bool MhiTransportManager::pending_tx_available_() const {
-  return pending_tx_ && pending_tx_envelope_.valid();
+  return active_ == nullptr ? "none" : active_->tx_name();
 }
 
-void MhiTransportManager::clear_pending_tx_() {
-  pending_tx_ = false;
-  pending_tx_envelope_ = {};
-}
-
-bool MhiTransportManager::flush_pending_tx_on_bus_marker_() {
-  if (tx_ == nullptr || !tx_ready_ || rx_ == nullptr || !rx_ready_) {
-    return false;
+void MhiTransportManager::update_transport_diagnostics_() {
+  if (active_ == nullptr || diagnostics_ == nullptr) {
+    return;
   }
 
-  const MhiBusMarker marker = rx_->bus_marker();
-  if (!marker.valid || marker.sequence == 0U) {
-    return false;
-  }
-  const uint32_t marker_age_us = elapsed_us(micros(), marker.frame_end_us);
-  const uint32_t now_ms = millis();
+  const uint32_t completed = active_->completed_tx_frames();
+  const uint32_t failures = active_->tx_failures();
 
-  MhiTxEnvelope envelope{};
-  uint32_t send_generation = 0U;
-
-  portENTER_CRITICAL(&tx_mux_);
-
-  if (!this->pending_tx_available_() || tx_in_progress_) {
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
+  while (last_transport_tx_completed_ != completed) {
+    diagnostics_->stats().on_tx_frame(millis());
+    last_transport_tx_completed_++;
   }
 
-  if (tx_backoff_until_ms_ != 0U && static_cast<int32_t>(now_ms - tx_backoff_until_ms_) < 0) {
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
-  }
-  if (marker.sequence == last_consumed_bus_marker_sequence_ ||
-      marker.sequence == pending_tx_queued_after_marker_sequence_) {
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
-  }
-  if (marker_age_us > tx_marker_arm_max_age_us_) {
-    if (marker.sequence != last_stale_bus_marker_sequence_) {
-      last_stale_bus_marker_sequence_ = marker.sequence;
-      const std::size_t pending_len = pending_tx_envelope_.len;
-      portEXIT_CRITICAL(&tx_mux_);
-      ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
-                static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
-                static_cast<unsigned long>(tx_marker_arm_max_age_us_), static_cast<unsigned int>(pending_len));
-      return false;
-    }
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
-  }
-
-  last_consumed_bus_marker_sequence_ = marker.sequence;
-  envelope = pending_tx_envelope_;
-  send_generation = pending_tx_generation_;
-  tx_in_progress_ = true;
-
-  portEXIT_CRITICAL(&tx_mux_);
-
-  const bool ok = tx_->send(envelope.frame.data(), envelope.len);
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  const bool tx_disabled = tx_ == &null_tx_;
-#else
-  const bool tx_disabled = false;
-#endif
-
-  if (diagnostics_ != nullptr && !tx_disabled) {
-    if (ok) {
-      diagnostics_->stats().on_tx_frame(millis());
-    } else {
-      diagnostics_->stats().on_tx_failure();
-    }
-  }
-  MhiTxCompletion completion{};
-  if (envelope.is_command()) {
-    completion.generation = envelope.generation;
-    completion.kind = envelope.kind;
-    completion.command_mask = envelope.command_mask;
-    completion.intent = envelope.intent;
-    completion.success = ok;
-    completion.completed_at_ms = millis();
-  }
-
-  portENTER_CRITICAL(&tx_mux_);
-  tx_in_progress_ = false;
-  bool completion_stored = true;
-  if (envelope.is_command()) {
-    completion_stored = tx_completions_.push(completion);
-  }
-  if (ok) {
-    if (pending_tx_generation_ == send_generation) {
-      this->clear_pending_tx_();
-    }
-    tx_backoff_until_ms_ = 0U;
-    portEXIT_CRITICAL(&tx_mux_);
-    if (!completion_stored && diagnostics_ != nullptr) {
-      diagnostics_->stats().on_tx_failure();
-    }
-    return true;
-  }
-
-  if (pending_tx_generation_ == send_generation) {
-    tx_backoff_until_ms_ = millis() + tx_failure_backoff_ms_;
-  }
-  portEXIT_CRITICAL(&tx_mux_);
-  if (!completion_stored && diagnostics_ != nullptr) {
+  while (last_transport_tx_failures_ != failures) {
     diagnostics_->stats().on_tx_failure();
+    last_transport_tx_failures_++;
   }
+}
 
-  ESP_LOGD(TAG, "TX frame missed armed bus marker sequence=%lu age=%luus len=%u backoff=%lums",
-           static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
-           static_cast<unsigned int>(envelope.len), static_cast<unsigned long>(tx_failure_backoff_ms_));
-  return false;
+void MhiTransportManager::reset_transport_diagnostic_cursors_() {
+  last_transport_tx_completed_ = active_ == nullptr ? 0U : active_->completed_tx_frames();
+  last_transport_tx_failures_ = active_ == nullptr ? 0U : active_->tx_failures();
 }
 
 }  // namespace mhi_ac_ctrl

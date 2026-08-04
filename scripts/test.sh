@@ -36,6 +36,7 @@ fi
   tests/unit/test_frame_queue.cpp \
   tests/unit/test_duplex_tx_mailbox.cpp \
   tests/unit/test_rmt_cs_spi_mode.cpp \
+  tests/unit/test_transport_wrappers.cpp \
   tests/unit/test_command_coordinator.cpp \
   tests/unit/test_command_coordinator_extended_supersession.cpp \
   tests/unit/test_worker_policy.cpp \
@@ -62,6 +63,9 @@ fi
   components/MhiAcCtrl/mhi_publish_bridge.cpp \
   components/MhiAcCtrl/mhi_status_decoder.cpp \
   components/MhiAcCtrl/mhi_stats.cpp \
+  components/MhiAcCtrl/mhi_split_transport.cpp \
+  components/MhiAcCtrl/mhi_duplex_transport_adapter.cpp \
+  components/MhiAcCtrl/mhi_transport_manager.cpp \
   components/MhiAcCtrl/mhi_tx_builder.cpp \
   components/MhiAcCtrl/mhi_worker_decoded_store.cpp \
   -o "${BUILD_DIR}/mhi_protocol_tests"
