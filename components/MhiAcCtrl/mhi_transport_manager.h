@@ -1,9 +1,5 @@
 #pragma once
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/portmacro.h>
-
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -11,11 +7,9 @@
 #include "esphome/core/defines.h"
 #include "mhi_defs.h"
 #include "mhi_diag.h"
-#include "mhi_duplex_transport.h"
-#include "mhi_rx_driver.h"
+#include "mhi_duplex_transport_adapter.h"
+#include "mhi_split_transport.h"
 #include "mhi_transport_pins.h"
-#include "mhi_tx_contract.h"
-#include "mhi_tx_driver.h"
 #include "mhi_worker_policy.h"
 
 #ifdef USE_ESP_IDF
@@ -60,6 +54,7 @@
 
 namespace esphome {
 namespace mhi_ac_ctrl {
+
 class MhiTransportManager {
  public:
   void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
@@ -67,6 +62,7 @@ class MhiTransportManager {
                  uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
                  uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
                  uint32_t external_clock_sample_delay_nops = 0U);
+
   void set_rmt_spi_frame_gap_us(uint32_t frame_gap_us) {
     rmt_spi_frame_gap_us_ = frame_gap_us;
   }
@@ -80,25 +76,20 @@ class MhiTransportManager {
   void shutdown();
 
   std::size_t read_rx(uint8_t* dst, std::size_t max_len);
-  // Stages an immutable TX envelope. Real-time transmission remains owned by
-  // the selected transport. Completion is reported only after the frame was
-  // actually clocked onto the bus.
   bool queue_tx(const MhiTxEnvelope& envelope);
   bool take_tx_completion(MhiTxCompletion& completion);
   bool has_pending_tx() const;
   bool flush_tx_on_bus_marker();
+
   std::size_t tx_completion_queue_depth() const;
   std::size_t tx_completion_queue_high_water() const;
   uint32_t tx_completion_queue_dropped() const;
   std::size_t rx_queue_depth() const;
   std::size_t rx_queue_high_water() const;
   uint32_t rx_queue_overwritten() const;
-  void set_auto_tx_flush(bool enabled) {
-    auto_tx_flush_ = enabled;
-  }
-  bool auto_tx_flush() const {
-    return auto_tx_flush_;
-  }
+
+  void set_auto_tx_flush(bool enabled);
+  bool auto_tx_flush() const;
   void set_rx_byte_critical_sections(bool enabled);
   bool rx_byte_critical_sections() const;
   bool tx_uses_bus_marker() const;
@@ -110,30 +101,24 @@ class MhiTransportManager {
   const char* tx_name() const;
 
   bool rx_ready() const {
-    return rx_ready_;
-  }
-
-  bool rx_supports_classified_worker() const {
-    return rx_ready_ && mhi_rx_driver_supports_classified_worker(this->rx_name());
+    return active_ != nullptr && active_->rx_ready();
   }
   bool tx_ready() const {
-    return tx_ready_;
+    return active_ != nullptr && active_->tx_ready();
+  }
+  bool rx_supports_classified_worker() const {
+    return this->rx_ready() && active_->capabilities().supports_classified_worker;
   }
 
  private:
-  void resolve_drivers();
-  void update_duplex_diagnostics_();
-  std::size_t read_rx_raw_(uint8_t* dst, std::size_t max_len);
-  void queue_pending_tx_(const MhiTxEnvelope& envelope);
-  bool pending_tx_available_() const;
-  void clear_pending_tx_();
-  bool flush_pending_tx_on_bus_marker_();
+  void resolve_transports_();
+  void update_transport_diagnostics_();
+  void reset_transport_diagnostic_cursors_();
 
   MhiTransportPins pins_{};
+  std::string requested_rx_driver_name_{"fast_gpio_rx"};
+  std::string requested_tx_driver_name_{"fast_gpio_tx"};
 
-  std::string transport_driver_name_{"split"};
-  std::string rx_driver_name_{"fast_gpio_rx"};
-  std::string tx_driver_name_{"fast_gpio_tx"};
 #if MHI_ENABLE_FAST_GPIO_TRANSPORT
   MhiFastGpioRxDriver fast_gpio_rx_{};
 #endif
@@ -150,40 +135,19 @@ class MhiTransportManager {
 #if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
   MhiExternalClockRxDriver external_clock_rx_{};
 #endif
-  IMhiDuplexTransport* duplex_{nullptr};
-#if MHI_ENABLE_FAST_GPIO_TRANSPORT
-  IMhiRxDriver* rx_{&fast_gpio_rx_};
-#else
-  IMhiRxDriver* rx_{nullptr};
-#endif
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  IMhiTxDriver* tx_{&fast_gpio_tx_};
-#else
-  IMhiTxDriver* tx_{nullptr};
-#endif
 
-  bool rx_ready_{false};
-  bool tx_ready_{false};
-  bool auto_tx_flush_{true};
-  portMUX_TYPE tx_mux_ = portMUX_INITIALIZER_UNLOCKED;
-  MhiTxEnvelope pending_tx_envelope_{};
-  MhiTxCompletionQueue<8U> tx_completions_{};
-  bool pending_tx_{false};
-  bool tx_in_progress_{false};
-  uint32_t pending_tx_generation_{0U};
-  uint32_t pending_tx_queued_after_marker_sequence_{0U};
-  uint32_t last_consumed_bus_marker_sequence_{0U};
-  uint32_t last_stale_bus_marker_sequence_{0U};
-  uint32_t tx_backoff_until_ms_{0U};
-  // Arm TX from a new RX frame-end marker, then make one blocking TX attempt
-  // against the real next SCK burst. This avoids age-window retry storms while
-  // still giving the AC-owned clock enough time to arrive.
-  uint32_t tx_marker_arm_max_age_us_{3000U};
-  uint32_t tx_marker_timeout_ms_{60U};
-  uint32_t tx_failure_backoff_ms_{250U};
+  MhiSplitTransport primary_split_transport_{};
+  MhiSplitTransport recovery_split_transport_{};
+  MhiDuplexTransportAdapter primary_duplex_transport_{};
+
+  IMhiTransport* primary_{nullptr};
+  IMhiTransport* recovery_{nullptr};
+  IMhiTransport* active_{nullptr};
+  bool recovery_active_{false};
+
   uint32_t rmt_spi_frame_gap_us_{1000U};
-  uint32_t last_duplex_tx_completed_{0U};
-  uint32_t last_duplex_tx_failures_{0U};
+  uint32_t last_transport_tx_completed_{0U};
+  uint32_t last_transport_tx_failures_{0U};
   MhiDiagnostics* diagnostics_{nullptr};
 };
 

@@ -26,8 +26,14 @@ class MhiFastGpioTxDriver final : public IMhiTxDriver {
     config_ = config;
   }
 
-  void set_byte_critical_sections(bool enabled) {
+  void set_byte_critical_sections(bool enabled) override {
     config_.byte_critical_sections = enabled;
+  }
+  bool byte_critical_sections() const override {
+    return config_.byte_critical_sections;
+  }
+  bool supports_byte_critical_sections() const override {
+    return true;
   }
 
   bool setup(const MhiTransportPins& pins) override;

@@ -135,6 +135,9 @@ int main() {
   rmt_cs_spi_supports_esp32_and_s3();
   rmt_cs_spi_exposes_single_driver_name();
   rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
+  split_transport_delegates_rx_and_marker_armed_tx();
+  split_transport_preserves_null_tx_completion_contract();
+  duplex_transport_adapter_preserves_backend_contract();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;
