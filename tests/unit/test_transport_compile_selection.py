@@ -8,6 +8,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPONENT_DIR = REPO_ROOT / "components" / "MhiAcCtrl"
 COMPONENT_INIT = COMPONENT_DIR / "__init__.py"
 MANAGER_HEADER = COMPONENT_DIR / "mhi_transport_manager.h"
+CONTROLLER_HEADER = COMPONENT_DIR / "mhi_ac_ctrl.h"
+WORKER_POLICY_HEADER = COMPONENT_DIR / "mhi_worker_policy.h"
+WORKER_POLICY_TEST = REPO_ROOT / "tests" / "unit" / "test_worker_policy.cpp"
 
 TRANSPORT_SOURCES = {
     "mhi_fast_gpio_rx_driver.cpp": (
@@ -70,6 +73,17 @@ class TransportCompileSelectionTests(unittest.TestCase):
         self.assertIn("set_primary_transport", called_attributes)
         self.assertIn("set_recovery_transport", called_attributes)
 
+        for obsolete_setter in (
+            "set_sck_pin",
+            "set_mosi_pin",
+            "set_miso_pin",
+            "set_rx_driver",
+            "set_tx_driver",
+            "set_frame_start_idle_ms",
+            "set_rmt_spi_frame_gap_us",
+        ):
+            self.assertNotIn(obsolete_setter, called_attributes)
+
     def test_manager_is_non_owning_and_has_no_concrete_driver_selection(self):
         source = MANAGER_HEADER.read_text(encoding="utf-8")
 
@@ -92,6 +106,29 @@ class TransportCompileSelectionTests(unittest.TestCase):
             "requested_rx_driver_name_",
         ):
             self.assertNotIn(forbidden, source)
+
+
+    def test_controller_is_transport_agnostic(self):
+        source = CONTROLLER_HEADER.read_text(encoding="utf-8")
+
+        for forbidden in (
+            "struct MhiPins",
+            "MhiPins pins_",
+            "rx_driver_",
+            "tx_driver_",
+            "frame_start_idle_ms_",
+            "rmt_spi_frame_gap_us_",
+            "void set_sck_pin",
+            "void set_mosi_pin",
+            "void set_miso_pin",
+            "void set_rx_driver",
+            "void set_tx_driver",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_obsolete_string_worker_policy_is_removed(self):
+        self.assertFalse(WORKER_POLICY_HEADER.exists())
+        self.assertFalse(WORKER_POLICY_TEST.exists())
 
     def test_each_transport_implementation_has_a_whole_unit_guard(self):
         for filename, (opening_guard, closing_guard) in TRANSPORT_SOURCES.items():
