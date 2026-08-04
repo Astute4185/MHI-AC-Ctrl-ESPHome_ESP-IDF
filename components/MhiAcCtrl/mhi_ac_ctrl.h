@@ -41,7 +41,7 @@ struct MhiPins {
   int miso{-1};
 };
 
-class MhiAcCtrl : public Component {
+class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
  public:
   void setup() override;
   void loop() override;
@@ -353,6 +353,11 @@ class MhiAcCtrl : public Component {
   }
 
  protected:
+  void on_transport_switch_begin(const MhiTransportErrorDetail& reason) override;
+  void on_transport_recovery_ready() override;
+  void on_transport_safe_mode(const MhiTransportErrorDetail& reason) override;
+  void reset_runtime_for_transport_switch_();
+
   void refresh_publish_targets_();
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
   bool read_and_sync_rx_frame_();
@@ -453,6 +458,7 @@ class MhiAcCtrl : public Component {
   uint32_t tx_background_failures_{0U};
   uint32_t tx_command_priority_attempts_{0U};
   bool rx_byte_critical_sections_enabled_{true};
+  std::atomic<bool> transport_commands_enabled_{true};
   bool publish_requested_{false};
   uint32_t frame_catalog_sequence_{0U};
 

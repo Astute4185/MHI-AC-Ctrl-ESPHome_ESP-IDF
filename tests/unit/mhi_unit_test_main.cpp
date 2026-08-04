@@ -143,6 +143,9 @@ int main() {
   duplex_transport_adapter_reports_missing_backend();
   transport_manager_uses_injected_primary_transport();
   transport_manager_activates_injected_recovery_after_setup_failure();
+  transport_manager_recovery_transition_is_ordered_and_latched();
+  transport_manager_enters_safe_mode_when_recovery_fails();
+  transport_manager_enters_safe_mode_without_recovery();
 
   std::cout << "MHI protocol unit tests passed\n";
   return 0;

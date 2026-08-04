@@ -112,6 +112,11 @@ void MhiAcCtrl::check_external_room_temperature_timeout_() {
 }
 
 uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
+  if (!this->transport_commands_enabled_.load(std::memory_order_acquire)) {
+    ESP_LOGD(DIAG_TAG, "command: rejected while transport is switching or in safe mode");
+    return 0U;
+  }
+
   const uint32_t requested_mask = patch.pending_command_mask();
   if (requested_mask == 0U) {
     return 0U;
@@ -305,6 +310,7 @@ void MhiAcCtrl::setup() {
   this->command_worker_max_notify_batch_.store(0U, std::memory_order_relaxed);
   this->command_worker_stack_high_water_bytes_.store(0U, std::memory_order_relaxed);
   this->shutting_down_.store(false, std::memory_order_release);
+  this->transport_commands_enabled_.store(true, std::memory_order_release);
   this->transport_shutdown_ = false;
 
   if (this->command_mutex_ == nullptr) {
@@ -331,14 +337,15 @@ void MhiAcCtrl::setup() {
   this->frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
 
   this->transport_.set_diagnostics(&this->diagnostics_);
+  this->transport_.set_transition_listener(this);
 
   this->rx_byte_critical_sections_enabled_ = true;
   this->transport_.set_rx_byte_critical_sections(this->rx_byte_critical_sections_enabled_);
   this->transport_.set_auto_tx_flush(true);
 
-  this->transport_.setup();
+  const bool transport_ready = this->transport_.setup();
   this->command_worker_classified_rx_enabled_ =
-      this->command_worker_enabled_ && this->transport_.rx_supports_classified_worker();
+      transport_ready && this->command_worker_enabled_ && this->transport_.rx_supports_classified_worker();
 
   if (this->external_room_temperature_sensor_ != nullptr) {
     this->external_room_temperature_sensor_->add_on_state_callback([this](float state) {
@@ -348,7 +355,11 @@ void MhiAcCtrl::setup() {
     this->apply_external_room_temperature_(this->external_room_temperature_sensor_->state);
   }
 
-  this->start_command_worker_();
+  if (transport_ready) {
+    this->start_command_worker_();
+  } else {
+    ESP_LOGE(TAG, "Transport unavailable; MHI control is in safe mode");
+  }
 
   ESP_LOGCONFIG(TAG, "RX mode: %s",
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
@@ -356,6 +367,54 @@ void MhiAcCtrl::setup() {
   ESP_LOGCONFIG(TAG, "Command mode: %s",
                 this->command_worker_enabled_ ? "event-driven command worker" : "main-loop command coordinator");
   ESP_LOGCONFIG(TAG, "TX mode: transport-owned real-time transmission");
+}
+
+void MhiAcCtrl::on_transport_switch_begin(const MhiTransportErrorDetail& reason) {
+  this->transport_commands_enabled_.store(false, std::memory_order_release);
+  this->reset_runtime_for_transport_switch_();
+
+  ESP_LOGW(TAG, "Transport transition started: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
+           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
+}
+
+void MhiAcCtrl::on_transport_recovery_ready() {
+  this->command_worker_classified_rx_enabled_ =
+      this->command_worker_enabled_ && this->transport_.rx_supports_classified_worker();
+  this->transport_commands_enabled_.store(true, std::memory_order_release);
+  this->notify_command_worker_();
+  ESP_LOGW(TAG, "Internal FastGPIO recovery transport is active");
+}
+
+void MhiAcCtrl::on_transport_safe_mode(const MhiTransportErrorDetail& reason) {
+  this->transport_commands_enabled_.store(false, std::memory_order_release);
+  this->command_worker_classified_rx_enabled_ = false;
+  this->reset_runtime_for_transport_switch_();
+
+  ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
+           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
+}
+
+void MhiAcCtrl::reset_runtime_for_transport_switch_() {
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  this->state_.command() = {};
+  this->command_coordinator_.reset();
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+
+  this->frame_sync_.reset();
+  portENTER_CRITICAL(&this->frame_catalog_mux_);
+  this->frame_catalog_.reset();
+  portEXIT_CRITICAL(&this->frame_catalog_mux_);
+  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
+  this->worker_decoded_store_.reset();
+  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+  this->frame_catalog_sequence_ = 0U;
+
+  this->pending_extended_feedback_candidate_ = false;
+  this->pending_extended_feedback_repeat_count_ = 0U;
 }
 
 void MhiAcCtrl::on_shutdown() {
@@ -458,6 +517,9 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
   ESP_LOGCONFIG(TAG, "  RX ready: %s", diag.rx_driver_ready ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  TX ready: %s", diag.tx_driver_ready ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Transport state: %s", mhi_transport_state_name(this->transport_.state()));
+  ESP_LOGCONFIG(TAG, "  Internal recovery active: %s", this->transport_.recovery_active() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Transport safe mode: %s", this->transport_.safe_mode() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  RX mode: %s",
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
                                            : "main-loop capture/sync/decode/apply");
@@ -902,6 +964,10 @@ void MhiAcCtrl::notify_command_worker_() {
 }
 
 void MhiAcCtrl::service_command_pipeline_() {
+  if (!this->transport_commands_enabled_.load(std::memory_order_acquire)) {
+    return;
+  }
+
   MhiFrameBuffer tx_frame{};
   MhiTxBuildResult build_result{};
   MhiTxEnvelope envelope{};
