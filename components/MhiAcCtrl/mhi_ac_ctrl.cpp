@@ -266,7 +266,6 @@ void MhiAcCtrl::setup() {
 
   this->diagnostics_.stats().reset();
   this->command_coordinator_.reset();
-  this->frame_sync_.set_stats(&this->diagnostics_.stats());
   this->last_diag_log_ms_ = 0U;
   this->pending_extended_feedback_candidate_ = false;
   this->pending_extended_feedback_swing_ = false;
@@ -325,16 +324,7 @@ void MhiAcCtrl::setup() {
 
   this->tx_config_.enabled_opdata_mask = this->opdata_mask_;
 
-  this->frame_sync_.reset();
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  this->frame_catalog_.reset();
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  this->worker_decoded_store_.reset();
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
-  this->frame_catalog_sequence_ = 0U;
-  this->frame_sync_.set_mode(MhiFrameSyncMode::MOSI_ONLY);
-  this->frame_sync_.set_33_byte_frames_enabled(this->frame_size_ == 33);
+  this->rx_runtime_.configure(&this->diagnostics_.stats(), this->frame_size_ == 33);
 
   this->transport_.set_diagnostics(&this->diagnostics_);
   this->transport_.set_transition_listener(this);
@@ -420,14 +410,7 @@ void MhiAcCtrl::reset_runtime_for_transport_switch_() {
     xSemaphoreGive(this->command_mutex_);
   }
 
-  this->frame_sync_.reset();
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  this->frame_catalog_.reset();
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  this->worker_decoded_store_.reset();
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
-  this->frame_catalog_sequence_ = 0U;
+  this->rx_runtime_.reset();
 
   this->pending_extended_feedback_candidate_ = false;
   this->pending_extended_feedback_repeat_count_ = 0U;
@@ -753,7 +736,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(diag.last_command_confirmation_age_ms),
            static_cast<unsigned long>(diag.last_command_confirmation_timeout_age_ms));
 
-  const MhiCatalogStats catalog_stats = this->catalog_stats_snapshot_();
+  const MhiCatalogStats catalog_stats = this->rx_runtime_.catalog_stats();
   ESP_LOGI(DIAG_TAG,
            "runtime: catalog ingested=%lu status=%lu extended=%lu opdata=%lu unknown=%lu overwritten=%lu "
            "opdata_slots_full=%lu command_candidates=%lu",
@@ -766,10 +749,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(catalog_stats.dropped_opdata_slots_full),
            static_cast<unsigned long>(catalog_stats.command_candidate_frames));
 
-  MhiWorkerDecodedStoreStats worker_store_stats{};
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  worker_store_stats = this->worker_decoded_store_.stats();
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+  const MhiWorkerDecodedStoreStats worker_store_stats = this->rx_runtime_.worker_store_stats();
 
   ESP_LOGI(DIAG_TAG,
            "runtime: worker_decode status=%lu/%lu extended=%lu/%lu candidates=%lu/%lu "
@@ -1125,7 +1105,7 @@ void MhiAcCtrl::drain_tx_completions_() {
   }
 
   if (clear_command_candidate) {
-    this->clear_command_candidate_();
+    this->rx_runtime_.clear_command_candidate();
   }
 
   if (command_state_changed) {
@@ -1203,141 +1183,31 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
 
   this->command_worker_rx_polls_.fetch_add(1U, std::memory_order_relaxed);
 
-  uint8_t buffer[kMhiMaxFrameBytes]{};
-  MhiFrameBuffer frame{};
-  uint32_t chunks = 0U;
-  uint32_t frames = 0U;
+  const MhiRxServiceResult result =
+      this->rx_runtime_.service(this->transport_, kMaxRxChunksPerWorkerPoll, this->command_confirmation_pending_());
 
-  for (std::size_t chunk = 0U; chunk < kMaxRxChunksPerWorkerPoll; chunk++) {
-    const std::size_t len = this->transport_.read_rx(buffer, sizeof(buffer));
-    if (len == 0U) {
-      break;
-    }
-
-    chunks++;
-    this->frame_sync_.push_bytes(buffer, len);
-
-    while (this->frame_sync_.pop_frame(frame)) {
-      this->diagnostics_.stats().on_valid_frame(millis());
-      this->ingest_rx_frame_(frame);
-      frames++;
-    }
+  if (result.chunks > 0U) {
+    this->command_worker_rx_chunks_.fetch_add(result.chunks, std::memory_order_relaxed);
   }
 
-  if (chunks > 0U) {
-    this->command_worker_rx_chunks_.fetch_add(chunks, std::memory_order_relaxed);
-  }
-
-  if (frames == 0U) {
+  if (result.frames == 0U) {
     return false;
   }
 
   this->command_worker_rx_batches_.fetch_add(1U, std::memory_order_relaxed);
-  this->command_worker_rx_frames_.fetch_add(frames, std::memory_order_relaxed);
+  this->command_worker_rx_frames_.fetch_add(result.frames, std::memory_order_relaxed);
 
   uint32_t previous_max = this->command_worker_rx_max_batch_.load(std::memory_order_relaxed);
-  while (frames > previous_max &&
-         !this->command_worker_rx_max_batch_.compare_exchange_weak(previous_max, frames, std::memory_order_relaxed)) {
+  while (result.frames > previous_max && !this->command_worker_rx_max_batch_.compare_exchange_weak(
+                                             previous_max, result.frames, std::memory_order_relaxed)) {
   }
 
-  return this->decode_cataloged_frames_to_worker_store_();
+  return this->rx_runtime_.decode_cataloged_frames_to_worker_store(this->command_confirmation_pending_());
 }
 
 bool MhiAcCtrl::read_and_sync_rx_frame_() {
-  uint8_t buffer[kMhiMaxFrameBytes]{};
-  MhiFrameBuffer frame{};
-
-  for (std::size_t chunk = 0U; chunk < kMaxRxChunksPerLoop; chunk++) {
-    const std::size_t len = this->transport_.read_rx(buffer, sizeof(buffer));
-    if (len == 0U) {
-      break;
-    }
-
-    this->frame_sync_.push_bytes(buffer, len);
-
-    while (this->frame_sync_.pop_frame(frame)) {
-      this->diagnostics_.stats().on_valid_frame(millis());
-      this->ingest_rx_frame_(frame);
-    }
-  }
-
+  this->rx_runtime_.service(this->transport_, kMaxRxChunksPerLoop, this->command_confirmation_pending_());
   return this->decode_cataloged_frames_();
-}
-
-bool MhiAcCtrl::ingest_rx_frame_(const MhiFrameBuffer& frame) {
-  // Resolve command state before entering the frame-catalog critical section.
-  // A blocking FreeRTOS mutex must never be acquired while a spinlock is held.
-  const bool store_command_candidate = this->command_confirmation_pending_();
-
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const MhiCatalogIngestResult result = this->frame_catalog_.ingest_mosi_frame(
-      frame.view(), ++this->frame_catalog_sequence_, millis(), store_command_candidate);
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-
-  if (!result.stored) {
-    ESP_LOGVV(DIAG_TAG, "catalog: dropped kind=%s key=0x%04x len=%u", mhi_frame_kind_to_string(result.kind),
-              static_cast<unsigned int>(result.opdata_key), static_cast<unsigned int>(frame.len));
-    return false;
-  }
-
-  if (result.overwritten) {
-    ESP_LOGVV(DIAG_TAG, "catalog: overwritten kind=%s key=0x%04x sequence=%lu", mhi_frame_kind_to_string(result.kind),
-              static_cast<unsigned int>(result.opdata_key), static_cast<unsigned long>(this->frame_catalog_sequence_));
-  }
-
-  return true;
-}
-
-bool MhiAcCtrl::take_latest_extended_status_(MhiCatalogedFrame& out) {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const bool taken = this->frame_catalog_.take_latest_extended_status(out);
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  return taken;
-}
-
-bool MhiAcCtrl::take_latest_status_(MhiCatalogedFrame& out) {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const bool taken = this->frame_catalog_.take_latest_status(out);
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  return taken;
-}
-
-bool MhiAcCtrl::take_latest_command_candidate_(MhiCatalogedFrame& out) {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const bool taken = this->frame_catalog_.take_latest_command_candidate(out);
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  return taken;
-}
-
-void MhiAcCtrl::clear_command_candidate_() {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  this->frame_catalog_.clear_command_candidate();
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  this->worker_decoded_store_.clear_command_candidate();
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
-}
-
-bool MhiAcCtrl::take_next_opdata_(MhiCatalogedFrame& out) {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const bool taken = this->frame_catalog_.take_next_opdata(out);
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  return taken;
-}
-
-bool MhiAcCtrl::take_latest_unknown_(MhiCatalogedFrame& out) {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const bool taken = this->frame_catalog_.take_latest_unknown(out);
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  return taken;
-}
-
-MhiCatalogStats MhiAcCtrl::catalog_stats_snapshot_() {
-  portENTER_CRITICAL(&this->frame_catalog_mux_);
-  const MhiCatalogStats stats = this->frame_catalog_.stats();
-  portEXIT_CRITICAL(&this->frame_catalog_mux_);
-  return stats;
 }
 
 bool MhiAcCtrl::decode_cataloged_frames_() {
@@ -1346,103 +1216,38 @@ bool MhiAcCtrl::decode_cataloged_frames_() {
 
   // While a command is pending, preserve the latest status/extended feedback in a side slot so
   // the RX worker cannot overwrite a short-lived confirmation candidate before the main loop decodes it.
-  if (this->command_confirmation_pending_() && this->take_latest_command_candidate_(cataloged)) {
+  if (this->command_confirmation_pending_() && this->rx_runtime_.take_latest_command_candidate(cataloged)) {
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
   }
 
   // Command/extended feedback can affect pending command confirmation, so drain it first.
-  if (this->take_latest_extended_status_(cataloged)) {
+  if (this->rx_runtime_.take_latest_extended_status(cataloged)) {
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
   }
 
-  if (this->take_latest_status_(cataloged)) {
+  if (this->rx_runtime_.take_latest_status(cataloged)) {
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
   }
 
-  while (this->take_next_opdata_(cataloged)) {
+  while (this->rx_runtime_.take_next_opdata(cataloged)) {
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
   }
 
   // Keep the unknown slot from becoming permanently valid. Unknowns are still counted in catalog diagnostics.
-  if (this->take_latest_unknown_(cataloged)) {
+  if (this->rx_runtime_.take_latest_unknown(cataloged)) {
     ESP_LOGVV(DIAG_TAG, "catalog: ignored unknown sequence=%lu len=%u", static_cast<unsigned long>(cataloged.sequence),
               static_cast<unsigned int>(cataloged.frame.len));
   }
 
   return decoded_anything;
-}
-
-bool MhiAcCtrl::decode_cataloged_frames_to_worker_store_() {
-  bool decoded_anything = false;
-  MhiCatalogedFrame cataloged{};
-
-  if (this->command_confirmation_pending_() && this->take_latest_command_candidate_(cataloged)) {
-    decoded_anything = this->decode_cataloged_frame_to_worker_store_(cataloged, true) || decoded_anything;
-  }
-
-  if (this->take_latest_extended_status_(cataloged)) {
-    decoded_anything = this->decode_cataloged_frame_to_worker_store_(cataloged) || decoded_anything;
-  }
-
-  if (this->take_latest_status_(cataloged)) {
-    decoded_anything = this->decode_cataloged_frame_to_worker_store_(cataloged) || decoded_anything;
-  }
-
-  while (this->take_next_opdata_(cataloged)) {
-    decoded_anything = this->decode_cataloged_frame_to_worker_store_(cataloged) || decoded_anything;
-  }
-
-  while (this->take_latest_unknown_(cataloged)) {
-    decoded_anything = this->decode_cataloged_frame_to_worker_store_(cataloged) || decoded_anything;
-  }
-
-  return decoded_anything;
-}
-
-bool MhiAcCtrl::decode_cataloged_frame_to_worker_store_(const MhiCatalogedFrame& cataloged_frame,
-                                                        bool command_candidate) {
-  const MhiFrameView view = cataloged_frame.frame.view();
-
-  if (cataloged_frame.kind == MhiFrameKind::STATUS || cataloged_frame.kind == MhiFrameKind::EXTENDED_STATUS) {
-    MhiDecodedStatus decoded{};
-    if (!MhiStatusDecoder::decode_mosi(view, decoded)) {
-      return false;
-    }
-
-    portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-    this->worker_decoded_store_.store_status(decoded, cataloged_frame.frame, cataloged_frame.sequence,
-                                             cataloged_frame.last_update_ms,
-                                             cataloged_frame.kind == MhiFrameKind::EXTENDED_STATUS, command_candidate);
-    portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
-    return true;
-  }
-
-  if (cataloged_frame.kind == MhiFrameKind::OPDATA) {
-    MhiDecodedOpData decoded{};
-    if (!MhiOpDataDecoder::decode_mosi(view, decoded)) {
-      return false;
-    }
-
-    portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-    this->worker_decoded_store_.merge_opdata(decoded, cataloged_frame.frame, cataloged_frame.sequence,
-                                             cataloged_frame.last_update_ms);
-    portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
-    return true;
-  }
-
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  this->worker_decoded_store_.store_unknown(cataloged_frame.frame, cataloged_frame.sequence,
-                                            cataloged_frame.last_update_ms);
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
-  return true;
 }
 
 bool MhiAcCtrl::apply_worker_decoded_snapshots_() {
@@ -1452,39 +1257,29 @@ bool MhiAcCtrl::apply_worker_decoded_snapshots_() {
   MhiWorkerUnknownSnapshot unknown_snapshot{};
 
   if (this->command_confirmation_pending_()) {
-    portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-    const bool taken = this->worker_decoded_store_.take_command_candidate(status_snapshot);
-    portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+    const bool taken = this->rx_runtime_.take_worker_command_candidate(status_snapshot);
     if (taken && this->apply_status_update_(status_snapshot.decoded, status_snapshot.frame)) {
       applied_anything = true;
     }
   }
 
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  bool taken = this->worker_decoded_store_.take_extended_status(status_snapshot);
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+  bool taken = this->rx_runtime_.take_worker_extended_status(status_snapshot);
   if (taken && this->apply_status_update_(status_snapshot.decoded, status_snapshot.frame)) {
     applied_anything = true;
   }
 
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  taken = this->worker_decoded_store_.take_status(status_snapshot);
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+  taken = this->rx_runtime_.take_worker_status(status_snapshot);
   if (taken && this->apply_status_update_(status_snapshot.decoded, status_snapshot.frame)) {
     applied_anything = true;
   }
 
-  portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-  taken = this->worker_decoded_store_.take_opdata(opdata_snapshot);
-  portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+  taken = this->rx_runtime_.take_worker_opdata(opdata_snapshot);
   if (taken && this->apply_opdata_update_(opdata_snapshot.decoded, opdata_snapshot.last_frame)) {
     applied_anything = true;
   }
 
   while (true) {
-    portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-    taken = this->worker_decoded_store_.take_unknown(unknown_snapshot);
-    portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+    taken = this->rx_runtime_.take_worker_unknown(unknown_snapshot);
     if (!taken) {
       break;
     }
@@ -1494,9 +1289,7 @@ bool MhiAcCtrl::apply_worker_decoded_snapshots_() {
   }
 
   if (applied_anything) {
-    portENTER_CRITICAL(&this->worker_decoded_store_mux_);
-    this->worker_decoded_store_.on_publish_batch();
-    portEXIT_CRITICAL(&this->worker_decoded_store_mux_);
+    this->rx_runtime_.on_worker_publish_batch();
   }
 
   return applied_anything;
@@ -1885,7 +1678,7 @@ void MhiAcCtrl::update_command_confirmation_(const MhiStatusState& status) {
   this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now);
 
   if (pending_mask == 0U) {
-    this->clear_command_candidate_();
+    this->rx_runtime_.clear_command_candidate();
     this->notify_command_worker_();
   }
 
@@ -1922,7 +1715,7 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
   }
 
   this->diagnostics_.stats().on_command_confirmation_timeout(timeout.timed_out_mask, now);
-  this->clear_command_candidate_();
+  this->rx_runtime_.clear_command_candidate();
 
   if (timeout.retry_mask != 0U) {
     this->diagnostics_.stats().on_command_retry(timeout.retry_mask, now);

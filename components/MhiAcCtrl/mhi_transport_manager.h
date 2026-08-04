@@ -14,7 +14,7 @@ namespace mhi_ac_ctrl {
 // Generic, non-owning runtime coordinator for one configured primary transport
 // and an optional internal recovery transport. Concrete transport construction,
 // pin configuration, and driver-specific tuning are owned by ESPHome codegen.
-class MhiTransportManager {
+class MhiTransportManager : public IMhiRxSource {
  public:
   void set_primary(IMhiTransport* transport);
   void set_recovery(IMhiTransport* transport);
@@ -34,7 +34,7 @@ class MhiTransportManager {
   void loop();
   void shutdown();
 
-  std::size_t read_rx(uint8_t* dst, std::size_t max_len);
+  std::size_t read_rx(uint8_t* dst, std::size_t max_len) override;
   bool queue_tx(const MhiTxEnvelope& envelope);
   bool take_tx_completion(MhiTxCompletion& completion);
   bool has_pending_tx() const;

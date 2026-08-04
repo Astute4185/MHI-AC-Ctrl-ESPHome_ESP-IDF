@@ -215,6 +215,9 @@ void command_coordinator_reports_staged_timeout_once();
 void command_coordinator_extended_louver_supersession_suite();
 void tx_completion_queue_preserves_order_and_rejects_overflow();
 
+void rx_runtime_services_transport_and_catalogs_status();
+void rx_runtime_preserves_command_candidate_and_worker_handoff();
+void rx_runtime_reset_clears_catalog_and_worker_state();
 void worker_decoded_store_latest_status_overwrites_stale_status();
 void worker_decoded_store_keeps_command_candidate_separate();
 void worker_decoded_store_merges_distinct_opdata_fields();
