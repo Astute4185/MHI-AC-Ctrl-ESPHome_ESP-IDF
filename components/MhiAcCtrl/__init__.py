@@ -12,8 +12,13 @@ from .driver_selection import (
     DriverSelectionError,
     resolve_tx_driver,
 )
+from .mhi_transport_codegen import (
+    MhiTransportBuildInputs,
+    build_internal_transport_schema,
+)
 from .mhi_transport_registry import (
     TransportConfigurationError,
+    build_selected_transports,
     build_transport_schemas,
     resolve_selected_compile_defines,
     resolve_selected_idf_components,
@@ -100,6 +105,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FRAME_START_IDLE_MS): cv.int_range(min=1, max=50),
             cv.Optional(CONF_RMT_SPI_FRAME_GAP_US): cv.int_range(min=500, max=5000),
             **{cv.Optional(name): schema for name, schema in TRANSPORT_SCHEMAS.items()},
+            **build_internal_transport_schema(),
             cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
             cv.Optional(CONF_COMMAND_WORKER, default=False): cv.boolean,
             cv.Optional(CONF_COMMAND_WORKER_START_DELAY_MS, default=0): cv.int_range(min=0, max=30000),
@@ -131,6 +137,20 @@ async def to_code(config):
     cg.add(var.set_room_temperature_immediate_delta(config[CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA]))
     effective_tx_driver = resolve_tx_driver(config[CONF_RX_DRIVER], config.get(CONF_TX_DRIVER))
     transport_tuning = resolve_transport_tuning(config)
+    transport_inputs = MhiTransportBuildInputs(
+        frame_size=config[CONF_FRAME_SIZE],
+        sck_pin=config.get(CONF_SCK_PIN, -1),
+        mosi_pin=config.get(CONF_MOSI_PIN, -1),
+        miso_pin=config.get(CONF_MISO_PIN, -1),
+        frame_start_idle_ms=transport_tuning.frame_start_idle_ms,
+        rmt_spi_frame_gap_us=transport_tuning.rmt_spi_frame_gap_us,
+        tx_driver=effective_tx_driver,
+    )
+    primary_transport, recovery_transport = await build_selected_transports(config, transport_inputs)
+    cg.add(var.set_primary_transport(primary_transport))
+    if recovery_transport is not None:
+        cg.add(var.set_recovery_transport(recovery_transport))
+
     cg.add(var.set_rx_driver(config[CONF_RX_DRIVER]))
     cg.add(var.set_tx_driver(effective_tx_driver))
     cg.add(var.set_fan_profile(config[CONF_FAN_PROFILE]))

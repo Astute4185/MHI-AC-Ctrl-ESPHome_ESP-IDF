@@ -13,7 +13,7 @@ void MhiDuplexTransportAdapter::bind(IMhiDuplexTransport* backend, bool supports
   last_error_ = {};
 }
 
-MhiTransportResult MhiDuplexTransportAdapter::setup(const MhiTransportPins& pins) {
+MhiTransportResult MhiDuplexTransportAdapter::setup() {
   staging_failures_.store(0U, std::memory_order_relaxed);
   health_ = {};
   health_.state = MhiTransportState::STARTING;
@@ -28,7 +28,7 @@ MhiTransportResult MhiDuplexTransportAdapter::setup(const MhiTransportPins& pins
     return {false, last_error_};
   }
 
-  if (!backend_->setup(pins)) {
+  if (!backend_->setup(pins_)) {
     last_error_ = MhiTransportResult::failure(MhiTransportError::DUPLEX_SETUP_FAILED, backend_->name()).error;
     health_.state = MhiTransportState::FAILED;
     health_.fault_latched = true;

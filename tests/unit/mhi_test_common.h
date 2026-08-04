@@ -315,5 +315,7 @@ void duplex_transport_adapter_preserves_backend_contract();
 void transport_result_preserves_error_context();
 void split_transport_reports_setup_failure_and_rx_health();
 void duplex_transport_adapter_reports_missing_backend();
+void transport_manager_uses_injected_primary_transport();
+void transport_manager_activates_injected_recovery_after_setup_failure();
 
 }  // namespace mhi_unit_tests

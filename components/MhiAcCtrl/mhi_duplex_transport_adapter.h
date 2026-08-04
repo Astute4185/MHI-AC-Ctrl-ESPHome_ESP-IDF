@@ -16,7 +16,11 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
  public:
   void bind(IMhiDuplexTransport* backend, bool supports_classified_worker = true);
 
-  MhiTransportResult setup(const MhiTransportPins& pins) override;
+  void set_pins(int sck_pin, int mosi_pin, int miso_pin) {
+    pins_ = {sck_pin, mosi_pin, miso_pin};
+  }
+
+  MhiTransportResult setup() override;
   void loop() override;
   void shutdown() override;
 
@@ -66,6 +70,7 @@ class MhiDuplexTransportAdapter final : public IMhiTransport {
   uint32_t rx_queue_overwritten() const override;
 
  private:
+  MhiTransportPins pins_{};
   IMhiDuplexTransport* backend_{nullptr};
   bool supports_classified_worker_{true};
   std::atomic<uint32_t> staging_failures_{0U};

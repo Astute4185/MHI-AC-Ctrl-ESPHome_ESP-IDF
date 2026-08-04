@@ -36,4 +36,5 @@ bool MhiNullTxDriver::send(const uint8_t* data, std::size_t len) {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
-#endif  // MHI_USE_TRANSPORT_FAST_GPIO and supported split-TX target
+
+#endif  // MHI_USE_TRANSPORT_FAST_GPIO and USE_ESP_IDF

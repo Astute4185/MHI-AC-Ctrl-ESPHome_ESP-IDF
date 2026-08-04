@@ -37,6 +37,7 @@ class TransportConfigurationTests(unittest.TestCase):
             with self.subTest(driver=name):
                 self.assertEqual(definition.name, name)
                 self.assertTrue(callable(definition.schema_factory))
+                self.assertTrue(callable(definition.builder))
                 self.assertTrue(definition.compile_define.startswith("MHI_USE_TRANSPORT_"))
                 self.assertEqual(definition.supported_platforms, frozenset({PLATFORM_ESP32}))
                 self.assertEqual(definition.supported_frameworks, frozenset({FRAMEWORK_ESP_IDF}))

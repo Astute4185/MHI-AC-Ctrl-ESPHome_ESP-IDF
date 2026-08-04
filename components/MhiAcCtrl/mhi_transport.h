@@ -27,7 +27,7 @@ struct MhiTransportCapabilities {
 // but the rest of the component sees one complete transport strategy.
 class IMhiTransport {
  public:
-  virtual MhiTransportResult setup(const MhiTransportPins& pins) = 0;
+  virtual MhiTransportResult setup() = 0;
   virtual void loop() = 0;
   virtual void shutdown() = 0;
 

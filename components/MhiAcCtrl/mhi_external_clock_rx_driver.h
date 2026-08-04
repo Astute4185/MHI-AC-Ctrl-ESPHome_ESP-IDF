@@ -37,6 +37,9 @@ class MhiExternalClockRxDriver final : public IMhiRxDriver {
   void set_config(const MhiExternalClockRxConfig& config) {
     config_ = config;
   }
+  void set_frame_size_hint(int frame_size) {
+    config_.frame_size_hint = frame_size == 33 ? 33U : 20U;
+  }
 
   bool setup(const MhiTransportPins& pins) override;
   void loop() override;

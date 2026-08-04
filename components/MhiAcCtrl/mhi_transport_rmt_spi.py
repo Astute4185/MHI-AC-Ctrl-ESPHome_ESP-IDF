@@ -1,4 +1,4 @@
-"""RMT/SPI RX transport schema and compile-time metadata."""
+"""RMT/SPI RX transport schema, codegen, and compile-time metadata."""
 
 try:
     from .mhi_transport_registry import (
@@ -28,9 +28,39 @@ def build_config_schema():
     )
 
 
+async def build_transport(config, inputs, *, recovery=False):
+    if recovery:
+        raise ValueError("rmt_spi_rx cannot be constructed as the recovery transport")
+
+    import esphome.codegen as cg
+
+    from .mhi_transport_codegen import (
+        CONF_PRIMARY_RMT_SPI_RX_ID,
+        CONF_PRIMARY_SPLIT_TRANSPORT_ID,
+        build_split_tx,
+        configure_split_transport,
+    )
+
+    rx = cg.new_Pvariable(config[CONF_PRIMARY_RMT_SPI_RX_ID])
+    cg.add(rx.set_frame_size_hint(inputs.frame_size))
+    cg.add(rx.set_frame_gap_us(inputs.rmt_spi_frame_gap_us))
+
+    tx, uses_bus_marker = build_split_tx(config, inputs, recovery=False)
+    transport = cg.new_Pvariable(config[CONF_PRIMARY_SPLIT_TRANSPORT_ID])
+    return configure_split_transport(
+        transport,
+        inputs,
+        rx,
+        tx,
+        classified_worker=True,
+        uses_bus_marker=uses_bus_marker,
+    )
+
+
 TRANSPORT_DEFINITION = MhiTransportDefinition(
     name="rmt_spi_rx",
     schema_factory=build_config_schema,
+    builder=build_transport,
     compile_define="MHI_USE_TRANSPORT_RMT_SPI",
     supported_platforms=frozenset({PLATFORM_ESP32}),
     supported_frameworks=frozenset({FRAMEWORK_ESP_IDF}),

@@ -25,6 +25,14 @@ class MhiFastGpioTxDriver final : public IMhiTxDriver {
   void set_config(const MhiFastGpioTxConfig& config) {
     config_ = config;
   }
+  void set_frame_size_hint(int frame_size) {
+    config_.frame_size_hint = frame_size == 33 ? 33U : 20U;
+  }
+  void set_frame_start_idle_ms(int idle_ms) {
+    if (idle_ms > 0) {
+      config_.frame_start_idle_ms = static_cast<uint32_t>(idle_ms);
+    }
+  }
 
   void set_byte_critical_sections(bool enabled) override {
     config_.byte_critical_sections = enabled;

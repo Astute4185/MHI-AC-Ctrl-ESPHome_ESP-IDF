@@ -25,7 +25,11 @@ class MhiSplitTransport final : public IMhiTransport {
  public:
   void bind(IMhiRxDriver* rx, IMhiTxDriver* tx, bool supports_classified_worker, bool uses_bus_marker);
 
-  MhiTransportResult setup(const MhiTransportPins& pins) override;
+  void set_pins(int sck_pin, int mosi_pin, int miso_pin) {
+    pins_ = {sck_pin, mosi_pin, miso_pin};
+  }
+
+  MhiTransportResult setup() override;
   void loop() override;
   void shutdown() override;
 
@@ -87,6 +91,7 @@ class MhiSplitTransport final : public IMhiTransport {
   void clear_pending_tx_();
   bool tx_disabled_() const;
 
+  MhiTransportPins pins_{};
   IMhiRxDriver* rx_{nullptr};
   IMhiTxDriver* tx_{nullptr};
 
