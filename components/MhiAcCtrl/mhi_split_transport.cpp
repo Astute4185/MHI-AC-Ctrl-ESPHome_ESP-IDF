@@ -146,7 +146,7 @@ bool MhiSplitTransport::flush_tx_on_bus_marker() {
     if (marker.sequence != last_stale_bus_marker_sequence_) {
       last_stale_bus_marker_sequence_ = marker.sequence;
       const std::size_t pending_len = pending_tx_envelope_.len;
-      (void) pending_len;
+      (void)pending_len;
       this->unlock_tx_();
       ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
                 static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
@@ -238,8 +238,7 @@ MhiTransportCapabilities MhiSplitTransport::capabilities() const {
   capabilities.integrated_duplex = false;
   capabilities.uses_bus_marker = uses_bus_marker_;
   capabilities.supports_classified_worker = supports_classified_worker_;
-  capabilities.supports_rx_byte_critical_sections =
-      rx_ != nullptr && rx_->supports_byte_critical_sections();
+  capabilities.supports_rx_byte_critical_sections = rx_ != nullptr && rx_->supports_byte_critical_sections();
   return capabilities;
 }
 
@@ -263,7 +262,6 @@ uint32_t MhiSplitTransport::tx_completion_queue_dropped() const {
   this->unlock_tx_();
   return value;
 }
-
 
 void MhiSplitTransport::lock_tx_() const {
 #ifdef USE_ESP_IDF
