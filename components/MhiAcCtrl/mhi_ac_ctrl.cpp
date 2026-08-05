@@ -24,6 +24,10 @@ bool in_range(float value, float min_value, float max_value) {
   return value >= min_value && value <= max_value;
 }
 
+bool timestamp_at_or_after(uint32_t timestamp_ms, uint32_t boundary_ms) {
+  return static_cast<int32_t>(timestamp_ms - boundary_ms) >= 0;
+}
+
 }  // namespace
 
 void MhiAcCtrl::set_external_room_temperature(float value) {
@@ -162,7 +166,8 @@ bool MhiAcCtrl::transport_command_path_ready_() const {
   if (this->transport_.safe_mode() || !this->transport_.tx_ready()) {
     return false;
   }
-  if (this->transport_.recovery_active() && this->transport_.state() != MhiTransportState::RECOVERY_ACTIVE) {
+  if (this->transport_.recovery_active() &&
+      this->transport_.state() != MhiTransportState::RECOVERY_ACTIVE) {
     return false;
   }
   return true;
@@ -464,8 +469,9 @@ void MhiAcCtrl::on_transport_switch_begin(const MhiTransportErrorDetail& reason)
   this->status_set_warning("MHI transport recovery in progress");
   this->reset_runtime_for_transport_switch_();
 
-  ESP_LOGW(TAG, "Transport transition started: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
-           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
+  ESP_LOGW(TAG, "Transport transition started: error=%s operation=%s native=%ld",
+           mhi_transport_error_name(reason.code), reason.operation == nullptr ? "none" : reason.operation,
+           static_cast<long>(reason.native_code));
 }
 
 void MhiAcCtrl::on_transport_recovery_ready() {
@@ -493,8 +499,9 @@ void MhiAcCtrl::on_transport_safe_mode(const MhiTransportErrorDetail& reason) {
   this->publish_transport_diagnostics_(true);
   this->publish_active_mode_state_();
 
-  ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
-           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
+  ESP_LOGE(TAG, "Transport safe mode: error=%s operation=%s native=%ld",
+           mhi_transport_error_name(reason.code), reason.operation == nullptr ? "none" : reason.operation,
+           static_cast<long>(reason.native_code));
 }
 
 void MhiAcCtrl::reset_command_runtime_() {
@@ -679,7 +686,8 @@ void MhiAcCtrl::dump_config() {
                 static_cast<unsigned long>(this->command_worker_stack_size_),
                 static_cast<unsigned long>(this->command_worker_start_delay_ms_),
                 static_cast<unsigned long>(this->worker_handles_rx_() ? kCommandWorkerPollMs : 50U));
-  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s", this->transport_.rx_byte_critical_sections() ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  RX byte critical sections: %s",
+                this->transport_.rx_byte_critical_sections() ? "YES" : "NO");
   const MhiOpDataFreshnessSnapshot opdata_freshness = this->opdata_freshness_.evaluate(millis());
   ESP_LOGCONFIG(TAG, "  Opdata request mask: 0x%08lx", static_cast<unsigned long>(this->opdata_mask_));
   ESP_LOGCONFIG(TAG, "  Opdata freshness timeout: %lums",
@@ -700,7 +708,8 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "  Opdata freshness: fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx "
                 "oldest_age_ms=%lu timeout_events=%lu",
-                opdata_freshness.fresh ? "YES" : "NO", static_cast<unsigned long>(opdata_freshness.observed_mask),
+                opdata_freshness.fresh ? "YES" : "NO",
+                static_cast<unsigned long>(opdata_freshness.observed_mask),
                 static_cast<unsigned long>(opdata_freshness.pending_mask),
                 static_cast<unsigned long>(opdata_freshness.stale_mask),
                 static_cast<unsigned long>(opdata_freshness.oldest_age_ms),
@@ -743,7 +752,8 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
   ESP_LOGD(DIAG_TAG,
            "runtime: opdata fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx stale_count=%u "
            "oldest_age_ms=%lu timeout_events=%lu",
-           opdata_freshness.fresh ? "YES" : "NO", static_cast<unsigned long>(opdata_freshness.observed_mask),
+           opdata_freshness.fresh ? "YES" : "NO",
+           static_cast<unsigned long>(opdata_freshness.observed_mask),
            static_cast<unsigned long>(opdata_freshness.pending_mask),
            static_cast<unsigned long>(opdata_freshness.stale_mask),
            static_cast<unsigned int>(opdata_freshness.stale_count),
@@ -1241,7 +1251,8 @@ void MhiAcCtrl::service_command_pipeline_() {
 void MhiAcCtrl::drain_tx_completions_() {
   MhiTxCompletion completion{};
   bool command_state_changed = false;
-  bool clear_command_candidate = false;
+  bool evaluate_command_candidate_boundary = false;
+  uint32_t command_candidate_boundary_ms = 0U;
 
   while (this->transport_.take_tx_completion(completion)) {
     if (completion.is_command()) {
@@ -1264,7 +1275,8 @@ void MhiAcCtrl::drain_tx_completions_() {
     trace_pending_intent = this->command_coordinator_.pending_intent();
 #endif
     if (handled && completion.success && trace_pending_mask != 0U) {
-      clear_command_candidate = true;
+      evaluate_command_candidate_boundary = true;
+      command_candidate_boundary_ms = completion.completed_at_ms;
       this->command_trace_generation_ = completion.generation;
     } else if (handled && trace_pending_mask == 0U) {
       this->command_trace_generation_ = 0U;
@@ -1283,9 +1295,8 @@ void MhiAcCtrl::drain_tx_completions_() {
                static_cast<unsigned long>(completion.completed_at_ms), handled ? "YES" : "NO",
                static_cast<unsigned long>(completion.command_mask), static_cast<unsigned long>(trace_pending_mask),
                static_cast<unsigned int>(trace_confirmation_attempt), trace_pending_intent.power ? "ON" : "OFF",
-               static_cast<unsigned int>(trace_pending_intent.mode),
-               static_cast<unsigned int>(trace_pending_intent.fan), trace_pending_intent.target_temp_c,
-               static_cast<unsigned int>(trace_pending_intent.vertical_vane),
+               static_cast<unsigned int>(trace_pending_intent.mode), static_cast<unsigned int>(trace_pending_intent.fan),
+               trace_pending_intent.target_temp_c, static_cast<unsigned int>(trace_pending_intent.vertical_vane),
                static_cast<unsigned int>(trace_pending_intent.horizontal_vane),
                trace_pending_intent.three_d_auto ? "ON" : "OFF");
     }
@@ -1304,9 +1315,30 @@ void MhiAcCtrl::drain_tx_completions_() {
     }
   }
 
-  if (clear_command_candidate) {
-    this->trace_clear_command_candidate_("tx_completion_staged_confirmation");
-    this->rx_runtime_.clear_command_candidate();
+  if (evaluate_command_candidate_boundary) {
+    const MhiCommandCandidateInfo candidate = this->rx_runtime_.command_candidate_info();
+    const bool catalog_post_tx =
+        candidate.catalog_valid && timestamp_at_or_after(candidate.catalog_update_ms, command_candidate_boundary_ms);
+    const bool worker_post_tx =
+        candidate.worker_valid && timestamp_at_or_after(candidate.worker_update_ms, command_candidate_boundary_ms);
+
+#ifdef MHI_COMMAND_TRACE
+    ESP_LOGD(DIAG_TAG,
+             "command_trace: candidate_boundary generation=%lu completed_at_ms=%lu "
+             "catalog{valid=%s seq=%lu capture_ms=%lu decision=%s} "
+             "worker{valid=%s seq=%lu capture_ms=%lu decision=%s}",
+             static_cast<unsigned long>(this->command_trace_generation_),
+             static_cast<unsigned long>(command_candidate_boundary_ms), candidate.catalog_valid ? "YES" : "NO",
+             static_cast<unsigned long>(candidate.catalog_sequence),
+             static_cast<unsigned long>(candidate.catalog_update_ms), catalog_post_tx ? "RETAIN" : "STALE_OR_EMPTY",
+             candidate.worker_valid ? "YES" : "NO", static_cast<unsigned long>(candidate.worker_sequence),
+             static_cast<unsigned long>(candidate.worker_update_ms), worker_post_tx ? "RETAIN" : "STALE_OR_EMPTY");
+#endif
+
+    if (!catalog_post_tx && !worker_post_tx) {
+      this->trace_clear_command_candidate_("pre_tx_candidate");
+      this->rx_runtime_.clear_command_candidate();
+    }
   }
 
   if (command_state_changed) {
@@ -1384,8 +1416,8 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
 
   this->command_worker_rx_polls_.fetch_add(1U, std::memory_order_relaxed);
 
-  const MhiRxServiceResult result =
-      this->rx_runtime_.service(this->transport_, kMaxRxChunksPerWorkerPoll, this->command_confirmation_pending_());
+  const MhiRxServiceResult result = this->rx_runtime_.service(
+      this->transport_, kMaxRxChunksPerWorkerPoll, this->command_confirmation_pending_());
 
   if (result.chunks > 0U) {
     this->command_worker_rx_chunks_.fetch_add(result.chunks, std::memory_order_relaxed);
@@ -1399,8 +1431,9 @@ bool MhiAcCtrl::service_classified_rx_pipeline_() {
   this->command_worker_rx_frames_.fetch_add(result.frames, std::memory_order_relaxed);
 
   uint32_t previous_max = this->command_worker_rx_max_batch_.load(std::memory_order_relaxed);
-  while (result.frames > previous_max && !this->command_worker_rx_max_batch_.compare_exchange_weak(
-                                             previous_max, result.frames, std::memory_order_relaxed)) {
+  while (result.frames > previous_max &&
+         !this->command_worker_rx_max_batch_.compare_exchange_weak(previous_max, result.frames,
+                                                                   std::memory_order_relaxed)) {
   }
 
   return this->rx_runtime_.decode_cataloged_frames_to_worker_store(this->command_confirmation_pending_());
@@ -1654,7 +1687,8 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
         opdata.has_estimated_power = estimate.power_valid;
         opdata.estimated_power_w = estimate.power_w;
         opdata.has_estimated_energy = estimate.energy_valid;
-        opdata.estimated_energy_kwh = static_cast<float>(std::round(estimate.energy_kwh * 1000.0) / 1000.0);
+        opdata.estimated_energy_kwh =
+            static_cast<float>(std::round(estimate.energy_kwh * 1000.0) / 1000.0);
       }
     } else {
       this->log_rejected_opdata_("current", decoded_opdata.current_a, frame);
@@ -1928,18 +1962,19 @@ void MhiAcCtrl::trace_command_candidate_(const char* source, const MhiDecodedSta
            "horizontal=%u three_d=%s}",
            source, static_cast<unsigned long>(this->command_trace_generation_), static_cast<unsigned int>(attempt),
            static_cast<unsigned long>(snapshot.sequence), static_cast<unsigned long>(snapshot.last_update_ms),
-           static_cast<unsigned long>(age_ms), static_cast<unsigned long>(pending_mask), frame.data[DB0],
-           frame.data[DB1], frame.data[DB2], frame.data[DB6], frame.data[DB9], frame.len > DB16 ? frame.data[DB16] : 0U,
+           static_cast<unsigned long>(age_ms), static_cast<unsigned long>(pending_mask), frame.data[DB0], frame.data[DB1],
+           frame.data[DB2], frame.data[DB6], frame.data[DB9], frame.len > DB16 ? frame.data[DB16] : 0U,
            frame.len > DB17 ? frame.data[DB17] : 0U, decoded.valid ? "YES" : "NO", decoded.power ? "ON" : "OFF",
            static_cast<unsigned int>(decoded.mode), static_cast<unsigned int>(decoded.fan), decoded.target_temp_c,
            static_cast<unsigned int>(decoded.vertical_vane), decoded.vertical_swing ? "YES" : "NO",
            static_cast<unsigned int>(decoded.horizontal_vane), decoded.horizontal_swing ? "YES" : "NO",
-           decoded.three_d_auto ? "ON" : "OFF", intent.power ? "ON" : "OFF", static_cast<unsigned int>(intent.mode),
-           static_cast<unsigned int>(intent.fan), intent.target_temp_c, static_cast<unsigned int>(intent.vertical_vane),
-           static_cast<unsigned int>(intent.horizontal_vane), intent.three_d_auto ? "ON" : "OFF");
+           decoded.three_d_auto ? "ON" : "OFF", intent.power ? "ON" : "OFF",
+           static_cast<unsigned int>(intent.mode), static_cast<unsigned int>(intent.fan), intent.target_temp_c,
+           static_cast<unsigned int>(intent.vertical_vane), static_cast<unsigned int>(intent.horizontal_vane),
+           intent.three_d_auto ? "ON" : "OFF");
 #else
-  (void)source;
-  (void)snapshot;
+  (void) source;
+  (void) snapshot;
 #endif
 }
 
@@ -1959,8 +1994,8 @@ void MhiAcCtrl::trace_cataloged_command_candidate_(const char* source, const Mhi
   snapshot.frame = frame.frame;
   this->trace_command_candidate_(source, snapshot);
 #else
-  (void)source;
-  (void)frame;
+  (void) source;
+  (void) frame;
 #endif
 }
 
@@ -1989,12 +2024,13 @@ void MhiAcCtrl::trace_confirmation_observation_(const MhiStatusState& status, co
            static_cast<unsigned long>(pending_mask), frame.data[DB0], status.power ? "ON" : "OFF",
            static_cast<unsigned int>(status.mode), static_cast<unsigned int>(status.fan), status.target_temp_c,
            static_cast<unsigned int>(status.vertical_vane), static_cast<unsigned int>(status.horizontal_vane),
-           status.three_d_auto ? "ON" : "OFF", intent.power ? "ON" : "OFF", static_cast<unsigned int>(intent.mode),
-           static_cast<unsigned int>(intent.fan), intent.target_temp_c, static_cast<unsigned int>(intent.vertical_vane),
-           static_cast<unsigned int>(intent.horizontal_vane), intent.three_d_auto ? "ON" : "OFF");
+           status.three_d_auto ? "ON" : "OFF", intent.power ? "ON" : "OFF",
+           static_cast<unsigned int>(intent.mode), static_cast<unsigned int>(intent.fan), intent.target_temp_c,
+           static_cast<unsigned int>(intent.vertical_vane), static_cast<unsigned int>(intent.horizontal_vane),
+           intent.three_d_auto ? "ON" : "OFF");
 #else
-  (void)status;
-  (void)frame;
+  (void) status;
+  (void) frame;
 #endif
 }
 
@@ -2020,7 +2056,7 @@ void MhiAcCtrl::trace_clear_command_candidate_(const char* reason) const {
            info.worker_valid ? "YES" : "NO", static_cast<unsigned long>(info.worker_sequence),
            static_cast<unsigned long>(info.worker_update_ms));
 #else
-  (void)reason;
+  (void) reason;
 #endif
 }
 
