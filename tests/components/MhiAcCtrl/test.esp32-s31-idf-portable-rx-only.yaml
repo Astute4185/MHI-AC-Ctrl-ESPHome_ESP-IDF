@@ -8,7 +8,8 @@ esp32:
   variant: esp32s31
   framework:
     type: esp-idf
-    version: recommended
+    version: 6.1.0
+    source: github://espressif/esp-idf@release/v6.1
 
 logger:
   level: INFO
