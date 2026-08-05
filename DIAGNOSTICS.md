@@ -2,7 +2,7 @@
 
 This guide explains the current MHI runtime diagnostics, how to distinguish recoverable events from real failures, and what evidence should accompany a hardware or driver result.
 
-Driver availability and configuration rules are documented in [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md).
+Driver availability and configuration rules are documented in [the driver documentation](docs/drivers/README.md).
 
 ## Logging strategy
 

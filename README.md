@@ -53,7 +53,7 @@ while listen-only mode was active. Active Mode defaults to on after boot.
 
 The modular transport boundary keeps hardware-specific implementation details out of the rest of the component. Selecting one driver compiles only that primary backend and its required recovery path. An unselected driver does not add runtime branches or alter protocol, command, state, or entity behaviour. Portability does not imply universal chip support: every driver declares the exact ESP32 variants and framework it supports, and invalid selections fail during configuration.
 
-See [Developing a new transport](DRIVER_SELECTION.md#developing-a-new-transport) for the required C++ contract, Python registration, compile guards, tests, and hardware-validation evidence.
+See [Developing a new driver](docs/drivers/developing-drivers.md) for the required C++ contract, Python registration, compile guards, tests, and hardware-validation evidence.
 
 ### Driver combinations
 
@@ -122,7 +122,7 @@ MhiAcCtrl:
     frame_gap_us: 1000
 ```
 
-See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
+See [the driver documentation](docs/drivers/README.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
 
 ## Hardware assumptions
 
@@ -194,7 +194,7 @@ fan_profile
 power_estimation
 ```
 
-Transport and command-worker tuning is optional and should normally be left at the selected backend's defaults. Driver-specific options are configured under the selected driver's nested subsection rather than as shared component fields. See [Driver selection, configuration and tuning](DRIVER_SELECTION.md#configuration-and-tuning) for the available tunables and when to use them.
+Transport and command-worker tuning is optional and should normally be left at the selected backend's defaults. Driver-specific options are configured under the selected driver's nested subsection rather than as shared component fields. See [driver summary and tuning guide](docs/drivers/README.md#calling-a-driver-tunable) for the available tunables and when to use them.
 
 ## Room temperature publication rate limiting
 

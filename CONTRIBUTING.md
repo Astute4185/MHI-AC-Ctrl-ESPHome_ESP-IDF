@@ -8,7 +8,7 @@ This project controls a timing-sensitive, externally clocked bus. Keep changes f
 
 - Search existing issues and pull requests for the same board, air-conditioner model, driver, or protocol field.
 - Read [`ARCHITECTURE.md`](ARCHITECTURE.md) before changing transport, worker, state, command, or publication code.
-- Read [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) and [`DIAGNOSTICS.md`](DIAGNOSTICS.md) before changing or validating a transport.
+- Read [the driver documentation](docs/drivers/README.md) and [`DIAGNOSTICS.md`](DIAGNOSTICS.md) before changing or validating a transport.
 - Keep unrelated cleanup out of behavioural changes so regressions remain easy to isolate.
 
 For substantial protocol or transport changes, open an issue first with the observed frames, hardware, current configuration, and intended behaviour.
@@ -67,7 +67,7 @@ Changes must preserve these core rules:
 - Adding a driver must not introduce concrete-driver conditionals into `MhiAcCtrl`, `MhiTransportManager`, protocol, command, state, or entity code.
 - Unselected transport implementation files remain excluded through whole-translation-unit compile guards.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete ownership and lifecycle model and [`DRIVER_SELECTION.md#developing-a-new-transport`](DRIVER_SELECTION.md#developing-a-new-transport) for the driver contribution example.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete ownership and lifecycle model and [`docs/drivers/developing-drivers.md`](docs/drivers/developing-drivers.md) for the driver contribution example.
 
 ## Tests
 

@@ -4,7 +4,7 @@ This document describes the current runtime architecture of the ESP-IDF rewrite 
 
 It is an implementation reference, not a migration plan. The major transport, command-worker, frame-classification, command-confirmation, and state-publication changes described here are already implemented.
 
-For configuration guidance, see [`README.md`](README.md) and [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md). For runtime counters and hardware validation, see [`DIAGNOSTICS.md`](DIAGNOSTICS.md).
+For configuration guidance, see [`README.md`](README.md) and [`docs/drivers/README.md`](docs/drivers/README.md). For runtime counters and hardware validation, see [`DIAGNOSTICS.md`](DIAGNOSTICS.md).
 
 ## Design goals
 
@@ -577,7 +577,7 @@ A new transport should:
 
 Hardware support remains driver-specific. Portability does not bypass target constraints: unsupported chip/framework combinations are declared by the driver and rejected during ESPHome configuration.
 
-See [`DRIVER_SELECTION.md#developing-a-new-transport`](DRIVER_SELECTION.md#developing-a-new-transport) for a concrete split-driver example and the required registration, codegen, testing, and hardware-validation steps.
+See [`docs/drivers/developing-drivers.md`](docs/drivers/developing-drivers.md) for a concrete split-driver example and the required registration, codegen, testing, and hardware-validation steps.
 
 ## Validation model
 
@@ -618,7 +618,7 @@ Remaining work is primarily wider hardware validation, protocol discovery, docum
 ## Related documents
 
 - [`README.md`](README.md) — configuration and user-facing project status
-- [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) — driver combinations and target guidance
+- [`docs/drivers/README.md`](docs/drivers/README.md) — driver combinations and target guidance
 - [`DIAGNOSTICS.md`](DIAGNOSTICS.md) — runtime counters and hardware validation
 - [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md) — consolidated MHI bus and protocol findings
 - [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md) — extended-louver protocol findings
