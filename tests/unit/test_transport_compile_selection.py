@@ -163,13 +163,14 @@ class TransportCompileSelectionTests(unittest.TestCase):
                 self.assertIn(filename, source)
                 self.assertTrue((PORTABILITY_FIXTURE_DIR / filename).exists())
 
-    def test_s31_fixture_is_compile_only_and_uses_recommended_idf(self):
+    def test_s31_fixture_is_compile_only_and_uses_idf_61_branch(self):
         source = (PORTABILITY_FIXTURE_DIR / "test.esp32-s31-idf-portable-rx-only.yaml").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("variant: esp32s31", source)
-        self.assertIn("version: recommended", source)
+        self.assertIn("version: 6.1.0", source)
+        self.assertIn("source: github://espressif/esp-idf@release/v6.1", source)
         self.assertIn("rx_driver: external_clock_rx", source)
         self.assertIn("tx_driver: none", source)
         self.assertIn("does not claim hardware", source)
