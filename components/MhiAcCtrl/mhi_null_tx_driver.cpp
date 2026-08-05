@@ -28,7 +28,7 @@ bool MhiNullTxDriver::send(const uint8_t* data, std::size_t len) {
   const uint32_t now = millis();
   if (last_log_ms_ == 0U || (now - last_log_ms_) >= 30000U) {
     last_log_ms_ = now;
-    ESP_LOGI(NULL_TX_TAG, "probe: dropped_tx_frames=%lu", static_cast<unsigned long>(dropped_frames_));
+    ESP_LOGD(NULL_TX_TAG, "probe: dropped_tx_frames=%lu", static_cast<unsigned long>(dropped_frames_));
   }
 
   return false;

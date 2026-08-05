@@ -104,7 +104,7 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
   // only after SPI, RMT, and the owner task are ready.
   this->connect_internal_cs_(false);
   ready_ = true;
-  ESP_LOGW(TAG,
+  ESP_LOGI(TAG,
            "RMT-CS SPI duplex enabled: driver=%s host=SPI2 SCK=%d MOSI=%d MISO=%d mode=3 LSB-first "
            "buffer=FIFO transfer=%u bytes "
            "frame=%u frame_gap=%luus task_core=%d task_priority=%lu task_stack=%lu",
@@ -165,7 +165,7 @@ void MhiRmtCsSpiTransport::loop() {
   completion_high_water = tx_completions_.high_water_mark();
   completion_dropped = tx_completions_.dropped();
   portEXIT_CRITICAL(&mux_);
-  ESP_LOGI(TAG,
+  ESP_LOGD(TAG,
            "runtime: boundaries=%lu completed=%lu tx_completed=%lu tx_failures=%lu frame20=%lu frame33=%lu "
            "invalid_len=%lu result_errors=%lu queue_errors=%lu rmt_rearm_errors=%lu buffered_frames=%u "
            "max_buffered=%u rx_overwritten=%lu tx_overwritten=%lu dropped=%lu completion=%u/%u/%lu "
@@ -462,7 +462,7 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
     }
     hw->pin.ck_idle_edge = 1;
     hw->user.ck_i_edge = 1;
-    ESP_LOGW(TAG, "Applied original ESP32 FIFO mode-3 edge correction");
+    ESP_LOGI(TAG, "Applied original ESP32 FIFO mode-3 edge correction");
   }
 #endif
 

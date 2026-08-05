@@ -109,5 +109,6 @@ check_sources_exist
 python3 tests/unit/test_driver_selection.py
 python3 tests/unit/test_transport_configuration.py
 python3 tests/unit/test_transport_compile_selection.py
+python3 tests/unit/test_log_severity_policy.py
 python3 tests/unit/test_esphome_component_dependencies.py
 python3 tests/unit/test_repository_hygiene.py

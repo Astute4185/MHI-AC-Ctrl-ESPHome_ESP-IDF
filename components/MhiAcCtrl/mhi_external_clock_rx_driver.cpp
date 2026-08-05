@@ -91,7 +91,7 @@ bool MhiExternalClockRxDriver::setup(const MhiTransportPins& pins) {
 
   ready_ = true;
 
-  ESP_LOGW(EXTERNAL_CLOCK_RX_TAG,
+  ESP_LOGI(EXTERNAL_CLOCK_RX_TAG,
            "External-clock RX probe enabled: SCK=%d MOSI=%d capture=%s-edge LSB-first byte_gap_reset=%luus "
            "frame_gap_reset=%luus min_edge_gap=%luus sample_delay=%lu NOPs ring=%u frames/%u bytes. "
            "TX should be disabled for first validation.",
@@ -115,7 +115,7 @@ void MhiExternalClockRxDriver::loop() {
   const uint32_t now = millis();
   if (last_diag_log_ms_ == 0U || (now - last_diag_log_ms_) >= 30000U) {
     last_diag_log_ms_ = now;
-    ESP_LOGI(EXTERNAL_CLOCK_RX_TAG,
+    ESP_LOGD(EXTERNAL_CLOCK_RX_TAG,
              "probe: edge=%s delay=%lu edges=%lu bytes=%lu frame_chunks=%lu buffered=%u current_frame_len=%u "
              "signature_starts=%lu signature_restarts=%lu discarded_presync_bytes=%lu bad_length_discards=%lu "
              "byte_gap_resets=%lu frame_gap_resets=%lu full_byte_gap_resets=%lu partial_byte_gap_resets=%lu "

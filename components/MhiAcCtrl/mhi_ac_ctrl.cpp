@@ -108,7 +108,7 @@ void MhiAcCtrl::check_external_room_temperature_timeout_() {
 
   this->room_temp_api_active_ = false;
   this->clear_external_room_temperature_();
-  ESP_LOGD(DIAG_TAG, "external room temperature timed out after %ds", this->room_temp_api_timeout_s_);
+  ESP_LOGI(DIAG_TAG, "external room temperature timed out after %ds", this->room_temp_api_timeout_s_);
 }
 
 bool MhiAcCtrl::set_active_mode(bool enabled) {
@@ -170,7 +170,7 @@ bool MhiAcCtrl::transport_command_path_ready_() const {
 
 uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   if (!this->transport_commands_enabled_.load(std::memory_order_acquire)) {
-    ESP_LOGD(DIAG_TAG, "command: rejected while Active Mode is off, transport is switching, or safe mode is active");
+    ESP_LOGW(DIAG_TAG, "command: rejected while Active Mode is off, transport is switching, or safe mode is active");
     return 0U;
   }
 
@@ -238,7 +238,7 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   }
 
   if (superseded_mask != 0U) {
-    ESP_LOGD(DIAG_TAG, "command: superseded pending confirmation mask=0x%08lx",
+    ESP_LOGI(DIAG_TAG, "command: superseded pending confirmation mask=0x%08lx",
              static_cast<unsigned long>(superseded_mask));
   }
 
@@ -698,7 +698,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
   const auto& stats = diag.stats;
 
   const MhiTransportDiagnosticsSnapshot transport_diag = this->transport_.diagnostics_snapshot(now);
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: transport state=%s active=%s active_mode=%s healthy=%s recovery=%s safe_mode=%s attempts=%lu "
            "activations=%lu failures=%lu safe_entries=%lu last_error=%s operation=%s native=%ld",
            mhi_transport_state_name(transport_diag.state), transport_diag.active_transport_name,
@@ -713,7 +713,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<long>(transport_diag.last_error.native_code));
 
   const MhiOpDataFreshnessSnapshot opdata_freshness = this->opdata_freshness_.evaluate(now);
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: opdata fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx stale_count=%u "
            "oldest_age_ms=%lu timeout_events=%lu",
            opdata_freshness.fresh ? "YES" : "NO", static_cast<unsigned long>(opdata_freshness.observed_mask),
@@ -723,14 +723,14 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(opdata_freshness.oldest_age_ms),
            static_cast<unsigned long>(opdata_freshness.timeout_events));
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: rx_bytes=%lu rx_chunks=%lu candidate_frames=%lu valid_frames=%lu invalid_frames=%lu "
            "checksum_failures=%lu",
            static_cast<unsigned long>(stats.rx_bytes), static_cast<unsigned long>(stats.rx_chunks),
            static_cast<unsigned long>(stats.candidate_frames), static_cast<unsigned long>(stats.valid_frames),
            static_cast<unsigned long>(stats.invalid_frames), static_cast<unsigned long>(stats.checksum_failures));
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: signature_misses=%lu sync_losses=%lu dropped_bytes=%lu tx_frames=%lu tx_failures=%lu "
            "last_valid_frame_age_ms=%lu last_rx_byte_age_ms=%lu last_tx_frame_age_ms=%lu",
            static_cast<unsigned long>(stats.signature_misses), static_cast<unsigned long>(stats.sync_losses),
@@ -748,7 +748,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
                                 delta_signature_misses == 0U && delta_sync_losses == 0U && delta_dropped_bytes == 0U;
 
   if (protocol_healthy) {
-    ESP_LOGI(DIAG_TAG,
+    ESP_LOGD(DIAG_TAG,
              "runtime: rx_protocol_health healthy=YES delta_valid=%lu delta_invalid=%lu delta_checksum_failures=%lu "
              "delta_signature_misses=%lu delta_sync_losses=%lu delta_dropped_bytes=%lu",
              static_cast<unsigned long>(delta_valid_frames), static_cast<unsigned long>(delta_invalid_frames),
@@ -828,7 +828,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
   this->last_protocol_health_sync_losses_ = stats.sync_losses;
   this->last_protocol_health_dropped_bytes_ = stats.dropped_bytes;
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: tx_command_frames=%lu tx_command_failures=%lu unsupported_commands=%lu "
            "last_tx_command_mask=0x%08lx last_unsupported_command_mask=0x%08lx "
            "last_tx_command_age_ms=%lu last_unsupported_command_age_ms=%lu",
@@ -839,7 +839,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(diag.last_tx_command_frame_age_ms),
            static_cast<unsigned long>(diag.last_unsupported_command_age_ms));
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: command_confirmations=%lu confirmation_timeouts=%lu retries=%lu retry_exhaustions=%lu "
            "staged_timeouts=%lu pending_confirmation_mask=0x%08lx last_confirmed_mask=0x%08lx "
            "last_timeout_mask=0x%08lx last_retry_mask=0x%08lx last_exhausted_mask=0x%08lx "
@@ -859,7 +859,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(diag.last_command_confirmation_timeout_age_ms));
 
   const MhiCatalogStats catalog_stats = this->rx_runtime_.catalog_stats();
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: catalog ingested=%lu status=%lu extended=%lu opdata=%lu unknown=%lu overwritten=%lu "
            "opdata_slots_full=%lu command_candidates=%lu",
            static_cast<unsigned long>(catalog_stats.ingested_frames),
@@ -873,7 +873,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
 
   const MhiWorkerDecodedStoreStats worker_store_stats = this->rx_runtime_.worker_store_stats();
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: worker_decode status=%lu/%lu extended=%lu/%lu candidates=%lu/%lu "
            "opdata_merges=%lu opdata_field_overwrites=%lu unknown=%lu/%lu publish_batches=%lu "
            "pending_high_water=%lu unknown_high_water=%lu",
@@ -891,7 +891,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(worker_store_stats.pending_high_water),
            static_cast<unsigned long>(worker_store_stats.unknown_high_water));
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: tx_priority command_attempts=%lu background_attempts=%lu background_failures=%lu "
            "interval_deferrals=%lu confirmation_deferrals=%lu",
            static_cast<unsigned long>(this->tx_command_priority_attempts_),
@@ -900,7 +900,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(this->tx_background_interval_deferrals_),
            static_cast<unsigned long>(this->tx_background_confirmation_deferrals_));
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: command_worker enabled=%s running=%s classified_rx=%s wakes=%lu service_runs=%lu idle_polls=%lu "
            "frames_staged=%lu completions=%lu rx_polls=%lu rx_batches=%lu rx_chunks=%lu rx_frames=%lu "
            "rx_max_batch=%lu runtime_us=%lu/%lu notify_max=%lu stack_free_min=%lu",
@@ -922,7 +922,7 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned long>(this->command_worker_max_notify_batch_.load(std::memory_order_relaxed)),
            static_cast<unsigned long>(this->command_worker_stack_high_water_bytes_.load(std::memory_order_relaxed)));
 
-  ESP_LOGI(DIAG_TAG,
+  ESP_LOGD(DIAG_TAG,
            "runtime: transport_queues rx_depth=%u rx_high_water=%u rx_overwritten=%lu completion_depth=%u "
            "completion_high_water=%u completion_dropped=%lu",
            static_cast<unsigned int>(this->transport_.rx_queue_depth()),
@@ -932,13 +932,13 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
            static_cast<unsigned int>(this->transport_.tx_completion_queue_high_water()),
            static_cast<unsigned long>(this->transport_.tx_completion_queue_dropped()));
 
-  ESP_LOGI(DIAG_TAG, "runtime: loop_us last=%lu avg=%lu max=%lu over_budget=%lu budget=%lu last_over_budget_age_ms=%lu",
+  ESP_LOGD(DIAG_TAG, "runtime: loop_us last=%lu avg=%lu max=%lu over_budget=%lu budget=%lu last_over_budget_age_ms=%lu",
            static_cast<unsigned long>(stats.loop_last_us), static_cast<unsigned long>(stats.loop_avg_us),
            static_cast<unsigned long>(stats.loop_max_us), static_cast<unsigned long>(stats.loop_over_budget),
            static_cast<unsigned long>(stats.loop_budget_us),
            static_cast<unsigned long>(diag.last_loop_over_budget_age_ms));
 
-  ESP_LOGI(
+  ESP_LOGD(
       DIAG_TAG,
       "runtime: section_us transport=%lu/%lu/%lu tx=%lu/%lu/%lu rx=%lu/%lu/%lu "
       "publish=%lu/%lu/%lu command=%lu/%lu/%lu",

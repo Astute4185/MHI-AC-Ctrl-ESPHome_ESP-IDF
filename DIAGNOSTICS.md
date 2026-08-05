@@ -6,25 +6,33 @@ Driver availability and configuration rules are documented in [the driver docume
 
 ## Logging strategy
 
-Use DEBUG during initial bring-up and focused command testing:
+The component uses four severity classes consistently:
+
+| Level | Purpose | Examples |
+|---|---|---|
+| `DEBUG` | Periodic telemetry and expected coalescing detail | 30-second runtime counters, driver queue snapshots, duplicate requests |
+| `INFO` | Meaningful lifecycle transitions | driver enabled, Active Mode changed, command staged, superseded, or confirmed |
+| `WARN` | Recoverable degradation or rejected user intent | unsupported command, confirmation timeout, recovery activation, queue or RMT anomaly |
+| `ERROR` | Setup failure or loss of safe operation | transport setup failure, safe mode, unrecoverable runtime failure |
+
+For normal operation, `INFO` now gives a low-noise event log without the repeating runtime counter block:
 
 ```yaml
 logger:
-  level: DEBUG
+  level: INFO
 ```
 
-For a longer soak, reduce unrelated log load while retaining MHI health lines:
+Use DEBUG during initial bring-up, focused command testing, or when collecting periodic transport evidence:
 
 ```yaml
 logger:
   level: WARN
   logs:
-    mhi.diag: INFO
-    mhi_rmt_cs_spi: INFO
-    mhi_rmt_spi_rx: INFO
+    mhi.diag: DEBUG
+    mhi_rmt_cs_spi: DEBUG
 ```
 
-Only enable the driver tag that applies to the selected transport.
+Only enable the driver tag that applies to the selected transport. Equivalent driver tags are `mhi_rmt_spi_rx` and `mhi_extclk_rx`.
 
 A clean startup log is not sufficient. Review diagnostics after command sequences, Home Assistant reconnects, opdata polling, Wi-Fi activity, and sustained runtime.
 
@@ -153,7 +161,7 @@ Horizontal vane and 3D Auto confirmation use three-second windows. Other command
 
 Horizontal vane and 3D Auto share DB16/DB17. When newer intent changes the composite desired state, the old confirmation generation is superseded and a combined command can be transmitted immediately.
 
-Typical trace:
+Typical INFO trace:
 
 ```text
 command: superseded pending confirmation mask=0x00000020
@@ -161,7 +169,7 @@ command: staged=YES mask=0x00000060 ...
 command: confirmed mask=0x00000060 pending=0x00000000
 ```
 
-This is expected behaviour, not a failure. The latest requested composite state must confirm without stale intent carrying into the next command.
+Supersession is logged at INFO because it explains why an intermediate requested state may never confirm. This is expected behaviour, not a failure. The latest requested composite state must confirm without stale intent carrying into the next command.
 
 ### Command test scope
 
