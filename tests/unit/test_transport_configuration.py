@@ -14,8 +14,15 @@ from mhi_transport_registry import (  # noqa: E402
     PLATFORM_ESP32,
     TRANSPORT_DEFINITIONS,
     VARIANT_ESP32,
+    VARIANT_ESP32C2,
     VARIANT_ESP32C3,
+    VARIANT_ESP32C5,
+    VARIANT_ESP32C6,
+    VARIANT_ESP32C61,
+    VARIANT_ESP32S2,
     VARIANT_ESP32S3,
+    VARIANT_ESP32S31,
+    WIFI_ESP32_VARIANTS,
     TransportConfigurationError,
     resolve_selected_compile_defines,
     resolve_selected_idf_components,
@@ -119,8 +126,8 @@ class TransportConfigurationTests(unittest.TestCase):
 
     def test_target_support_matches_current_native_drivers(self):
         expected = {
-            "fast_gpio_rx": {VARIANT_ESP32, VARIANT_ESP32C3, VARIANT_ESP32S3},
-            "external_clock_rx": {VARIANT_ESP32, VARIANT_ESP32S3},
+            "fast_gpio_rx": WIFI_ESP32_VARIANTS,
+            "external_clock_rx": WIFI_ESP32_VARIANTS,
             "rmt_spi_rx": {VARIANT_ESP32S3},
             "rmt_cs_spi": {VARIANT_ESP32, VARIANT_ESP32S3},
         }
@@ -128,6 +135,28 @@ class TransportConfigurationTests(unittest.TestCase):
         for name, variants in expected.items():
             with self.subTest(driver=name):
                 self.assertEqual(TRANSPORT_DEFINITIONS[name].supported_variants, frozenset(variants))
+
+    def test_portable_rx_drivers_accept_every_wifi_esp32_variant(self):
+        for variant in (
+            VARIANT_ESP32,
+            VARIANT_ESP32C2,
+            VARIANT_ESP32C3,
+            VARIANT_ESP32C5,
+            VARIANT_ESP32C6,
+            VARIANT_ESP32C61,
+            VARIANT_ESP32S2,
+            VARIANT_ESP32S3,
+            VARIANT_ESP32S31,
+        ):
+            for driver in ("fast_gpio_rx", "external_clock_rx"):
+                with self.subTest(driver=driver, variant=variant):
+                    definition = validate_selected_transport_target(
+                        {"rx_driver": driver},
+                        platform=PLATFORM_ESP32,
+                        framework=FRAMEWORK_ESP_IDF,
+                        variant=variant,
+                    )
+                    self.assertEqual(definition.name, driver)
 
     def test_supported_target_is_accepted(self):
         definition = validate_selected_transport_target(

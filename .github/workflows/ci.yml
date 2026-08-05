@@ -5,6 +5,12 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      extended_compile:
+        description: Compile every Wi-Fi ESP32 portability target, including ESP32-S31
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -89,7 +95,7 @@ jobs:
   esphome-tests:
     name: esphome-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Check out repository
@@ -108,4 +114,9 @@ jobs:
           python -m pip install --requirement requirements-ci.txt
 
       - name: Compile representative configurations
-        run: ./scripts/compile-tests.sh
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.extended_compile }}
+        run: ./scripts/compile-tests.sh compile representative
+
+      - name: Compile extended ESP32 portability matrix
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.extended_compile }}
+        run: ./scripts/compile-tests.sh compile extended

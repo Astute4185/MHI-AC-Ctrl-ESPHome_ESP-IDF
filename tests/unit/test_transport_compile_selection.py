@@ -7,6 +7,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPONENT_DIR = REPO_ROOT / "components" / "MhiAcCtrl"
 COMPONENT_INIT = COMPONENT_DIR / "__init__.py"
+COMPILE_TEST_SCRIPT = REPO_ROOT / "scripts" / "compile-tests.sh"
+PORTABILITY_FIXTURE_DIR = REPO_ROOT / "tests" / "components" / "MhiAcCtrl"
 MANAGER_HEADER = COMPONENT_DIR / "mhi_transport_manager.h"
 CONTROLLER_HEADER = COMPONENT_DIR / "mhi_ac_ctrl.h"
 WORKER_POLICY_HEADER = COMPONENT_DIR / "mhi_worker_policy.h"
@@ -140,6 +142,37 @@ class TransportCompileSelectionTests(unittest.TestCase):
     def test_obsolete_string_worker_policy_is_removed(self):
         self.assertFalse(WORKER_POLICY_HEADER.exists())
         self.assertFalse(WORKER_POLICY_TEST.exists())
+
+    def test_extended_compile_matrix_covers_all_wifi_esp32_variants(self):
+        source = COMPILE_TEST_SCRIPT.read_text(encoding="utf-8")
+        expected = (
+            "test.esp32-idf-portable-rx-only.yaml",
+            "test.esp32-s2-idf-portable-rx-only.yaml",
+            "test.esp32-s3-idf-portable-rx-only.yaml",
+            "test.esp32-c2-idf-portable-rx-only.yaml",
+            "test.esp32-c3-idf-portable-rx-only.yaml",
+            "test.esp32-c5-idf-portable-rx-only.yaml",
+            "test.esp32-c6-idf-portable-rx-only.yaml",
+            "test.esp32-c61-idf-portable-rx-only.yaml",
+            "test.esp32-s31-idf-portable-rx-only.yaml",
+        )
+
+        self.assertIn("representative|extended", source)
+        for filename in expected:
+            with self.subTest(config=filename):
+                self.assertIn(filename, source)
+                self.assertTrue((PORTABILITY_FIXTURE_DIR / filename).exists())
+
+    def test_s31_fixture_is_compile_only_and_uses_recommended_idf(self):
+        source = (PORTABILITY_FIXTURE_DIR / "test.esp32-s31-idf-portable-rx-only.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("variant: esp32s31", source)
+        self.assertIn("version: recommended", source)
+        self.assertIn("rx_driver: external_clock_rx", source)
+        self.assertIn("tx_driver: none", source)
+        self.assertIn("does not claim hardware", source)
 
     def test_each_transport_implementation_has_a_whole_unit_guard(self):
         for filename, (opening_guard, closing_guard) in TRANSPORT_SOURCES.items():
