@@ -552,23 +552,32 @@ Changes to the component should preserve these rules:
 
 ## Adding or changing a transport
 
-Transport implementation files remain flat under `components/MhiAcCtrl/` because arbitrary internal source subfolders are not relied on for compilation discovery. A transport should provide a self-contained, consistently prefixed Python module and C++ implementation.
+Transport implementations remain flat under `components/MhiAcCtrl/` because arbitrary internal source subfolders are not relied on for compilation discovery. Each backend is a self-contained module with consistently prefixed C++ files and a driver-owned Python definition.
+
+The portability boundary is the common transport contract. A backend owns its schema, target policy, dependencies, construction, pins, peripherals, tasks, queues, buffers, timing, target workarounds, health, and hardware counters. The controller, manager, protocol, command, state, and entity layers consume only `IMhiTransport`, `IMhiRxDriver`, `IMhiTxDriver`, or `IMhiDuplexTransport` contracts.
+
+Adding a transport may require declarative wiring in `mhi_transport_registry.py`, `mhi_transport_codegen.py`, and `driver_selection.py`. It must not require concrete-driver branches or members in `MhiAcCtrl`, `MhiTransportManager`, protocol decoders, the command coordinator, or ESPHome entity platforms.
 
 A new transport should:
 
-- register its public driver name, nested schema, target support, dependencies, compile definition, builder, and recovery policy in its Python transport definition;
-- construct a complete `IMhiTransport` strategy or adapt an existing split/duplex backend;
+- choose a split `IMhiRxDriver`/`IMhiTxDriver` shape or an integrated `IMhiDuplexTransport` shape;
+- register its public name, nested schema, target support, dependencies, compile definition, builder, and recovery policy in its Python transport definition;
+- construct a complete `IMhiTransport` strategy through `MhiSplitTransport` or `MhiDuplexTransportAdapter`;
 - own runtime pins, peripheral configuration, queues, buffers, and hardware-specific health;
-- return complete bounded chunks without exposing peripheral-owned buffers after return;
-- report real TX completion using `MhiTxCompletion`;
-- expose queue depth, overwrite, drop, and hardware error counters;
-- declare capabilities such as classified-worker safety and marker-owned TX;
-- avoid publishing ESPHome state;
+- return copied, complete, bounded chunks without exposing peripheral-owned buffers after return;
+- report real TX completion through `MhiTxCompletion`, never queue acceptance alone;
+- keep RX active and clear staged TX when Active Mode is disabled;
+- expose queue depth, overwrite, drop, completion, and hardware error counters;
+- declare capabilities such as classified-worker safety and marker-owned TX accurately;
+- use a whole-translation-unit compile guard so unselected implementations are absent from the build;
+- avoid ESPHome publication, protocol decode, command building, retries, or semantic confirmation;
 - preserve the common command envelope and generation contract;
-- include target-specific compile coverage;
-- include hardware validation showing clean protocol and command-confirmation behaviour.
+- include target-specific compile coverage and source-manifest checks;
+- include hardware validation showing clean protocol, TX completion, command confirmation, recovery, and soak behaviour.
 
-Adding a transport must not require concrete-driver changes in `MhiAcCtrl` or `MhiTransportManager`. A transport should not duplicate command building, retry logic, semantic confirmation, or entity publication.
+Hardware support remains driver-specific. Portability does not bypass target constraints: unsupported chip/framework combinations are declared by the driver and rejected during ESPHome configuration.
+
+See [`DRIVER_SELECTION.md#developing-a-new-transport`](DRIVER_SELECTION.md#developing-a-new-transport) for a concrete split-driver example and the required registration, codegen, testing, and hardware-validation steps.
 
 ## Validation model
 

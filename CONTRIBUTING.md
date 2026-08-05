@@ -63,8 +63,11 @@ Changes must preserve these core rules:
 - Horizontal vane and 3D Auto state remain one composite extended-frame context.
 - Full-duplex transports exclusively own both RX and TX.
 - `rmt_cs_spi` remains FIFO-backed on ESP32 and ESP32-S3 unless new hardware evidence justifies a design change.
+- New drivers remain self-contained and declare their own schema, target support, dependencies, compile definition, construction, hardware state, and diagnostics.
+- Adding a driver must not introduce concrete-driver conditionals into `MhiAcCtrl`, `MhiTransportManager`, protocol, command, state, or entity code.
+- Unselected transport implementation files remain excluded through whole-translation-unit compile guards.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete ownership and lifecycle model.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete ownership and lifecycle model and [`DRIVER_SELECTION.md#developing-a-new-transport`](DRIVER_SELECTION.md#developing-a-new-transport) for the driver contribution example.
 
 ## Tests
 

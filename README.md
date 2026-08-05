@@ -4,6 +4,8 @@ ESPHome external component for controlling Mitsubishi Heavy Industries air condi
 
 This project is an ESP-IDF-focused rewrite and hardening of the existing MHI-AC-Ctrl ESPHome integration. It keeps the ESPHome and Home Assistant entity model while separating protocol decoding, transport, state, publication, diagnostics, command confirmation, and hardware-driver responsibilities.
 
+Transport drivers are intentionally modular and portable. Each driver owns its ESPHome schema, target restrictions, compile definition, ESP-IDF dependencies, construction, hardware state, and diagnostics. The controller, transport manager, protocol decoder, command coordinator, and entity code depend only on common transport contracts. Adding or adapting a backend therefore requires local driver registration, code-generation wiring, tests, and hardware evidence rather than concrete-driver changes throughout the component.
+
 The major rewrite and feature implementation phase is now substantially complete. The project has moved into compatibility validation, maintenance, and incremental protocol discovery rather than further architectural replacement.
 
 This is not a clean-room protocol project. It builds on the original community MHI-AC-Ctrl work, upstream ESPHome component behaviour, and public MHI trace and capture knowledge.
@@ -48,6 +50,10 @@ while listen-only mode was active. Active Mode defaults to on after boot.
 ## Driver selection
 
 `rx_driver` is the primary selection. For split transports, TX is selected automatically. Existing configurations may still specify `tx_driver` explicitly.
+
+The modular transport boundary keeps hardware-specific implementation details out of the rest of the component. Selecting one driver compiles only that primary backend and its required recovery path. An unselected driver does not add runtime branches or alter protocol, command, state, or entity behaviour. Portability does not imply universal chip support: every driver declares the exact ESP32 variants and framework it supports, and invalid selections fail during configuration.
+
+See [Developing a new transport](DRIVER_SELECTION.md#developing-a-new-transport) for the required C++ contract, Python registration, compile guards, tests, and hardware-validation evidence.
 
 ### Driver combinations
 
@@ -173,29 +179,22 @@ mosi_pin
 miso_pin
 ```
 
-Optional fields:
+Optional base fields:
 
 ```text
 rx_driver
 tx_driver
 command_worker
-command_worker_start_delay_ms
-command_worker_stack_size
-command_worker_priority
-command_worker_core_id
-tx_background_interval_ms
-frame_start_idle_ms
-rmt_spi_frame_gap_us
-fast_gpio_rx
-external_clock_rx
-rmt_spi_rx
-rmt_cs_spi
 room_temp_timeout
 room_temperature_publish_interval
 room_temperature_immediate_delta
+opdata_freshness_timeout
 external_temperature_sensor
 fan_profile
+power_estimation
 ```
+
+Transport and command-worker tuning is optional and should normally be left at the selected backend's defaults. Driver-specific options are configured under the selected driver's nested subsection rather than as shared component fields. See [Driver selection, configuration and tuning](DRIVER_SELECTION.md#configuration-and-tuning) for the available tunables and when to use them.
 
 ## Room temperature publication rate limiting
 
