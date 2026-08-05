@@ -1459,12 +1459,18 @@ bool MhiAcCtrl::decode_cataloged_frames_() {
 
   // Command/extended feedback can affect pending command confirmation, so drain it first.
   if (this->rx_runtime_.take_latest_extended_status(cataloged)) {
+    if (this->command_confirmation_pending_()) {
+      this->trace_cataloged_command_candidate_("main_extended_status", cataloged);
+    }
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
   }
 
   if (this->rx_runtime_.take_latest_status(cataloged)) {
+    if (this->command_confirmation_pending_()) {
+      this->trace_cataloged_command_candidate_("main_status", cataloged);
+    }
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
@@ -1502,11 +1508,17 @@ bool MhiAcCtrl::apply_worker_decoded_snapshots_() {
   }
 
   bool taken = this->rx_runtime_.take_worker_extended_status(status_snapshot);
+  if (taken && this->command_confirmation_pending_()) {
+    this->trace_command_candidate_("worker_extended_status", status_snapshot);
+  }
   if (taken && this->apply_status_update_(status_snapshot.decoded, status_snapshot.frame)) {
     applied_anything = true;
   }
 
   taken = this->rx_runtime_.take_worker_status(status_snapshot);
+  if (taken && this->command_confirmation_pending_()) {
+    this->trace_command_candidate_("worker_status", status_snapshot);
+  }
   if (taken && this->apply_status_update_(status_snapshot.decoded, status_snapshot.frame)) {
     applied_anything = true;
   }
