@@ -430,6 +430,10 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
                                      const MhiFrameBuffer& frame) const;
   void log_rejected_opdata_(const char* field, float value, const MhiFrameBuffer& frame) const;
   void log_runtime_diagnostics_();
+  void trace_command_candidate_(const char* source, const MhiDecodedStatusSnapshot& snapshot) const;
+  void trace_cataloged_command_candidate_(const char* source, const MhiCatalogedFrame& frame) const;
+  void trace_confirmation_observation_(const MhiStatusState& status, const MhiFrameBuffer& frame) const;
+  void trace_clear_command_candidate_(const char* reason) const;
   void update_command_confirmation_(const MhiStatusState& status);
   void check_command_confirmation_timeout_();
   void suppress_duplicate_pending_commands_();
@@ -536,6 +540,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   uint32_t last_protocol_health_dropped_bytes_{0};
 
   uint32_t last_diag_log_ms_{0};
+  uint32_t command_trace_generation_{0U};
 };
 
 }  // namespace mhi_ac_ctrl

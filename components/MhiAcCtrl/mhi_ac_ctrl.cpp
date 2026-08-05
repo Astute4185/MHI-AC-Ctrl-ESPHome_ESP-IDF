@@ -232,10 +232,36 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   }
 
   const uint32_t accepted_mask = merge_command_patch(command, patch, allowed_mask);
+#ifdef MHI_COMMAND_TRACE
+  const uint32_t queued_after_mask = command.pending_command_mask();
+  const bool trace_status_valid = this->state_.status().valid;
+  const bool trace_status_power = this->state_.status().power;
+  const uint8_t trace_status_mode = this->state_.status().mode;
+#endif
 
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
+
+#ifdef MHI_COMMAND_TRACE
+  ESP_LOGD(DIAG_TAG,
+           "command_trace: request requested=0x%08lx allowed=0x%08lx accepted=0x%08lx superseded=0x%08lx "
+           "queued_before=0x%08lx queued_after=0x%08lx pending_before=0x%08lx "
+           "status{valid=%s power=%s mode=%u} patch{power_set=%s power=%s mode_set=%s mode=%u "
+           "fan_set=%s fan=%u temp_set=%s temp=%.1f vertical_set=%s vertical=%u horizontal_set=%s horizontal=%u "
+           "three_d_set=%s three_d=%s}",
+           static_cast<unsigned long>(requested_mask), static_cast<unsigned long>(allowed_mask),
+           static_cast<unsigned long>(accepted_mask), static_cast<unsigned long>(superseded_mask),
+           static_cast<unsigned long>(queued_mask), static_cast<unsigned long>(queued_after_mask),
+           static_cast<unsigned long>(pending_mask), trace_status_valid ? "YES" : "NO",
+           trace_status_power ? "ON" : "OFF", static_cast<unsigned int>(trace_status_mode),
+           patch.power_set ? "YES" : "NO", patch.power ? "ON" : "OFF", patch.mode_set ? "YES" : "NO",
+           static_cast<unsigned int>(patch.mode), patch.fan_set ? "YES" : "NO", static_cast<unsigned int>(patch.fan),
+           patch.target_temp_set ? "YES" : "NO", patch.target_temp_c, patch.vertical_vane_set ? "YES" : "NO",
+           static_cast<unsigned int>(patch.vertical_vane), patch.horizontal_vane_set ? "YES" : "NO",
+           static_cast<unsigned int>(patch.horizontal_vane), patch.three_d_auto_set ? "YES" : "NO",
+           patch.three_d_auto ? "ON" : "OFF");
+#endif
 
   if (superseded_mask != 0U) {
     ESP_LOGI(DIAG_TAG, "command: superseded pending confirmation mask=0x%08lx",
@@ -483,6 +509,7 @@ void MhiAcCtrl::reset_command_runtime_() {
 
   this->pending_extended_feedback_candidate_ = false;
   this->pending_extended_feedback_repeat_count_ = 0U;
+  this->command_trace_generation_ = 0U;
 }
 
 void MhiAcCtrl::reset_runtime_for_transport_switch_() {
@@ -1133,6 +1160,9 @@ void MhiAcCtrl::service_command_pipeline_() {
   MhiTxEnvelope envelope{};
   MhiCommandState command_before_build{};
   bool should_build = false;
+#ifdef MHI_COMMAND_TRACE
+  uint8_t trace_in_flight_attempt = 0U;
+#endif
 
   const uint32_t now = millis();
 
@@ -1174,9 +1204,25 @@ void MhiAcCtrl::service_command_pipeline_() {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
   this->command_coordinator_.on_stage_result(envelope, command_before_build, this->state_.command(), queued, now);
+#ifdef MHI_COMMAND_TRACE
+  trace_in_flight_attempt = this->command_coordinator_.in_flight_attempt();
+#endif
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
+
+#ifdef MHI_COMMAND_TRACE
+  if (command_frame) {
+    ESP_LOGD(DIAG_TAG,
+             "command_trace: tx_stage generation=%lu attempt=%u queued=%s mask=0x%08lx len=%u "
+             "db0=0x%02x db1=0x%02x db2=0x%02x db6=0x%02x db9=0x%02x db16=0x%02x db17=0x%02x",
+             static_cast<unsigned long>(envelope.generation), static_cast<unsigned int>(trace_in_flight_attempt),
+             queued ? "YES" : "NO", static_cast<unsigned long>(envelope.command_mask),
+             static_cast<unsigned int>(envelope.len), envelope.frame[DB0], envelope.frame[DB1], envelope.frame[DB2],
+             envelope.frame[DB6], envelope.frame[DB9], envelope.len > DB16 ? envelope.frame[DB16] : 0U,
+             envelope.len > DB17 ? envelope.frame[DB17] : 0U);
+  }
+#endif
 
   if (queued) {
     this->command_worker_frames_staged_.fetch_add(1U, std::memory_order_relaxed);
@@ -1202,16 +1248,48 @@ void MhiAcCtrl::drain_tx_completions_() {
       this->command_worker_completions_.fetch_add(1U, std::memory_order_relaxed);
     }
 
+    uint32_t trace_pending_mask = 0U;
+#ifdef MHI_COMMAND_TRACE
+    uint8_t trace_confirmation_attempt = 0U;
+    MhiCommandIntent trace_pending_intent{};
+#endif
+
     if (this->command_mutex_ != nullptr) {
       xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
     }
     const bool handled = this->command_coordinator_.on_tx_completion(completion, this->state_.command());
-    if (handled && completion.success && this->command_coordinator_.pending_mask() != 0U) {
+    trace_pending_mask = this->command_coordinator_.pending_mask();
+#ifdef MHI_COMMAND_TRACE
+    trace_confirmation_attempt = this->command_coordinator_.confirmation_attempt();
+    trace_pending_intent = this->command_coordinator_.pending_intent();
+#endif
+    if (handled && completion.success && trace_pending_mask != 0U) {
       clear_command_candidate = true;
+      this->command_trace_generation_ = completion.generation;
+    } else if (handled && trace_pending_mask == 0U) {
+      this->command_trace_generation_ = 0U;
     }
     if (this->command_mutex_ != nullptr) {
       xSemaphoreGive(this->command_mutex_);
     }
+
+#ifdef MHI_COMMAND_TRACE
+    if (completion.is_command()) {
+      ESP_LOGD(DIAG_TAG,
+               "command_trace: tx_complete generation=%lu success=%s completed_at_ms=%lu handled=%s "
+               "command_mask=0x%08lx pending=0x%08lx attempt=%u expected{power=%s mode=%u fan=%u temp=%.1f "
+               "vertical=%u horizontal=%u three_d=%s}",
+               static_cast<unsigned long>(completion.generation), completion.success ? "YES" : "NO",
+               static_cast<unsigned long>(completion.completed_at_ms), handled ? "YES" : "NO",
+               static_cast<unsigned long>(completion.command_mask), static_cast<unsigned long>(trace_pending_mask),
+               static_cast<unsigned int>(trace_confirmation_attempt), trace_pending_intent.power ? "ON" : "OFF",
+               static_cast<unsigned int>(trace_pending_intent.mode),
+               static_cast<unsigned int>(trace_pending_intent.fan), trace_pending_intent.target_temp_c,
+               static_cast<unsigned int>(trace_pending_intent.vertical_vane),
+               static_cast<unsigned int>(trace_pending_intent.horizontal_vane),
+               trace_pending_intent.three_d_auto ? "ON" : "OFF");
+    }
+#endif
 
     if (!completion.is_command()) {
       continue;
@@ -1227,6 +1305,7 @@ void MhiAcCtrl::drain_tx_completions_() {
   }
 
   if (clear_command_candidate) {
+    this->trace_clear_command_candidate_("tx_completion_staged_confirmation");
     this->rx_runtime_.clear_command_candidate();
   }
 
@@ -1339,6 +1418,7 @@ bool MhiAcCtrl::decode_cataloged_frames_() {
   // While a command is pending, preserve the latest status/extended feedback in a side slot so
   // the RX worker cannot overwrite a short-lived confirmation candidate before the main loop decodes it.
   if (this->command_confirmation_pending_() && this->rx_runtime_.take_latest_command_candidate(cataloged)) {
+    this->trace_cataloged_command_candidate_("main_catalog", cataloged);
     if (this->decode_cataloged_frame_(cataloged)) {
       decoded_anything = true;
     }
@@ -1380,6 +1460,9 @@ bool MhiAcCtrl::apply_worker_decoded_snapshots_() {
 
   if (this->command_confirmation_pending_()) {
     const bool taken = this->rx_runtime_.take_worker_command_candidate(status_snapshot);
+    if (taken) {
+      this->trace_command_candidate_("worker_store", status_snapshot);
+    }
     if (taken && this->apply_status_update_(status_snapshot.decoded, status_snapshot.frame)) {
       applied_anything = true;
     }
@@ -1502,6 +1585,7 @@ bool MhiAcCtrl::apply_status_update_(const MhiDecodedStatus& decoded_status, con
   status.last_update_ms = millis();
 
   this->diagnostics_.stats().set_last_error_code(decoded_status.error_code);
+  this->trace_confirmation_observation_(status, frame);
   this->update_command_confirmation_(status);
 
   return true;
@@ -1812,6 +1896,134 @@ void MhiAcCtrl::log_rejected_opdata_(const char* field, float value, const MhiFr
            frame.len > DB12 ? frame.data[DB12] : 0U);
 }
 
+void MhiAcCtrl::trace_command_candidate_(const char* source, const MhiDecodedStatusSnapshot& snapshot) const {
+#ifdef MHI_COMMAND_TRACE
+  uint32_t pending_mask = 0U;
+  uint8_t attempt = 0U;
+  MhiCommandIntent intent{};
+
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  pending_mask = this->command_coordinator_.pending_mask();
+  attempt = this->command_coordinator_.confirmation_attempt();
+  intent = this->command_coordinator_.pending_intent();
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+
+  if (pending_mask == 0U) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  const uint32_t age_ms = now >= snapshot.last_update_ms ? now - snapshot.last_update_ms : 0U;
+  const auto& decoded = snapshot.decoded;
+  const auto& frame = snapshot.frame;
+  ESP_LOGD(DIAG_TAG,
+           "command_trace: candidate source=%s generation=%lu attempt=%u seq=%lu capture_ms=%lu age_ms=%lu "
+           "pending=0x%08lx raw{db0=0x%02x db1=0x%02x db2=0x%02x db6=0x%02x db9=0x%02x db16=0x%02x "
+           "db17=0x%02x} observed{valid=%s power=%s mode=%u fan=%u temp=%.1f vertical=%u vswing=%s "
+           "horizontal=%u hswing=%s three_d=%s} expected{power=%s mode=%u fan=%u temp=%.1f vertical=%u "
+           "horizontal=%u three_d=%s}",
+           source, static_cast<unsigned long>(this->command_trace_generation_), static_cast<unsigned int>(attempt),
+           static_cast<unsigned long>(snapshot.sequence), static_cast<unsigned long>(snapshot.last_update_ms),
+           static_cast<unsigned long>(age_ms), static_cast<unsigned long>(pending_mask), frame.data[DB0],
+           frame.data[DB1], frame.data[DB2], frame.data[DB6], frame.data[DB9], frame.len > DB16 ? frame.data[DB16] : 0U,
+           frame.len > DB17 ? frame.data[DB17] : 0U, decoded.valid ? "YES" : "NO", decoded.power ? "ON" : "OFF",
+           static_cast<unsigned int>(decoded.mode), static_cast<unsigned int>(decoded.fan), decoded.target_temp_c,
+           static_cast<unsigned int>(decoded.vertical_vane), decoded.vertical_swing ? "YES" : "NO",
+           static_cast<unsigned int>(decoded.horizontal_vane), decoded.horizontal_swing ? "YES" : "NO",
+           decoded.three_d_auto ? "ON" : "OFF", intent.power ? "ON" : "OFF", static_cast<unsigned int>(intent.mode),
+           static_cast<unsigned int>(intent.fan), intent.target_temp_c, static_cast<unsigned int>(intent.vertical_vane),
+           static_cast<unsigned int>(intent.horizontal_vane), intent.three_d_auto ? "ON" : "OFF");
+#else
+  (void)source;
+  (void)snapshot;
+#endif
+}
+
+void MhiAcCtrl::trace_cataloged_command_candidate_(const char* source, const MhiCatalogedFrame& frame) const {
+#ifdef MHI_COMMAND_TRACE
+  MhiDecodedStatus decoded{};
+  if (!MhiStatusDecoder::decode_mosi(frame.frame.view(), decoded)) {
+    ESP_LOGD(DIAG_TAG, "command_trace: candidate source=%s seq=%lu decode=FAILED", source,
+             static_cast<unsigned long>(frame.sequence));
+    return;
+  }
+  MhiDecodedStatusSnapshot snapshot{};
+  snapshot.valid = true;
+  snapshot.sequence = frame.sequence;
+  snapshot.last_update_ms = frame.last_update_ms;
+  snapshot.decoded = decoded;
+  snapshot.frame = frame.frame;
+  this->trace_command_candidate_(source, snapshot);
+#else
+  (void)source;
+  (void)frame;
+#endif
+}
+
+void MhiAcCtrl::trace_confirmation_observation_(const MhiStatusState& status, const MhiFrameBuffer& frame) const {
+#ifdef MHI_COMMAND_TRACE
+  uint32_t pending_mask = 0U;
+  uint8_t attempt = 0U;
+  MhiCommandIntent intent{};
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  pending_mask = this->command_coordinator_.pending_mask();
+  attempt = this->command_coordinator_.confirmation_attempt();
+  intent = this->command_coordinator_.pending_intent();
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+  if (pending_mask == 0U) {
+    return;
+  }
+  ESP_LOGV(DIAG_TAG,
+           "command_trace: observe generation=%lu attempt=%u pending=0x%08lx raw_db0=0x%02x "
+           "observed{power=%s mode=%u fan=%u temp=%.1f vertical=%u horizontal=%u three_d=%s} "
+           "expected{power=%s mode=%u fan=%u temp=%.1f vertical=%u horizontal=%u three_d=%s}",
+           static_cast<unsigned long>(this->command_trace_generation_), static_cast<unsigned int>(attempt),
+           static_cast<unsigned long>(pending_mask), frame.data[DB0], status.power ? "ON" : "OFF",
+           static_cast<unsigned int>(status.mode), static_cast<unsigned int>(status.fan), status.target_temp_c,
+           static_cast<unsigned int>(status.vertical_vane), static_cast<unsigned int>(status.horizontal_vane),
+           status.three_d_auto ? "ON" : "OFF", intent.power ? "ON" : "OFF", static_cast<unsigned int>(intent.mode),
+           static_cast<unsigned int>(intent.fan), intent.target_temp_c, static_cast<unsigned int>(intent.vertical_vane),
+           static_cast<unsigned int>(intent.horizontal_vane), intent.three_d_auto ? "ON" : "OFF");
+#else
+  (void)status;
+  (void)frame;
+#endif
+}
+
+void MhiAcCtrl::trace_clear_command_candidate_(const char* reason) const {
+#ifdef MHI_COMMAND_TRACE
+  const MhiCommandCandidateInfo info = this->rx_runtime_.command_candidate_info();
+  uint32_t pending_mask = 0U;
+  uint8_t attempt = 0U;
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  pending_mask = this->command_coordinator_.pending_mask();
+  attempt = this->command_coordinator_.confirmation_attempt();
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+  ESP_LOGD(DIAG_TAG,
+           "command_trace: candidate_clear reason=%s generation=%lu attempt=%u pending=0x%08lx "
+           "catalog{valid=%s seq=%lu capture_ms=%lu} worker{valid=%s seq=%lu capture_ms=%lu}",
+           reason, static_cast<unsigned long>(this->command_trace_generation_), static_cast<unsigned int>(attempt),
+           static_cast<unsigned long>(pending_mask), info.catalog_valid ? "YES" : "NO",
+           static_cast<unsigned long>(info.catalog_sequence), static_cast<unsigned long>(info.catalog_update_ms),
+           info.worker_valid ? "YES" : "NO", static_cast<unsigned long>(info.worker_sequence),
+           static_cast<unsigned long>(info.worker_update_ms));
+#else
+  (void)reason;
+#endif
+}
+
 void MhiAcCtrl::update_command_confirmation_(const MhiStatusState& status) {
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
@@ -1838,7 +2050,9 @@ void MhiAcCtrl::update_command_confirmation_(const MhiStatusState& status) {
   this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now);
 
   if (pending_mask == 0U) {
+    this->trace_clear_command_candidate_("confirmation_complete");
     this->rx_runtime_.clear_command_candidate();
+    this->command_trace_generation_ = 0U;
     this->notify_command_worker_();
   }
 
@@ -1875,7 +2089,11 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
   }
 
   this->diagnostics_.stats().on_command_confirmation_timeout(timeout.timed_out_mask, now);
+  this->trace_clear_command_candidate_("confirmation_timeout");
   this->rx_runtime_.clear_command_candidate();
+  if (timeout.retry_mask == 0U) {
+    this->command_trace_generation_ = 0U;
+  }
 
   if (timeout.retry_mask != 0U) {
     this->diagnostics_.stats().on_command_retry(timeout.retry_mask, now);

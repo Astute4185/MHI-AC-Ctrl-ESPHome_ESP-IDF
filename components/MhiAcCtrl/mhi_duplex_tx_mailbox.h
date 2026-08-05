@@ -61,6 +61,10 @@ class MhiDuplexTxMailbox {
     return envelope_.generation;
   }
 
+  MhiTxEnvelope pending_envelope() const {
+    return pending_ ? envelope_ : MhiTxEnvelope{};
+  }
+
   uint32_t overwritten_frames() const {
     return overwritten_frames_;
   }

@@ -9,7 +9,7 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-constexpr uint8_t kMhiMaxCommandAttempts = 2U;
+constexpr uint8_t kMhiMaxCommandAttempts = 3U;
 constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 struct MhiCommandTimeoutResult {
@@ -70,6 +70,10 @@ class MhiCommandCoordinator {
 
   uint32_t in_flight_generation() const {
     return in_flight_envelope_.generation;
+  }
+
+  uint8_t in_flight_attempt() const {
+    return in_flight_attempt_;
   }
 
   uint8_t confirmation_attempt() const {

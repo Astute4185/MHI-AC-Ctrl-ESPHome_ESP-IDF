@@ -24,6 +24,15 @@ struct MhiRxServiceResult {
   uint32_t frames{0U};
 };
 
+struct MhiCommandCandidateInfo {
+  bool catalog_valid{false};
+  uint32_t catalog_sequence{0U};
+  uint32_t catalog_update_ms{0U};
+  bool worker_valid{false};
+  uint32_t worker_sequence{0U};
+  uint32_t worker_update_ms{0U};
+};
+
 // Owns RX framing, cataloguing and the worker-decoded handoff store.
 // The controller decides where decoding is applied, while this runtime keeps
 // transport ingestion and cross-context storage consistent between main-loop
@@ -41,6 +50,7 @@ class MhiRxRuntime {
   bool take_next_opdata(MhiCatalogedFrame& out);
   bool take_latest_unknown(MhiCatalogedFrame& out);
   void clear_command_candidate();
+  MhiCommandCandidateInfo command_candidate_info() const;
 
   MhiCatalogStats catalog_stats() const;
 

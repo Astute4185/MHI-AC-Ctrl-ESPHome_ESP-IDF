@@ -124,6 +124,24 @@ void MhiRxRuntime::clear_command_candidate() {
   unlock_worker_store_();
 }
 
+MhiCommandCandidateInfo MhiRxRuntime::command_candidate_info() const {
+  MhiCommandCandidateInfo info{};
+
+  lock_catalog_();
+  info.catalog_valid = frame_catalog_.command_candidate_valid();
+  info.catalog_sequence = frame_catalog_.command_candidate_sequence();
+  info.catalog_update_ms = frame_catalog_.command_candidate_update_ms();
+  unlock_catalog_();
+
+  lock_worker_store_();
+  info.worker_valid = worker_decoded_store_.command_candidate_valid();
+  info.worker_sequence = worker_decoded_store_.command_candidate_sequence();
+  info.worker_update_ms = worker_decoded_store_.command_candidate_update_ms();
+  unlock_worker_store_();
+
+  return info;
+}
+
 MhiCatalogStats MhiRxRuntime::catalog_stats() const {
   lock_catalog_();
   const MhiCatalogStats stats = frame_catalog_.stats();

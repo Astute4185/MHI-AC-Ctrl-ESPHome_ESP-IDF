@@ -233,9 +233,30 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
     return false;
   }
 
+#ifdef MHI_COMMAND_TRACE
+  MhiTxEnvelope replaced_envelope{};
+#endif
   portENTER_CRITICAL(&mux_);
+#ifdef MHI_COMMAND_TRACE
+  replaced_envelope = tx_mailbox_.pending_envelope();
+#endif
   const bool staged = tx_mailbox_.stage(envelope);
   portEXIT_CRITICAL(&mux_);
+
+#ifdef MHI_COMMAND_TRACE
+  if (staged && replaced_envelope.valid()) {
+    ESP_LOGD(TAG,
+             "command_trace: tx_mailbox_replace old{generation=%lu kind=%s mask=0x%08lx len=%u} "
+             "new{generation=%lu kind=%s mask=0x%08lx len=%u}",
+             static_cast<unsigned long>(replaced_envelope.generation),
+             replaced_envelope.is_command() ? "command" : "background",
+             static_cast<unsigned long>(replaced_envelope.command_mask),
+             static_cast<unsigned int>(replaced_envelope.len), static_cast<unsigned long>(envelope.generation),
+             envelope.is_command() ? "command" : "background", static_cast<unsigned long>(envelope.command_mask),
+             static_cast<unsigned int>(envelope.len));
+  }
+#endif
+
   return staged;
 #endif
 }

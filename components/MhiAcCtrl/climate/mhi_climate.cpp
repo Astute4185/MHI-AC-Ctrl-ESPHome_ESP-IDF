@@ -113,6 +113,17 @@ void MhiClimate::control(const climate::ClimateCall& call) {
     return;
   }
 
+#ifdef MHI_COMMAND_TRACE
+  ESP_LOGD(TAG,
+           "command_trace: climate_request mask=0x%08lx power_set=%s power=%s mode_set=%s mode=%u fan_set=%s fan=%u "
+           "temp_set=%s temp=%.1f vertical_set=%s vertical=%u horizontal_set=%s horizontal=%u",
+           static_cast<unsigned long>(patch.pending_command_mask()), patch.power_set ? "YES" : "NO",
+           patch.power ? "ON" : "OFF", patch.mode_set ? "YES" : "NO", static_cast<unsigned int>(patch.mode),
+           patch.fan_set ? "YES" : "NO", static_cast<unsigned int>(patch.fan), patch.target_temp_set ? "YES" : "NO",
+           patch.target_temp_c, patch.vertical_vane_set ? "YES" : "NO", static_cast<unsigned int>(patch.vertical_vane),
+           patch.horizontal_vane_set ? "YES" : "NO", static_cast<unsigned int>(patch.horizontal_vane));
+#endif
+
   const uint32_t accepted_mask = this->parent_->request_command_patch(patch);
   if (accepted_mask != 0U) {
     ESP_LOGD(TAG, "Climate command batch staged mask=0x%08lx; waiting for confirmed MOSI state",

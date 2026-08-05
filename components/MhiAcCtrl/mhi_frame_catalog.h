@@ -59,6 +59,15 @@ class MhiFrameCatalog {
   bool take_latest_extended_status(MhiCatalogedFrame& out);
   bool take_latest_command_candidate(MhiCatalogedFrame& out);
   void clear_command_candidate();
+  bool command_candidate_valid() const {
+    return latest_command_candidate_.valid;
+  }
+  uint32_t command_candidate_sequence() const {
+    return latest_command_candidate_.sequence;
+  }
+  uint32_t command_candidate_update_ms() const {
+    return latest_command_candidate_.last_update_ms;
+  }
   bool take_next_opdata(MhiCatalogedFrame& out);
   bool take_latest_opdata(uint16_t opdata_key, MhiCatalogedFrame& out);
   bool take_latest_unknown(MhiCatalogedFrame& out);
