@@ -1,0 +1,675 @@
+alias: MHI Guest Bedroom Full Input Test
+description: >-
+  Thorough controlled test of climate modes, temperatures, fan controls,
+  swing, vane selects, 3D Auto, and optional Active Mode.
+mode: single
+max_exceeded: warning
+
+fields:
+  modes:
+    name: Modes
+    required: true
+    default:
+      - heat_cool
+      - heat
+      - cool
+      - dry
+      - fan_only
+      - "off"
+    selector:
+      select:
+        multiple: true
+        options:
+          - label: Auto / Heat-Cool
+            value: heat_cool
+          - label: Heat
+            value: heat
+          - label: Cool
+            value: cool
+          - label: Dry
+            value: dry
+          - label: Fan only
+            value: fan_only
+          - label: "Off"
+            value: "off"
+
+  temperature_modes:
+    name: Modes used for temperature sweeps
+    required: true
+    default:
+      - heat
+      - cool
+      - heat_cool
+    selector:
+      select:
+        multiple: true
+        options:
+          - label: Auto / Heat-Cool
+            value: heat_cool
+          - label: Heat
+            value: heat
+          - label: Cool
+            value: cool
+          - label: Dry
+            value: dry
+
+  minimum_temperature:
+    name: Minimum temperature
+    required: true
+    default: 20
+    selector:
+      number:
+        min: 16
+        max: 31
+        step: 1
+        mode: box
+        unit_of_measurement: "°C"
+
+  maximum_temperature:
+    name: Maximum temperature
+    required: true
+    default: 24
+    selector:
+      number:
+        min: 16
+        max: 31
+        step: 1
+        mode: box
+        unit_of_measurement: "°C"
+
+  temperature_step:
+    name: Temperature step
+    required: true
+    default: 2
+    selector:
+      number:
+        min: 1
+        max: 5
+        step: 1
+        mode: box
+        unit_of_measurement: "°C"
+
+  cycles:
+    name: Cycles
+    required: true
+    default: 1
+    selector:
+      number:
+        min: 1
+        max: 20
+        step: 1
+        mode: box
+
+  confirmation_timeout_seconds:
+    name: HA confirmation timeout
+    required: true
+    default: 4
+    selector:
+      number:
+        min: 1
+        max: 35
+        step: 1
+        mode: box
+        unit_of_measurement: s
+
+  command_gap_seconds:
+    name: Command gap
+    required: true
+    default: 2
+    selector:
+      number:
+        min: 0
+        max: 30
+        step: 0.1
+        mode: box
+        unit_of_measurement: s
+
+  test_modes:
+    name: Test climate modes
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_temperatures:
+    name: Test temperature sweeps
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_combined_mode_temperature:
+    name: Test combined mode and temperature calls
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_climate_fan:
+    name: Test climate fan modes
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_fan_select:
+    name: Test fan-speed select
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_swing:
+    name: Test climate swing modes
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_vertical_vanes:
+    name: Test vertical vane options
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_horizontal_vanes:
+    name: Test horizontal vane options
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_3d_auto:
+    name: Test 3D Auto
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_active_mode:
+    name: Test MHI Active Mode
+    description: Disruptive; leave disabled for the normal diagnostic matrix.
+    required: true
+    default: false
+    selector:
+      boolean:
+
+  stop_on_failure:
+    name: Stop on first failure
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  restore_initial_state:
+    name: Restore initial state after a successful run
+    required: true
+    default: true
+    selector:
+      boolean:
+
+sequence:
+  - variables:
+      climate_entity: climate.guest_bedroom_ac
+      fan_select_entity: select.guest_bedroom_ac_atom_fan_speed
+      vertical_entity: select.guest_bedroom_ac_atom_fan_control_up_down
+      horizontal_entity: select.guest_bedroom_ac_atom_fan_control_left_right
+      three_d_entity: switch.guest_bedroom_ac_atom_3d_auto
+      active_mode_entity: switch.guest_bedroom_ac_atom_mhi_active_mode
+
+      selected_modes: "{{ modes | list }}"
+      selected_temperature_modes: "{{ temperature_modes | list }}"
+      min_temp: "{{ minimum_temperature | float }}"
+      max_temp: "{{ maximum_temperature | float }}"
+      temp_step: "{{ temperature_step | float }}"
+      temp_count: >-
+        {{ ((((maximum_temperature | float) - (minimum_temperature | float)) /
+             (temperature_step | float)) | round(0, 'floor') | int) + 1 }}
+      total_cycles: "{{ cycles | int }}"
+      timeout_seconds: "{{ confirmation_timeout_seconds | int }}"
+      gap_seconds: "{{ command_gap_seconds | float }}"
+      run_id: "MHI-FULL-{{ now().strftime('%Y%m%d-%H%M%S') }}"
+
+      initial_mode: "{{ states('climate.guest_bedroom_ac') }}"
+      initial_temperature: "{{ state_attr('climate.guest_bedroom_ac', 'temperature') }}"
+      initial_fan_mode: "{{ state_attr('climate.guest_bedroom_ac', 'fan_mode') }}"
+      initial_swing_mode: "{{ state_attr('climate.guest_bedroom_ac', 'swing_mode') }}"
+      initial_fan_select: "{{ states('select.guest_bedroom_ac_atom_fan_speed') }}"
+      initial_vertical: "{{ states('select.guest_bedroom_ac_atom_fan_control_up_down') }}"
+      initial_horizontal: "{{ states('select.guest_bedroom_ac_atom_fan_control_left_right') }}"
+      initial_three_d: "{{ states('switch.guest_bedroom_ac_atom_3d_auto') }}"
+      initial_active_mode: "{{ states('switch.guest_bedroom_ac_atom_mhi_active_mode') }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ min_temp > max_temp or temp_step <= 0 }}"
+    then:
+      - stop: Invalid temperature range or step.
+        error: true
+
+  - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+    continue_on_error: true
+    data:
+      marker: >-
+        {{ run_id }} START modes={{ selected_modes | join(',') }}
+        temp_modes={{ selected_temperature_modes | join(',') }}
+        temperatures={{ min_temp }}..{{ max_temp }}
+        step={{ temp_step }} cycles={{ total_cycles }}
+
+  - repeat:
+      count: "{{ total_cycles }}"
+      sequence:
+        - variables:
+            cycle_number: "{{ repeat.index }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_modes | bool }}"
+          then:
+            - repeat:
+                for_each: "{{ selected_modes }}"
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: hvac_mode
+                      case_label: "cycle={{ cycle_number }} mode"
+                      entity_id: "{{ climate_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_temperatures | bool }}"
+          then:
+            - repeat:
+                for_each: "{{ selected_temperature_modes }}"
+                sequence:
+                  - variables:
+                      temperature_mode: "{{ repeat.item }}"
+
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: hvac_mode
+                      case_label: "cycle={{ cycle_number }} temperature_mode"
+                      entity_id: "{{ climate_entity }}"
+                      requested: "{{ temperature_mode }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+                  - repeat:
+                      count: "{{ temp_count }}"
+                      sequence:
+                        - variables:
+                            requested_temperature: >-
+                              {{ (min_temp + ((repeat.index - 1) * temp_step)) | round(1) }}
+
+                        - action: script.mhi_guest_bedroom_execute_case
+                          data:
+                            run_id: "{{ run_id }}"
+                            case_kind: temperature
+                            case_label: >-
+                              cycle={{ cycle_number }}
+                              mode={{ temperature_mode }} temperature
+                            entity_id: "{{ climate_entity }}"
+                            requested: "{{ requested_temperature }}"
+                            confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                            command_gap_seconds: "{{ gap_seconds }}"
+                            stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_combined_mode_temperature | bool }}"
+          then:
+            - repeat:
+                for_each: "{{ selected_temperature_modes }}"
+                sequence:
+                  - variables:
+                      combined_mode: "{{ repeat.item }}"
+
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: mode_temperature
+                      case_label: >-
+                        cycle={{ cycle_number }}
+                        combined_mode_temperature_min
+                      entity_id: "{{ climate_entity }}"
+                      requested: "{{ combined_mode }}"
+                      requested_aux: "{{ min_temp }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: mode_temperature
+                      case_label: >-
+                        cycle={{ cycle_number }}
+                        combined_mode_temperature_max
+                      entity_id: "{{ climate_entity }}"
+                      requested: "{{ combined_mode }}"
+                      requested_aux: "{{ max_temp }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_climate_fan | bool }}"
+          then:
+            - action: script.mhi_guest_bedroom_execute_case
+              data:
+                run_id: "{{ run_id }}"
+                case_kind: hvac_mode
+                case_label: "cycle={{ cycle_number }} climate_fan_context"
+                entity_id: "{{ climate_entity }}"
+                requested: fan_only
+                confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                command_gap_seconds: "{{ gap_seconds }}"
+                stop_on_failure: "{{ stop_on_failure }}"
+
+            - repeat:
+                for_each:
+                  - auto
+                  - quiet
+                  - low
+                  - medium
+                  - high
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: fan_mode
+                      case_label: "cycle={{ cycle_number }} climate_fan"
+                      entity_id: "{{ climate_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_fan_select | bool }}"
+          then:
+            - repeat:
+                for_each:
+                  - Auto
+                  - Quiet
+                  - Low
+                  - Medium
+                  - High
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: select
+                      case_label: "cycle={{ cycle_number }} fan_select"
+                      entity_id: "{{ fan_select_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_swing | bool }}"
+          then:
+            - repeat:
+                for_each:
+                  - "off"
+                  - vertical
+                  - horizontal
+                  - both
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: swing_mode
+                      case_label: "cycle={{ cycle_number }} climate_swing"
+                      entity_id: "{{ climate_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_vertical_vanes | bool }}"
+          then:
+            - repeat:
+                for_each:
+                  - Up
+                  - Up/Center
+                  - Center/Down
+                  - Down
+                  - Swing
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: select
+                      case_label: "cycle={{ cycle_number }} vertical_vane"
+                      entity_id: "{{ vertical_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_horizontal_vanes | bool }}"
+          then:
+            - repeat:
+                for_each:
+                  - Left
+                  - Left/Center
+                  - Center
+                  - Center/Right
+                  - Right
+                  - Wide
+                  - Spot
+                  - Swing
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: select
+                      case_label: "cycle={{ cycle_number }} horizontal_vane"
+                      entity_id: "{{ horizontal_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_3d_auto | bool }}"
+          then:
+            - action: script.mhi_guest_bedroom_execute_case
+              data:
+                run_id: "{{ run_id }}"
+                case_kind: select
+                case_label: "cycle={{ cycle_number }} three_d_fixed_context"
+                entity_id: "{{ horizontal_entity }}"
+                requested: Center
+                confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                command_gap_seconds: "{{ gap_seconds }}"
+                stop_on_failure: "{{ stop_on_failure }}"
+
+            - repeat:
+                for_each:
+                  - "off"
+                  - "on"
+                  - "off"
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: switch
+                      case_label: "cycle={{ cycle_number }} three_d_fixed"
+                      entity_id: "{{ three_d_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+            - action: script.mhi_guest_bedroom_execute_case
+              data:
+                run_id: "{{ run_id }}"
+                case_kind: select
+                case_label: "cycle={{ cycle_number }} three_d_swing_context"
+                entity_id: "{{ horizontal_entity }}"
+                requested: Swing
+                confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                command_gap_seconds: "{{ gap_seconds }}"
+                stop_on_failure: "{{ stop_on_failure }}"
+
+            - repeat:
+                for_each:
+                  - "on"
+                  - "off"
+                sequence:
+                  - action: script.mhi_guest_bedroom_execute_case
+                    data:
+                      run_id: "{{ run_id }}"
+                      case_kind: switch
+                      case_label: "cycle={{ cycle_number }} three_d_swing"
+                      entity_id: "{{ three_d_entity }}"
+                      requested: "{{ repeat.item }}"
+                      confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                      command_gap_seconds: "{{ gap_seconds }}"
+                      stop_on_failure: "{{ stop_on_failure }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ test_active_mode | bool }}"
+          then:
+            - action: script.mhi_guest_bedroom_execute_case
+              data:
+                run_id: "{{ run_id }}"
+                case_kind: switch
+                case_label: "cycle={{ cycle_number }} active_mode_off"
+                entity_id: "{{ active_mode_entity }}"
+                requested: "off"
+                confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                command_gap_seconds: 2
+                stop_on_failure: "{{ stop_on_failure }}"
+
+            - action: script.mhi_guest_bedroom_execute_case
+              data:
+                run_id: "{{ run_id }}"
+                case_kind: switch
+                case_label: "cycle={{ cycle_number }} active_mode_on"
+                entity_id: "{{ active_mode_entity }}"
+                requested: "on"
+                confirmation_timeout_seconds: "{{ timeout_seconds }}"
+                command_gap_seconds: "{{ gap_seconds }}"
+                stop_on_failure: "{{ stop_on_failure }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ restore_initial_state | bool }}"
+    then:
+      - action: switch.turn_on
+        target:
+          entity_id: "{{ active_mode_entity }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_vertical not in ['unknown', 'unavailable', 'none'] }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ vertical_entity }}"
+            data:
+              option: "{{ initial_vertical }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_horizontal not in ['unknown', 'unavailable', 'none'] }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ horizontal_entity }}"
+            data:
+              option: "{{ initial_horizontal }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_fan_select not in ['unknown', 'unavailable', 'none'] }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ fan_select_entity }}"
+            data:
+              option: "{{ initial_fan_select }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_three_d == 'on' }}"
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ three_d_entity }}"
+        else:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ three_d_entity }}"
+
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: "{{ climate_entity }}"
+        data:
+          hvac_mode: "{{ initial_mode }}"
+
+      - if:
+          - condition: template
+            value_template: >-
+              {{ initial_mode != 'off' and initial_temperature is not none and
+                 initial_temperature | string not in ['unknown', 'unavailable', 'None'] }}
+        then:
+          - action: climate.set_temperature
+            target:
+              entity_id: "{{ climate_entity }}"
+            data:
+              temperature: "{{ initial_temperature | float }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_fan_mode not in [none, 'unknown', 'unavailable'] }}"
+        then:
+          - action: climate.set_fan_mode
+            target:
+              entity_id: "{{ climate_entity }}"
+            data:
+              fan_mode: "{{ initial_fan_mode }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_swing_mode not in [none, 'unknown', 'unavailable'] }}"
+        then:
+          - action: climate.set_swing_mode
+            target:
+              entity_id: "{{ climate_entity }}"
+            data:
+              swing_mode: "{{ initial_swing_mode }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ initial_active_mode == 'off' }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ active_mode_entity }}"
+
+  - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+    continue_on_error: true
+    data:
+      marker: "{{ run_id }} COMPLETE"

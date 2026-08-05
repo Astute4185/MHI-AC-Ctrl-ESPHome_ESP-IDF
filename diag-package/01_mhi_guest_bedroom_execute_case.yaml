@@ -1,0 +1,267 @@
+alias: MHI Guest Bedroom Execute Case
+description: Internal assertion used by the MHI diagnostic scripts.
+mode: queued
+max: 1000
+
+fields:
+  case_kind:
+    name: Case kind
+    required: true
+    selector:
+      text:
+
+  case_label:
+    name: Case label
+    required: true
+    selector:
+      text:
+
+  entity_id:
+    name: Entity
+    required: true
+    selector:
+      text:
+
+  requested:
+    name: Requested value
+    required: true
+    selector:
+      text:
+
+  requested_aux:
+    name: Auxiliary value
+    required: false
+    default: ""
+    selector:
+      text:
+
+  confirmation_timeout_seconds:
+    name: Confirmation timeout
+    required: true
+    default: 4
+    selector:
+      number:
+        min: 1
+        max: 35
+        step: 1
+        mode: box
+        unit_of_measurement: s
+
+  command_gap_seconds:
+    name: Command gap
+    required: true
+    default: 2
+    selector:
+      number:
+        min: 0
+        max: 30
+        step: 0.1
+        mode: box
+        unit_of_measurement: s
+
+  stop_on_failure:
+    name: Stop on failure
+    required: true
+    default: true
+    selector:
+      boolean:
+
+sequence:
+  - variables:
+      marker_prefix: "{{ run_id | default('MHI-' ~ now().strftime('%Y%m%d-%H%M%S')) }}"
+      timeout_seconds: "{{ confirmation_timeout_seconds | int }}"
+      gap_seconds: "{{ command_gap_seconds | float }}"
+
+  - action: logbook.log
+    data:
+      name: MHI RX diagnostic
+      entity_id: "{{ entity_id }}"
+      message: >-
+        {{ marker_prefix }} COMMAND {{ case_label }}
+        kind={{ case_kind }} requested={{ requested }}
+        aux={{ requested_aux | default('') }}
+
+  - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+    continue_on_error: true
+    data:
+      marker: >-
+        {{ marker_prefix }} COMMAND {{ case_label }}
+        kind={{ case_kind }} requested={{ requested }}
+        aux={{ requested_aux | default('') }}
+
+  - choose:
+      - conditions: "{{ case_kind == 'hvac_mode' }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: "{{ entity_id }}"
+            data:
+              hvac_mode: "{{ requested }}"
+
+          - wait_template: "{{ states(entity_id) == requested }}"
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'temperature' }}"
+        sequence:
+          - action: climate.set_temperature
+            target:
+              entity_id: "{{ entity_id }}"
+            data:
+              temperature: "{{ requested | float }}"
+
+          - wait_template: >-
+              {% set actual = state_attr(entity_id, 'temperature') %}
+              {{ actual is not none and
+                 ((actual | float) - (requested | float)) | abs <= 0.26 }}
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'mode_temperature' }}"
+        sequence:
+          - action: climate.set_temperature
+            target:
+              entity_id: "{{ entity_id }}"
+            data:
+              hvac_mode: "{{ requested }}"
+              temperature: "{{ requested_aux | float }}"
+
+          - wait_template: >-
+              {% set actual = state_attr(entity_id, 'temperature') %}
+              {{ states(entity_id) == requested and
+                 actual is not none and
+                 ((actual | float) - (requested_aux | float)) | abs <= 0.26 }}
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'fan_mode' }}"
+        sequence:
+          - action: climate.set_fan_mode
+            target:
+              entity_id: "{{ entity_id }}"
+            data:
+              fan_mode: "{{ requested }}"
+
+          - wait_template: "{{ state_attr(entity_id, 'fan_mode') == requested }}"
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'swing_mode' }}"
+        sequence:
+          - action: climate.set_swing_mode
+            target:
+              entity_id: "{{ entity_id }}"
+            data:
+              swing_mode: "{{ requested }}"
+
+          - wait_template: "{{ state_attr(entity_id, 'swing_mode') == requested }}"
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'select' }}"
+        sequence:
+          - action: select.select_option
+            target:
+              entity_id: "{{ entity_id }}"
+            data:
+              option: "{{ requested }}"
+
+          - wait_template: "{{ states(entity_id) == requested }}"
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'switch' and requested == 'on' }}"
+        sequence:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ entity_id }}"
+
+          - wait_template: "{{ is_state(entity_id, 'on') }}"
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+      - conditions: "{{ case_kind == 'switch' and requested == 'off' }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ entity_id }}"
+
+          - wait_template: "{{ is_state(entity_id, 'off') }}"
+            timeout:
+              seconds: "{{ timeout_seconds }}"
+            continue_on_timeout: true
+
+    default:
+      - stop: "Unsupported MHI diagnostic case kind: {{ case_kind }}"
+        error: true
+
+  - variables:
+      case_passed: "{{ wait.completed | default(false) }}"
+      actual_value: >-
+        {% if case_kind == 'hvac_mode' %}
+          {{ states(entity_id) }}
+        {% elif case_kind in ['temperature', 'mode_temperature'] %}
+          mode={{ states(entity_id) }},temperature={{ state_attr(entity_id, 'temperature') }}
+        {% elif case_kind == 'fan_mode' %}
+          {{ state_attr(entity_id, 'fan_mode') }}
+        {% elif case_kind == 'swing_mode' %}
+          {{ state_attr(entity_id, 'swing_mode') }}
+        {% else %}
+          {{ states(entity_id) }}
+        {% endif %}
+
+  - if:
+      - condition: template
+        value_template: "{{ case_passed | bool }}"
+    then:
+      - action: logbook.log
+        data:
+          name: MHI RX diagnostic
+          entity_id: "{{ entity_id }}"
+          message: >-
+            {{ marker_prefix }} PASS {{ case_label }}
+            requested={{ requested }} actual={{ actual_value }}
+
+      - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+        continue_on_error: true
+        data:
+          marker: >-
+            {{ marker_prefix }} PASS {{ case_label }}
+            kind={{ case_kind }} requested={{ requested }}
+            aux={{ requested_aux | default('') }} actual={{ actual_value }}
+
+    else:
+      - action: logbook.log
+        data:
+          name: MHI RX diagnostic
+          entity_id: "{{ entity_id }}"
+          message: >-
+            {{ marker_prefix }} FAIL {{ case_label }}
+            requested={{ requested }} actual={{ actual_value }}
+
+      - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+        continue_on_error: true
+        data:
+          marker: >-
+            {{ marker_prefix }} FAIL {{ case_label }}
+            kind={{ case_kind }} requested={{ requested }}
+            aux={{ requested_aux | default('') }} actual={{ actual_value }}
+
+      - if:
+          - condition: template
+            value_template: "{{ stop_on_failure | bool }}"
+        then:
+          - stop: >-
+              MHI diagnostic failed: {{ case_label }} requested={{ requested }}
+              actual={{ actual_value }}
+            error: true
+
+  - delay:
+      seconds: "{{ gap_seconds }}"

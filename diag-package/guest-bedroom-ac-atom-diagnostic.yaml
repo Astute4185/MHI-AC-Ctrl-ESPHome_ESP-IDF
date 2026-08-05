@@ -1,0 +1,386 @@
+###
+### System Configuration
+###
+
+substitutions:
+  deviceid: guest_bedroom_ac_atom
+  devicename: Guest Bedroom AC
+  board: esp32-s3-devkitc-1
+  mhi_device_id: "mhi_${deviceid}"
+
+  log_lvl: DEBUG
+
+  ip_address: 10.0.9.154
+  ota_pwd: !secret ota_password
+  ssid: !secret wifi_ssid
+  wifi_pwd: !secret wifi_password
+  api_key: !secret apikey_g_bedroom_ac
+
+  frame_size: "33"
+  rx_driver: rmt_cs_spi
+  command_worker: "true"
+
+  sck_pin: "8"
+  mosi_pin: "38"
+  miso_pin: "39"
+
+  button_pin: GPIO41
+  rgb_pin: "35"
+
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/Astute4185/MHI-AC-Ctrl-ESPHome_ESP-IDF
+      ref: refactor/modular-transport-codebase-refinement
+    refresh: 0s
+    components:
+      - MhiAcCtrl
+
+
+esphome:
+  name: ${deviceid}
+  friendly_name: ${devicename}
+  min_version: 2026.7.3
+  name_add_mac_suffix: false
+
+  # Enables the temporary generation/candidate/confirmation trace points in
+  # the diagnostic component files.
+  build_flags:
+    - "-DMHI_COMMAND_TRACE=1"
+
+  on_boot:
+    priority: 200
+    then:
+      - delay: 10s
+      - light.turn_off:
+          id: i_led
+
+
+esp32:
+  board: ${board}
+  framework:
+    type: esp-idf
+    version: 5.5.5
+
+
+logger:
+  level: ${log_lvl}
+  baud_rate: 0
+  task_log_buffer_size: 1024
+
+  # Keep the MHI command and confirmation path visible during the test.
+  logs:
+    sensor: ${log_lvl}
+    binary_sensor: ${log_lvl}
+    text_sensor: ${log_lvl}
+    select: ${log_lvl}
+    switch: ${log_lvl}
+    climate: ${log_lvl}
+
+    mhi.diag: ${log_lvl}
+    mhi_rmt_cs_spi: ${log_lvl}
+    mhi_ac_ctrl: ${log_lvl}
+    mhi.climate: ${log_lvl}
+    mhi.select.vertical_vanes: ${log_lvl}
+    mhi.select.horizontal_vanes: ${log_lvl}
+    mhi.select.fan: ${log_lvl}
+    mhi.switch: ${log_lvl}
+    mhi.test: INFO
+
+
+ota:
+  - platform: esphome
+    password: ${ota_pwd}
+
+
+wifi:
+  ssid: ${ssid}
+  password: ${wifi_pwd}
+  use_address: ${ip_address}
+  power_save_mode: none
+
+
+api:
+  encryption:
+    key: ${api_key}
+  reboot_timeout: 0s
+
+  # Home Assistant calls this immediately before and after each test case.
+  # It places the HA case label in the same ESPHome log as command_trace.
+  actions:
+    - action: mhi_diagnostic_marker
+      variables:
+        marker: string
+      then:
+        - logger.log:
+            level: INFO
+            tag: mhi.test
+            format: "HA_MARKER: %s"
+            args:
+              - "marker.c_str()"
+
+
+###
+### MHI Component
+###
+
+MhiAcCtrl:
+  id: ${mhi_device_id}
+
+  frame_size: ${frame_size}
+
+  sck_pin: ${sck_pin}
+  mosi_pin: ${mosi_pin}
+  miso_pin: ${miso_pin}
+
+  rx_driver: ${rx_driver}
+  command_worker: ${command_worker}
+
+  opdata_freshness_timeout: 120s
+
+
+###
+### Device Hardware
+###
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: i_led
+    name: Internal LED
+    icon: mdi:led-outline
+    internal: true
+
+    rgb_order: GRB
+    pin: ${rgb_pin}
+    num_leds: 4
+    chipset: ws2812
+    restore_mode: ALWAYS_ON
+
+
+binary_sensor:
+  - platform: gpio
+    id: device_button
+    name: Physical Button
+    icon: mdi:button-pointer
+    internal: true
+
+    pin:
+      number: ${button_pin}
+      inverted: true
+      mode:
+        input: true
+
+    filters:
+      - delayed_off: 10ms
+
+    on_press:
+      then:
+        - light.toggle: i_led
+
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: ${mhi_device_id}
+
+    power:
+      name: Power
+
+    defrost:
+      name: Defrost
+
+    transport_healthy:
+      name: MHI Transport Healthy
+      entity_category: diagnostic
+
+    transport_recovery_active:
+      name: MHI Transport Recovery Active
+      entity_category: diagnostic
+
+    transport_safe_mode:
+      name: MHI Transport Safe Mode
+      entity_category: diagnostic
+
+    opdata_fresh:
+      name: MHI Operation Data Fresh
+      entity_category: diagnostic
+
+
+button:
+  - platform: restart
+    name: Restart
+    icon: mdi:restart
+    entity_category: diagnostic
+
+
+climate:
+  - platform: MhiAcCtrl
+    id: ac
+    name: ${devicename}
+    mhi_ac_ctrl_id: ${mhi_device_id}
+    icon: mdi:air-conditioner
+
+    visual:
+      min_temperature: 16
+      max_temperature: 31
+      temperature_step:
+        target_temperature: 1
+        current_temperature: 0.1
+
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+
+sensor:
+  - platform: uptime
+    name: Uptime
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    name: WiFi Signal
+    icon: mdi:signal-variant
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: ${mhi_device_id}
+
+    outdoor_temperature:
+      name: Outdoor Temperature
+
+    return_air_temperature:
+      name: Return Air Temperature
+
+    outdoor_unit_fan_speed:
+      name: Outdoor Unit Fan Speed
+
+    indoor_unit_fan_speed:
+      name: Indoor Unit Fan Speed
+
+    compressor_frequency:
+      name: Compressor Frequency
+
+    current_power:
+      name: Current
+
+    energy_used:
+      name: Energy Used
+
+    indoor_unit_total_run_time:
+      name: Indoor Unit Total Run Time
+
+    compressor_total_run_time:
+      name: Compressor Total Run Time
+
+    indoor_unit_thi_r1:
+      name: Indoor U-bend HE Temperature 1
+
+    indoor_unit_thi_r2:
+      name: Indoor Capillary HE Temperature 2
+
+    indoor_unit_thi_r3:
+      name: Indoor Suction Header HE Temperature 3
+
+    outdoor_unit_tho_r1:
+      name: Outdoor HE Temperature
+
+    outdoor_unit_expansion_valve:
+      name: Outdoor Unit Expansion Valve
+
+    outdoor_unit_discharge_pipe:
+      name: Outdoor Unit Discharge Pipe
+
+    outdoor_unit_discharge_pipe_super_heat:
+      name: Outdoor Unit Discharge Pipe Super Heat
+
+    protection_state_number:
+      name: Compressor Protection Code
+
+    opdata_oldest_age:
+      name: MHI Oldest Operation Data Age
+      entity_category: diagnostic
+      filters:
+        - throttle: 30s
+
+    opdata_stale_count:
+      name: MHI Stale Operation Data Requests
+      entity_category: diagnostic
+      filters:
+        - throttle: 30s
+
+    opdata_timeout_events:
+      name: MHI Operation Data Timeout Events
+      entity_category: diagnostic
+      filters:
+        - throttle: 30s
+
+  - platform: internal_temperature
+    name: Internal Temperature
+    icon: mdi:temperature-celsius
+    entity_category: diagnostic
+
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP
+      icon: mdi:ip
+      entity_category: diagnostic
+
+    ssid:
+      name: SSID
+      icon: mdi:wifi
+      entity_category: diagnostic
+
+  - platform: version
+    name: ESP Version
+    icon: mdi:new-box
+    entity_category: diagnostic
+
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: ${mhi_device_id}
+
+    error_code:
+      name: Error Code
+      icon: mdi:alert-circle
+
+    protection_state:
+      name: Compressor Protection Status
+
+    active_transport:
+      name: MHI Active Transport
+      entity_category: diagnostic
+
+    transport_state:
+      name: MHI Transport State
+      entity_category: diagnostic
+
+    last_transport_error:
+      name: MHI Last Transport Error
+      entity_category: diagnostic
+
+
+select:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: ${mhi_device_id}
+
+    fan_speed:
+      name: Fan Speed
+
+    vertical_vanes:
+      name: Fan Control Up Down
+
+    horizontal_vanes:
+      name: Fan Control Left Right
+
+
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: ${mhi_device_id}
+
+    vanes_3d_auto:
+      name: 3D Auto
+
+    active_mode:
+      name: MHI Active Mode
+      entity_category: config

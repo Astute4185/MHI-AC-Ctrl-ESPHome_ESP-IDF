@@ -1,0 +1,394 @@
+alias: MHI Guest Bedroom Mode Confirmation Test
+description: >-
+  Focused mode-change confirmation test. Select the actual Home Assistant
+  climate entity when starting the script. This version is self-contained and
+  stops immediately on the first failed confirmation when requested.
+mode: single
+max_exceeded: warning
+
+fields:
+  climate_entity:
+    name: Climate entity
+    description: Select the actual Guest Bedroom AC climate entity.
+    required: true
+    selector:
+      entity:
+        filter:
+          domain: climate
+
+  modes:
+    name: Modes
+    required: true
+    default:
+      - heat_cool
+      - heat
+      - cool
+      - dry
+      - fan_only
+      - "off"
+    selector:
+      select:
+        multiple: true
+        options:
+          - label: Auto / Heat-Cool
+            value: heat_cool
+          - label: Heat
+            value: heat
+          - label: Cool
+            value: cool
+          - label: Dry
+            value: dry
+          - label: Fan only
+            value: fan_only
+          - label: "Off"
+            value: "off"
+
+  mode_profile:
+    name: Transition profile
+    required: true
+    default: Sequential
+    selector:
+      select:
+        options:
+          - Sequential
+          - Round trip
+          - All ordered pairs
+
+  cycles:
+    name: Cycles
+    required: true
+    default: 5
+    selector:
+      number:
+        min: 1
+        max: 100
+        step: 1
+        mode: box
+
+  confirmation_timeout_seconds:
+    name: HA confirmation timeout
+    required: true
+    default: 4
+    selector:
+      number:
+        min: 1
+        max: 35
+        step: 1
+        mode: box
+        unit_of_measurement: s
+
+  command_gap_seconds:
+    name: Command gap
+    required: true
+    default: 2
+    selector:
+      number:
+        min: 0
+        max: 30
+        step: 0.1
+        mode: box
+        unit_of_measurement: s
+
+  stop_on_failure:
+    name: Stop on first failure
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  restore_initial_state:
+    name: Restore initial state after a successful run
+    required: true
+    default: false
+    selector:
+      boolean:
+
+sequence:
+  - if:
+      - condition: template
+        value_template: "{{ climate_entity is not defined or climate_entity | string | length == 0 }}"
+    then:
+      - stop: Select the Guest Bedroom AC climate entity before running the script.
+        error: true
+
+  - variables:
+      selected_modes: "{{ modes | default(['heat_cool', 'heat', 'cool', 'dry', 'fan_only', 'off'], true) | list }}"
+      total_cycles: "{{ cycles | default(5, true) | int }}"
+      timeout_seconds: "{{ confirmation_timeout_seconds | default(4, true) | int }}"
+      gap_seconds: "{{ command_gap_seconds | default(2, true) | float }}"
+      profile: "{{ mode_profile | default('Sequential', true) }}"
+      initial_mode: "{{ states(climate_entity) }}"
+      initial_temperature: "{{ state_attr(climate_entity, 'temperature') }}"
+      run_id: "MHI-MODE-{{ now().strftime('%Y%m%d-%H%M%S') }}"
+
+  - if:
+      - condition: template
+        value_template: >-
+          {{ states(climate_entity) in ['unknown', 'unavailable'] }}
+    then:
+      - stop: >-
+          Selected climate entity {{ climate_entity }} is unavailable or unknown.
+          Select the actual Guest Bedroom AC climate entity.
+        error: true
+
+  - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+    continue_on_error: true
+    data:
+      marker: >-
+        {{ run_id }} START profile={{ profile }}
+        entity={{ climate_entity }}
+        modes={{ selected_modes | join(',') }}
+        cycles={{ total_cycles }}
+
+  - repeat:
+      count: "{{ total_cycles }}"
+      sequence:
+        - variables:
+            cycle_number: "{{ repeat.index }}"
+
+        - choose:
+            - conditions: "{{ profile == 'All ordered pairs' }}"
+              sequence:
+                - repeat:
+                    for_each: "{{ selected_modes }}"
+                    sequence:
+                      - variables:
+                          source_mode: "{{ repeat.item }}"
+
+                      - repeat:
+                          for_each: "{{ selected_modes }}"
+                          sequence:
+                            - variables:
+                                requested_mode: "{{ repeat.item }}"
+
+                            - if:
+                                - condition: template
+                                  value_template: "{{ source_mode != requested_mode }}"
+                              then:
+                                - action: climate.set_hvac_mode
+                                  target:
+                                    entity_id: "{{ climate_entity }}"
+                                  data:
+                                    hvac_mode: "{{ source_mode }}"
+
+                                - wait_template: "{{ is_state(climate_entity, source_mode) }}"
+                                  timeout:
+                                    seconds: "{{ timeout_seconds }}"
+                                  continue_on_timeout: true
+
+                                - if:
+                                    - condition: template
+                                      value_template: "{{ not wait.completed }}"
+                                  then:
+                                    - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                                      continue_on_error: true
+                                      data:
+                                        marker: >-
+                                          {{ run_id }} FAIL cycle={{ cycle_number }}
+                                          pair_source={{ source_mode }}
+                                          actual={{ states(climate_entity) }}
+
+                                    - if:
+                                        - condition: template
+                                          value_template: "{{ stop_on_failure | default(true, true) | bool }}"
+                                      then:
+                                        - stop: >-
+                                            Failed to confirm source mode
+                                            {{ source_mode }}; actual={{ states(climate_entity) }}
+                                          error: true
+
+                                - delay:
+                                    seconds: "{{ gap_seconds }}"
+
+                                - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                                  continue_on_error: true
+                                  data:
+                                    marker: >-
+                                      {{ run_id }} COMMAND cycle={{ cycle_number }}
+                                      pair={{ source_mode }}->{{ requested_mode }}
+
+                                - action: climate.set_hvac_mode
+                                  target:
+                                    entity_id: "{{ climate_entity }}"
+                                  data:
+                                    hvac_mode: "{{ requested_mode }}"
+
+                                - wait_template: "{{ is_state(climate_entity, requested_mode) }}"
+                                  timeout:
+                                    seconds: "{{ timeout_seconds }}"
+                                  continue_on_timeout: true
+
+                                - if:
+                                    - condition: template
+                                      value_template: "{{ wait.completed }}"
+                                  then:
+                                    - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                                      continue_on_error: true
+                                      data:
+                                        marker: >-
+                                          {{ run_id }} PASS cycle={{ cycle_number }}
+                                          pair={{ source_mode }}->{{ requested_mode }}
+                                          actual={{ states(climate_entity) }}
+                                  else:
+                                    - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                                      continue_on_error: true
+                                      data:
+                                        marker: >-
+                                          {{ run_id }} FAIL cycle={{ cycle_number }}
+                                          pair={{ source_mode }}->{{ requested_mode }}
+                                          actual={{ states(climate_entity) }}
+
+                                    - if:
+                                        - condition: template
+                                          value_template: "{{ stop_on_failure | default(true, true) | bool }}"
+                                      then:
+                                        - stop: >-
+                                            Failed to confirm {{ source_mode }} to
+                                            {{ requested_mode }}; actual={{ states(climate_entity) }}
+                                          error: true
+
+                                - delay:
+                                    seconds: "{{ gap_seconds }}"
+
+            - conditions: "{{ profile == 'Round trip' }}"
+              sequence:
+                - repeat:
+                    for_each: "{{ selected_modes + (selected_modes | reverse | list) }}"
+                    sequence:
+                      - variables:
+                          requested_mode: "{{ repeat.item }}"
+
+                      - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                        continue_on_error: true
+                        data:
+                          marker: >-
+                            {{ run_id }} COMMAND cycle={{ cycle_number }}
+                            profile=round_trip requested={{ requested_mode }}
+
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: "{{ climate_entity }}"
+                        data:
+                          hvac_mode: "{{ requested_mode }}"
+
+                      - wait_template: "{{ is_state(climate_entity, requested_mode) }}"
+                        timeout:
+                          seconds: "{{ timeout_seconds }}"
+                        continue_on_timeout: true
+
+                      - if:
+                          - condition: template
+                            value_template: "{{ wait.completed }}"
+                        then:
+                          - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                            continue_on_error: true
+                            data:
+                              marker: >-
+                                {{ run_id }} PASS cycle={{ cycle_number }}
+                                requested={{ requested_mode }}
+                                actual={{ states(climate_entity) }}
+                        else:
+                          - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                            continue_on_error: true
+                            data:
+                              marker: >-
+                                {{ run_id }} FAIL cycle={{ cycle_number }}
+                                requested={{ requested_mode }}
+                                actual={{ states(climate_entity) }}
+
+                          - if:
+                              - condition: template
+                                value_template: "{{ stop_on_failure | default(true, true) | bool }}"
+                            then:
+                              - stop: >-
+                                  Failed to confirm {{ requested_mode }};
+                                  actual={{ states(climate_entity) }}
+                                error: true
+
+                      - delay:
+                          seconds: "{{ gap_seconds }}"
+
+          default:
+            - repeat:
+                for_each: "{{ selected_modes }}"
+                sequence:
+                  - variables:
+                      requested_mode: "{{ repeat.item }}"
+
+                  - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                    continue_on_error: true
+                    data:
+                      marker: >-
+                        {{ run_id }} COMMAND cycle={{ cycle_number }}
+                        profile=sequential requested={{ requested_mode }}
+
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ climate_entity }}"
+                    data:
+                      hvac_mode: "{{ requested_mode }}"
+
+                  - wait_template: "{{ is_state(climate_entity, requested_mode) }}"
+                    timeout:
+                      seconds: "{{ timeout_seconds }}"
+                    continue_on_timeout: true
+
+                  - if:
+                      - condition: template
+                        value_template: "{{ wait.completed }}"
+                    then:
+                      - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                        continue_on_error: true
+                        data:
+                          marker: >-
+                            {{ run_id }} PASS cycle={{ cycle_number }}
+                            requested={{ requested_mode }}
+                            actual={{ states(climate_entity) }}
+                    else:
+                      - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+                        continue_on_error: true
+                        data:
+                          marker: >-
+                            {{ run_id }} FAIL cycle={{ cycle_number }}
+                            requested={{ requested_mode }}
+                            actual={{ states(climate_entity) }}
+
+                      - if:
+                          - condition: template
+                            value_template: "{{ stop_on_failure | default(true, true) | bool }}"
+                        then:
+                          - stop: >-
+                              Failed to confirm {{ requested_mode }};
+                              actual={{ states(climate_entity) }}
+                            error: true
+
+                  - delay:
+                      seconds: "{{ gap_seconds }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ restore_initial_state | default(false, true) | bool }}"
+    then:
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: "{{ climate_entity }}"
+        data:
+          hvac_mode: "{{ initial_mode }}"
+
+      - if:
+          - condition: template
+            value_template: >-
+              {{ initial_mode != 'off' and initial_temperature is not none and
+                 initial_temperature | string not in
+                 ['unknown', 'unavailable', 'None'] }}
+        then:
+          - action: climate.set_temperature
+            target:
+              entity_id: "{{ climate_entity }}"
+            data:
+              temperature: "{{ initial_temperature | float }}"
+
+  - action: esphome.guest_bedroom_ac_atom_mhi_diagnostic_marker
+    continue_on_error: true
+    data:
+      marker: "{{ run_id }} COMPLETE"
