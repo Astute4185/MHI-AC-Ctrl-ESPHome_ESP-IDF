@@ -22,13 +22,11 @@
 #include "mhi_frame_sync.h"
 #include "mhi_fan_profile.h"
 #include "mhi_opdata_decoder.h"
-#include "mhi_opdata_freshness.h"
-#include "mhi_opdata_freshness_publisher.h"
-#include "mhi_power_estimator.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_rmt_cs_spi_mode.h"
 #include "mhi_status_decoder.h"
 #include "mhi_tx_builder.h"
+#include "mhi_worker_policy.h"
 #include "mhi_worker_decoded_store.h"
 #define EXPECT_TRUE(expr)                                                                            \
   do {                                                                                               \
@@ -192,6 +190,8 @@ void frame_queue_overwrites_oldest_complete_frame();
 void duplex_tx_mailbox_stages_and_consumes_20_byte_frame();
 void duplex_tx_mailbox_latest_stage_replaces_unclaimed_frame();
 void duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data();
+void duplex_tx_mailbox_preserves_pending_command_from_background_replacement();
+void duplex_tx_mailbox_command_replaces_pending_background();
 void command_coordinator_starts_confirmation_after_tx_completion();
 void command_coordinator_restores_command_when_stage_is_rejected();
 void command_coordinator_requeues_failed_command();
@@ -217,9 +217,6 @@ void command_coordinator_reports_staged_timeout_once();
 void command_coordinator_extended_louver_supersession_suite();
 void tx_completion_queue_preserves_order_and_rejects_overflow();
 
-void rx_runtime_services_transport_and_catalogs_status();
-void rx_runtime_preserves_command_candidate_and_worker_handoff();
-void rx_runtime_reset_clears_catalog_and_worker_state();
 void worker_decoded_store_latest_status_overwrites_stale_status();
 void worker_decoded_store_keeps_command_candidate_separate();
 void worker_decoded_store_merges_distinct_opdata_fields();
@@ -245,21 +242,9 @@ void opdata_decoder_decodes_indoor_unit_total_run_time();
 void opdata_decoder_decodes_compressor_total_run_time();
 void opdata_decoder_decodes_energy_used();
 void opdata_decoder_decodes_temperature_and_protection_slice2();
-void opdata_freshness_requires_all_enabled_requests_before_fresh();
-void opdata_freshness_counts_stale_transitions_once();
-void opdata_freshness_reset_keeps_counters_and_restarts_observation_window();
-void opdata_freshness_publisher_publishes_only_meaningful_changes();
-void power_estimator_is_inactive_until_enabled();
-void power_estimator_calculates_instantaneous_power();
-void power_estimator_integrates_energy_between_fresh_samples();
-void power_estimator_uses_trapezoidal_integration();
-void power_estimator_skips_stale_sample_gaps();
-void power_estimator_applies_configured_standby_floor_only_when_off();
-void power_estimator_reset_window_preserves_accumulated_energy();
 void publish_bridge_republishes_cached_state_after_targets_are_registered();
 void publish_bridge_publishes_sensor_parity_slice1_on_first_opdata_publish();
 void publish_bridge_publishes_sensor_parity_slice2_on_first_opdata_publish();
-void publish_bridge_publishes_estimated_power_and_energy();
 void publish_bridge_maps_unknown_protection_state();
 void publish_bridge_maps_mhi_auto_to_heat_cool_for_ha_setpoint_ui();
 void publish_bridge_publishes_sensor_parity_slice3_vane_feedback();
@@ -321,31 +306,10 @@ void publish_bridge_three_speed_maps_code_zero_to_low();
 void publish_bridge_four_speed_maps_code_zero_to_quiet();
 void tx_builder_encodes_quiet_fan_code_zero();
 void command_confirmation_confirms_quiet_fan_code_zero();
+void worker_policy_allows_queue_backed_rx_drivers();
+void worker_policy_keeps_synchronous_rx_in_main_loop();
 void rmt_cs_spi_supports_esp32_and_s3();
 void rmt_cs_spi_exposes_single_driver_name();
 void rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
-void split_transport_delegates_rx_and_marker_armed_tx();
-void split_transport_preserves_null_tx_completion_contract();
-void duplex_transport_adapter_preserves_backend_contract();
-void split_transport_active_mode_clears_pending_tx_and_keeps_rx_ready();
-void duplex_transport_active_mode_propagates_and_blocks_tx();
-void transport_result_preserves_error_context();
-void split_transport_reports_setup_failure_and_rx_health();
-void duplex_transport_adapter_reports_missing_backend();
-void transport_manager_uses_injected_primary_transport();
-void transport_manager_active_mode_blocks_tx_without_stopping_rx();
-void transport_manager_collects_transport_counters_only_from_main_loop();
-void transport_manager_activates_injected_recovery_after_setup_failure();
-void transport_manager_recovery_transition_is_ordered_and_latched();
-void transport_manager_enters_safe_mode_when_recovery_fails();
-void transport_manager_enters_safe_mode_without_recovery();
-void transport_manager_recovers_after_startup_no_traffic();
-void transport_manager_recovers_after_invalid_startup_traffic();
-void transport_manager_marks_valid_protocol_traffic_healthy();
-void transport_manager_recovers_after_valid_traffic_stalls();
-void transport_manager_recovers_after_latched_driver_fault();
-void transport_manager_enters_safe_mode_when_recovery_has_no_traffic();
-void transport_manager_diagnostics_snapshot_tracks_recovery_and_safe_mode();
-void transport_diagnostics_publisher_publishes_only_on_change();
 
 }  // namespace mhi_unit_tests
