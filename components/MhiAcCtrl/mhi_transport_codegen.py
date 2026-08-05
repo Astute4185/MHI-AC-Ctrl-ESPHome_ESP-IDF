@@ -30,6 +30,7 @@ CONF_PRIMARY_RMT_CS_SPI_ID = "primary_rmt_cs_spi_id"
 CONF_RECOVERY_SPLIT_TRANSPORT_ID = "recovery_split_transport_id"
 CONF_RECOVERY_FAST_GPIO_RX_ID = "recovery_fast_gpio_rx_id"
 CONF_RECOVERY_FAST_GPIO_TX_ID = "recovery_fast_gpio_tx_id"
+CONF_RECOVERY_NULL_TX_ID = "recovery_null_tx_id"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ def build_internal_transport_schema():
         cv.GenerateID(CONF_RECOVERY_SPLIT_TRANSPORT_ID): cv.declare_id(MhiSplitTransport),
         cv.GenerateID(CONF_RECOVERY_FAST_GPIO_RX_ID): cv.declare_id(MhiFastGpioRxDriver),
         cv.GenerateID(CONF_RECOVERY_FAST_GPIO_TX_ID): cv.declare_id(MhiFastGpioTxDriver),
+        cv.GenerateID(CONF_RECOVERY_NULL_TX_ID): cv.declare_id(MhiNullTxDriver),
     }
 
 
@@ -81,7 +83,8 @@ def build_split_tx(config, inputs: MhiTransportBuildInputs, *, recovery: bool):
         cg.add(tx.set_frame_start_idle_ms(inputs.frame_start_idle_ms))
         return tx, True
 
-    null_tx = cg.new_Pvariable(config[CONF_PRIMARY_NULL_TX_ID])
+    null_tx_id = CONF_RECOVERY_NULL_TX_ID if recovery else CONF_PRIMARY_NULL_TX_ID
+    null_tx = cg.new_Pvariable(config[null_tx_id])
     return null_tx, False
 
 

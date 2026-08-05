@@ -174,6 +174,21 @@ class TransportCompileSelectionTests(unittest.TestCase):
         self.assertIn("tx_driver: none", source)
         self.assertIn("does not claim hardware", source)
 
+
+    def test_primary_and_recovery_null_tx_ids_are_distinct(self):
+        source = (COMPONENT_DIR / "mhi_transport_codegen.py").read_text(encoding="utf-8")
+
+        self.assertIn('CONF_PRIMARY_NULL_TX_ID = "primary_null_tx_id"', source)
+        self.assertIn('CONF_RECOVERY_NULL_TX_ID = "recovery_null_tx_id"', source)
+        self.assertIn(
+            "null_tx_id = CONF_RECOVERY_NULL_TX_ID if recovery else CONF_PRIMARY_NULL_TX_ID",
+            source,
+        )
+        self.assertIn(
+            "cv.GenerateID(CONF_RECOVERY_NULL_TX_ID): cv.declare_id(MhiNullTxDriver)",
+            source,
+        )
+
     def test_each_transport_implementation_has_a_whole_unit_guard(self):
         for filename, (opening_guard, closing_guard) in TRANSPORT_SOURCES.items():
             with self.subTest(source=filename):
