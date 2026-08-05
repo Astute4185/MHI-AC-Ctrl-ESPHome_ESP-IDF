@@ -9,7 +9,7 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-constexpr uint8_t kMhiMaxCommandAttempts = 3U;
+constexpr uint8_t kMhiMaxCommandAttempts = 2U;
 constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 struct MhiCommandTimeoutResult {

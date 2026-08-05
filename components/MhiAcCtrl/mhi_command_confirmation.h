@@ -9,7 +9,7 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 10000U;
+constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 1000U;
 constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiThreeDAutoConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiExtendedLouverSettleDelayMs = 3000U;
