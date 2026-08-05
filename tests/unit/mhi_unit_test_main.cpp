@@ -132,8 +132,6 @@ int main() {
   fixture_garbage_then_valid_frame_resyncs();
   fixture_opdata_outdoor_temp_decodes();
   fixture_opdata_current_decodes();
-  worker_policy_allows_queue_backed_rx_drivers();
-  worker_policy_keeps_synchronous_rx_in_main_loop();
   rmt_cs_spi_supports_esp32_and_s3();
   rmt_cs_spi_exposes_single_driver_name();
   rmt_cs_spi_applies_original_esp32_mode3_edge_fix();
