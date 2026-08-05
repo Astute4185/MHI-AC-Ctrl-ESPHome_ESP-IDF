@@ -158,6 +158,7 @@ int main() {
   duplex_transport_adapter_reports_missing_backend();
   transport_manager_uses_injected_primary_transport();
   transport_manager_active_mode_blocks_tx_without_stopping_rx();
+  transport_manager_collects_transport_counters_only_from_main_loop();
   transport_manager_activates_injected_recovery_after_setup_failure();
   transport_manager_recovery_transition_is_ordered_and_latched();
   transport_manager_enters_safe_mode_when_recovery_fails();

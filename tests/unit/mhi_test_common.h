@@ -334,6 +334,7 @@ void split_transport_reports_setup_failure_and_rx_health();
 void duplex_transport_adapter_reports_missing_backend();
 void transport_manager_uses_injected_primary_transport();
 void transport_manager_active_mode_blocks_tx_without_stopping_rx();
+void transport_manager_collects_transport_counters_only_from_main_loop();
 void transport_manager_activates_injected_recovery_after_setup_failure();
 void transport_manager_recovery_transition_is_ordered_and_latched();
 void transport_manager_enters_safe_mode_when_recovery_fails();

@@ -272,6 +272,12 @@ class FakeUnifiedTransport final : public IMhiTransport {
   MhiTransportErrorDetail last_error() const override {
     return runtime_error.present() ? runtime_error : setup_result.error;
   }
+  uint32_t completed_tx_frames() const override {
+    return completed_tx_frames_value;
+  }
+  uint32_t tx_failures() const override {
+    return tx_failures_value;
+  }
 
   const char* transport_name_{nullptr};
   MhiTransportResult setup_result{MhiTransportResult::success()};
@@ -284,6 +290,8 @@ class FakeUnifiedTransport final : public IMhiTransport {
   int active_mode_changes{0};
   int shutdown_count{0};
   int loop_count{0};
+  uint32_t completed_tx_frames_value{0U};
+  uint32_t tx_failures_value{0U};
   std::size_t read_len{0U};
   std::array<uint8_t, kMhiMaxFrameBytes> read_data{};
   MhiTransportHealth health_snapshot{};
@@ -556,6 +564,52 @@ void transport_manager_active_mode_blocks_tx_without_stopping_rx() {
   EXPECT_TRUE(primary.active_mode());
   EXPECT_TRUE(manager.queue_tx(envelope));
   EXPECT_EQ(primary.queue_count, 2);
+}
+
+void transport_manager_collects_transport_counters_only_from_main_loop() {
+  FakeUnifiedTransport primary{"primary"};
+  MhiDiagnostics diagnostics{};
+  MhiTransportManager manager{};
+  manager.set_diagnostics(&diagnostics);
+  manager.set_primary(&primary);
+  EXPECT_TRUE(manager.setup());
+
+  primary.read_len = 3U;
+  primary.completed_tx_frames_value = 2U;
+  primary.tx_failures_value = 1U;
+  esphome::test_millis_value = 10U;
+
+  std::array<uint8_t, 4U> buffer{};
+  EXPECT_EQ(manager.read_rx(buffer.data(), buffer.size()), 3U);
+  EXPECT_TRUE(manager.queue_tx(make_command_envelope()));
+  EXPECT_FALSE(manager.flush_tx_on_bus_marker());
+
+  MhiStatsSnapshot stats = diagnostics.stats().snapshot();
+  EXPECT_EQ(stats.rx_chunks, 1U);
+  EXPECT_EQ(stats.rx_bytes, 3U);
+  EXPECT_EQ(stats.tx_frames, 0U);
+  EXPECT_EQ(stats.tx_failures, 0U);
+
+  manager.loop();
+  stats = diagnostics.stats().snapshot();
+  EXPECT_EQ(stats.tx_frames, 2U);
+  EXPECT_EQ(stats.tx_failures, 1U);
+
+  // Counter rollback can occur after a transport restart. It must rebase
+  // rather than attempting to count forward through uint32_t wraparound.
+  primary.completed_tx_frames_value = 0U;
+  primary.tx_failures_value = 0U;
+  manager.loop();
+  stats = diagnostics.stats().snapshot();
+  EXPECT_EQ(stats.tx_frames, 2U);
+  EXPECT_EQ(stats.tx_failures, 1U);
+
+  primary.completed_tx_frames_value = 1U;
+  primary.tx_failures_value = 1U;
+  manager.loop();
+  stats = diagnostics.stats().snapshot();
+  EXPECT_EQ(stats.tx_frames, 3U);
+  EXPECT_EQ(stats.tx_failures, 2U);
 }
 
 void transport_manager_activates_injected_recovery_after_setup_failure() {

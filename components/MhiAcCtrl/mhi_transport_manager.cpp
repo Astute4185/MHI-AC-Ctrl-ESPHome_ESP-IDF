@@ -226,11 +226,13 @@ std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
 
   const std::size_t len = active_->read(dst, max_len);
   if (len > 0U && diagnostics_ != nullptr) {
+    // MhiStats owns its own ESP-IDF critical section, so worker-side RX
+    // accounting is safe. Transport counter aggregation remains main-loop
+    // owned because its cursors are manager state, not atomic counters.
     const uint32_t now = millis();
     diagnostics_->stats().on_rx_chunk(now);
     diagnostics_->stats().on_rx_bytes(static_cast<uint32_t>(len), now);
   }
-  this->update_transport_diagnostics_();
   return len;
 }
 
@@ -246,9 +248,7 @@ bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
     return false;
   }
 
-  const bool queued = active_->queue_tx(envelope);
-  this->update_transport_diagnostics_();
-  return queued;
+  return active_->queue_tx(envelope);
 }
 
 bool MhiTransportManager::take_tx_completion(MhiTxCompletion& completion) {
@@ -273,9 +273,7 @@ bool MhiTransportManager::flush_tx_on_bus_marker() {
   if (!active_mode_enabled_ || active_ == nullptr || safe_mode_) {
     return false;
   }
-  const bool flushed = active_->flush_tx_on_bus_marker();
-  this->update_transport_diagnostics_();
-  return flushed;
+  return active_->flush_tx_on_bus_marker();
 }
 
 std::size_t MhiTransportManager::tx_completion_queue_depth() const {
@@ -515,17 +513,33 @@ void MhiTransportManager::update_transport_diagnostics_() {
     return;
   }
 
+  // This method is intentionally called only from loop(). The classified RX
+  // worker also calls read_rx(), queue_tx(), and flush_tx_on_bus_marker(); if
+  // those paths advance these cursors concurrently, one caller can move a
+  // cursor past the sampled transport counter. The former != loop would then
+  // iterate until uint32_t wraparound.
   const uint32_t completed = active_->completed_tx_frames();
   const uint32_t failures = active_->tx_failures();
+  const uint32_t now_ms = millis();
 
-  while (last_transport_tx_completed_ != completed) {
-    diagnostics_->stats().on_tx_frame(millis());
-    last_transport_tx_completed_++;
+  // A transport restart may legitimately reset its counters. Rebase instead
+  // of treating a lower counter as a wrapped delta.
+  if (completed < last_transport_tx_completed_) {
+    last_transport_tx_completed_ = completed;
+  } else {
+    while (last_transport_tx_completed_ < completed) {
+      diagnostics_->stats().on_tx_frame(now_ms);
+      last_transport_tx_completed_++;
+    }
   }
 
-  while (last_transport_tx_failures_ != failures) {
-    diagnostics_->stats().on_tx_failure();
-    last_transport_tx_failures_++;
+  if (failures < last_transport_tx_failures_) {
+    last_transport_tx_failures_ = failures;
+  } else {
+    while (last_transport_tx_failures_ < failures) {
+      diagnostics_->stats().on_tx_failure();
+      last_transport_tx_failures_++;
+    }
   }
 }
 
