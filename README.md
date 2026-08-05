@@ -590,16 +590,14 @@ tests/fixtures/
 tests/components/
 ```
 
-The ESPHome compile suite uses four representative configurations rather than compiling every runtime permutation:
+The default ESPHome compile gate uses four representative configurations for the current material transport boundaries. An optional extended gate also compiles the portable RX-only path across ESP32, S2, S3, C2, C3, C5, C6, C61, and S31:
 
-| Compile target | Representative coverage |
-|---|---|
-| ESP32-C3 FastGPIO | Legacy FastGPIO RX/TX, 20-byte frames, three-speed fan profile |
-| ESP32 `rmt_cs_spi` | Original ESP32 FIFO full-duplex path and mode-3 edge correction |
-| ESP32-S3 `rmt_cs_spi` | ESP32-S3 FIFO full-duplex path and command worker |
-| ESP32-S3 `rmt_spi_rx` | Split hardware RX with legacy `fast_gpio_tx` |
+```bash
+./scripts/compile-tests.sh compile representative
+./scripts/compile-tests.sh compile extended
+```
 
-Driver defaults, invalid combinations, frame semantics, fan profiles, command coordination, and confirmation behaviour are covered by host unit tests. Hardware timing and transport stability remain hardware-test concerns rather than compile-test permutations.
+See [`TRANSPORT_COMPILE_MATRIX.md`](TRANSPORT_COMPILE_MATRIX.md) for the target and driver breakdown. Extended success proves source/toolchain compatibility only; hardware timing and transport stability still require physical validation.
 
 Run host tests:
 

@@ -46,9 +46,14 @@ Run these before opening a pull request:
 ./scripts/compile-tests.sh
 ```
 
-`compile-tests.sh` builds four representative ESP-IDF configurations covering ESP32-C3 FastGPIO, original ESP32 `rmt_cs_spi`, ESP32-S3 `rmt_cs_spi`, and ESP32-S3 `rmt_spi_rx` with `fast_gpio_tx`.
+`compile-tests.sh` defaults to four representative ESP-IDF configurations. The optional extended scope compiles the portable RX-only path across every Wi-Fi-capable ESP32 variant supported by the pinned ESPHome release, including ESP32-S31:
 
-A successful compile does not prove that a timing-sensitive transport works on hardware.
+```bash
+./scripts/compile-tests.sh validate extended
+./scripts/compile-tests.sh compile extended
+```
+
+See [`TRANSPORT_COMPILE_MATRIX.md`](TRANSPORT_COMPILE_MATRIX.md). A successful compile proves source/toolchain compatibility only; it does not prove that a timing-sensitive transport works on hardware.
 
 ## Architecture rules
 

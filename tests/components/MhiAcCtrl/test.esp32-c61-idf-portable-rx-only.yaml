@@ -1,0 +1,63 @@
+# Compile-only portability fixture. Passing this build does not claim hardware
+# timing or electrical validation for this ESP32 variant.
+esphome:
+  name: mhi-c61-portable
+  friendly_name: MHI ESP32-C61 Portable RX-only Compile Test
+
+esp32:
+  variant: esp32c61
+  framework:
+    type: esp-idf
+    version: recommended
+
+logger:
+  level: INFO
+  baud_rate: 0
+
+wifi:
+  ssid: mhi-compile-test
+  password: compile-test-password
+
+api:
+
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [MhiAcCtrl]
+
+MhiAcCtrl:
+  id: mhi_ac
+  frame_size: 33
+  # Compile-test pins only. They are not a board wiring recommendation.
+  sck_pin: 3
+  mosi_pin: 4
+  miso_pin: 5
+  rx_driver: external_clock_rx
+  tx_driver: none
+  command_worker: true
+
+climate:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    name: MHI Climate
+
+binary_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    transport_healthy:
+      name: MHI Transport Healthy
+    transport_recovery_active:
+      name: MHI Transport Recovery Active
+    transport_safe_mode:
+      name: MHI Transport Safe Mode
+
+text_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    active_transport:
+      name: MHI Active Transport
+    transport_state:
+      name: MHI Transport State
+    last_transport_error:
+      name: MHI Last Transport Error

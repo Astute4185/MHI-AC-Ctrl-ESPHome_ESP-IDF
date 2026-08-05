@@ -4,16 +4,14 @@ try:
     from .mhi_transport_registry import (
         FRAMEWORK_ESP_IDF,
         PLATFORM_ESP32,
-        VARIANT_ESP32,
-        VARIANT_ESP32S3,
+        WIFI_ESP32_VARIANTS,
         MhiTransportDefinition,
     )
 except ImportError:
     from mhi_transport_registry import (
         FRAMEWORK_ESP_IDF,
         PLATFORM_ESP32,
-        VARIANT_ESP32,
-        VARIANT_ESP32S3,
+        WIFI_ESP32_VARIANTS,
         MhiTransportDefinition,
     )
 
@@ -59,7 +57,7 @@ TRANSPORT_DEFINITION = MhiTransportDefinition(
     compile_define="MHI_USE_TRANSPORT_EXTERNAL_CLOCK",
     supported_platforms=frozenset({PLATFORM_ESP32}),
     supported_frameworks=frozenset({FRAMEWORK_ESP_IDF}),
-    supported_variants=frozenset({VARIANT_ESP32, VARIANT_ESP32S3}),
+    supported_variants=WIFI_ESP32_VARIANTS,
     required_idf_components=(),
     uses_internal_fast_gpio_recovery=True,
 )

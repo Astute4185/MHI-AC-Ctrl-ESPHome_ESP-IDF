@@ -22,12 +22,12 @@ Effective TX is `fast_gpio_tx` unless `tx_driver: none` is explicitly selected f
 |---|---|
 | Platform | ESP32 |
 | Framework | ESP-IDF |
-| Variants accepted by configuration | ESP32, ESP32-C3, ESP32-S3 |
+| Compile-supported variants | ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-S31 |
 | Runtime validation | ESP32 and ESP32-S3 baseline/recovery paths |
 | Command-worker classified RX | No |
 | Internal recovery layer | No; this is the recovery implementation |
 
-ESP32-C3 currently has compile coverage, but runtime control has not been hardware-validated.
+Extended compile coverage is available across all listed Wi-Fi variants. Runtime timing and control remain hardware-validation requirements, especially on variants using the generic GPIO fallback.
 
 ## Driver tunables
 

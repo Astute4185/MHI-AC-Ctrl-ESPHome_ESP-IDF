@@ -67,15 +67,15 @@ Older top-level tuning aliases remain accepted for compatibility, but new config
 
 | Selection | Effective TX | Supported ESP32 variants | Driver tunables | Position |
 |---|---|---|---|---|
-| [`fast_gpio_rx`](fast_gpio_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) | ESP32, ESP32-C3, ESP32-S3 | `frame_start_idle_ms` | Conservative baseline and recovery implementation |
-| [`external_clock_rx`](external_clock_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) | ESP32, ESP32-S3 | None | Interrupt-driven split RX |
+| [`fast_gpio_rx`](fast_gpio_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) where supported, otherwise `none` | All Wi-Fi ESP32 variants at compile time | `frame_start_idle_ms` | Conservative baseline and recovery implementation |
+| [`external_clock_rx`](external_clock_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) where supported, otherwise `none` | All Wi-Fi ESP32 variants at compile time | None | Interrupt-driven split RX |
 | [`rmt_spi_rx`](rmt_spi_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) | ESP32-S3 | `frame_gap_us` | Hardware-assisted split RX |
 | [`rmt_cs_spi`](rmt_cs_spi.md) | Integrated | ESP32, ESP32-S3 | `frame_gap_us` | FIFO-backed full-duplex hardware transport |
 | [`none`](none.md) | Disabled | Split RX drivers only | None | RX-only diagnostics; not a normal control configuration |
 
 All current drivers require the ESP-IDF framework. Target support is validated during ESPHome configuration.
 
-ESP32-C3 currently has compile coverage for `fast_gpio_rx`, but runtime control has not been hardware-validated.
+The portable RX paths have extended compile coverage across ESP32, S2, S3, C2, C3, C5, C6, C61, and S31. This is source/toolchain coverage, not a hardware-support claim. See [`../../TRANSPORT_COMPILE_MATRIX.md`](../../TRANSPORT_COMPILE_MATRIX.md).
 
 ## Selection rules
 

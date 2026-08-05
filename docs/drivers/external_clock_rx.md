@@ -23,8 +23,8 @@ Effective TX is `fast_gpio_tx` unless `tx_driver: none` is selected for RX-only 
 |---|---|
 | Platform | ESP32 |
 | Framework | ESP-IDF |
-| Variants | ESP32, ESP32-S3 |
-| Hardware validation | Original ESP32 split path |
+| Compile-supported variants | ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-S31 |
+| Hardware validation | Limited; compile support on a target is not a runtime claim |
 | Command-worker classified RX | Yes |
 | Internal FastGPIO recovery | Yes |
 
@@ -60,7 +60,7 @@ TX remains software-driven through `fast_gpio_tx`.
 
 - TX still follows the AC clock in software.
 - Interrupt timing and GPIO behaviour remain target-specific.
-- Current runtime validation is strongest on the original ESP32.
+- Runtime behaviour remains target-specific and must be validated on physical hardware for each new variant.
 
 ## RX-only diagnostic configuration
 
