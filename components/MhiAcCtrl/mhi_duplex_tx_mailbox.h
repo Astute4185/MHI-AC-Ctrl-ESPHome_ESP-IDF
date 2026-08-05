@@ -20,6 +20,14 @@ class MhiDuplexTxMailbox {
       return false;
     }
 
+    // Commands are lifecycle events and must not be displaced by routine
+    // background traffic. A later command may still replace a background
+    // frame, preserving command priority in the latest-value mailbox.
+    if (pending_ && envelope_.is_command() && !envelope.is_command()) {
+      rejected_background_frames_++;
+      return false;
+    }
+
     if (pending_) {
       overwritten_frames_++;
     }
@@ -47,6 +55,7 @@ class MhiDuplexTxMailbox {
     envelope_ = {};
     pending_ = false;
     overwritten_frames_ = 0U;
+    rejected_background_frames_ = 0U;
   }
 
   bool pending() const {
@@ -69,10 +78,15 @@ class MhiDuplexTxMailbox {
     return overwritten_frames_;
   }
 
+  uint32_t rejected_background_frames() const {
+    return rejected_background_frames_;
+  }
+
  private:
   MhiTxEnvelope envelope_{};
   bool pending_{false};
   uint32_t overwritten_frames_{0U};
+  uint32_t rejected_background_frames_{0U};
 };
 
 }  // namespace mhi_ac_ctrl

@@ -673,7 +673,7 @@ void MhiAcCtrl::dump_config() {
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
                                            : "main-loop capture/sync/decode/apply");
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
-  ESP_LOGCONFIG(TAG, "  TX priority: commands bypass interval, background waits for no pending confirmation");
+  ESP_LOGCONFIG(TAG, "  TX priority: commands bypass interval; background resumes after physical command completion");
   ESP_LOGCONFIG(TAG, "  TX ownership: transport-owned real-time transmission, auto_flush=%s",
                 this->transport_.auto_tx_flush() ? "YES" : "NO");
   ESP_LOGCONFIG(TAG,
@@ -1183,12 +1183,34 @@ void MhiAcCtrl::service_command_pipeline_() {
   this->suppress_duplicate_pending_commands_();
   auto& command = this->state_.command();
   const bool has_pending_command = command.has_pending_command();
+  const bool command_in_flight = this->command_coordinator_.has_command_in_flight();
+  const bool confirmation_pending = this->command_coordinator_.has_pending_confirmation();
 
-  if (!this->command_coordinator_.has_command_in_flight() && !this->command_coordinator_.has_pending_confirmation() &&
-      (has_pending_command || this->background_tx_allowed_(now))) {
+  if (!command_in_flight && !confirmation_pending && (has_pending_command || this->background_tx_allowed_(now))) {
     command_before_build = command;
     should_build = this->command_coordinator_.prepare_next(command, this->tx_runtime_, this->tx_config_, tx_frame,
                                                            build_result, envelope);
+  } else if (!command_in_flight && confirmation_pending && this->background_tx_allowed_(now)) {
+    // Once the command has physically completed, continue clocking ordinary
+    // command-free frames while semantic confirmation is pending. These frames
+    // act as confirmation probes without consuming or modifying queued user
+    // commands. Mailbox priority prevents a probe from replacing a command.
+    MhiCommandState background_command{};
+    should_build = MhiTxBuilder::build_next_frame(background_command, this->tx_runtime_, this->tx_config_, tx_frame,
+                                                  build_result);
+    if (should_build) {
+      should_build = envelope.set_frame(tx_frame.bytes(), tx_frame.len);
+    }
+#ifdef MHI_COMMAND_TRACE
+    if (should_build) {
+      ESP_LOGD(DIAG_TAG,
+               "command_trace: confirmation_probe_background pending=0x%08lx age_ms=%lu len=%u "
+               "db0=0x%02x db6=0x%02x db9=0x%02x",
+               static_cast<unsigned long>(this->command_coordinator_.pending_mask()),
+               static_cast<unsigned long>(this->command_coordinator_.pending_age_ms(now)),
+               static_cast<unsigned int>(tx_frame.len), tx_frame.data[DB0], tx_frame.data[DB6], tx_frame.data[DB9]);
+    }
+#endif
   }
 
   if (this->command_mutex_ != nullptr) {
@@ -1370,11 +1392,6 @@ bool MhiAcCtrl::command_confirmation_pending_() const {
 bool MhiAcCtrl::background_tx_allowed_(uint32_t now_ms) {
   if (!this->background_tx_due_(now_ms)) {
     this->tx_background_interval_deferrals_++;
-    return false;
-  }
-
-  if (this->command_coordinator_.has_pending_confirmation()) {
-    this->tx_background_confirmation_deferrals_++;
     return false;
   }
 
