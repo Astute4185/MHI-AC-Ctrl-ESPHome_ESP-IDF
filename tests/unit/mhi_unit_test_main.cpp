@@ -42,6 +42,7 @@ int main() {
   command_coordinator_supersedes_pending_confirmation_with_newer_value();
   command_coordinator_does_not_confirm_old_value_when_newer_request_is_queued();
   command_coordinator_retries_only_remaining_fields_and_caps_attempts();
+  command_coordinator_accepts_confirmation_during_final_grace();
   command_coordinator_reports_staged_timeout_once();
   command_coordinator_replaces_unclaimed_command_with_latest_combined_state();
   command_coordinator_replacement_supersedes_same_field_before_transmit();
@@ -116,6 +117,7 @@ int main() {
   command_confirmation_confirms_supported_fan_codes();
   command_confirmation_confirms_quiet_fan_code_zero();
   command_confirmation_times_out_unconfirmed_commands();
+  command_confirmation_honors_configured_normal_timeout();
   command_confirmation_detects_duplicate_pending_commands();
   command_confirmation_confirms_horizontal_vane_feedback();
   command_confirmation_confirms_horizontal_swing_feedback();

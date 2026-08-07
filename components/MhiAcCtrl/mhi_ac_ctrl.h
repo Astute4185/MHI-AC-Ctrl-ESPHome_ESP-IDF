@@ -85,6 +85,16 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     }
   }
 
+  void set_command_confirmation_timeout_ms(uint32_t timeout_ms) {
+    this->command_confirmation_timeout_ms_ = timeout_ms;
+    this->command_coordinator_.set_confirmation_timeout_ms(timeout_ms);
+  }
+
+  void set_command_final_confirmation_grace_ms(uint32_t grace_ms) {
+    this->command_final_confirmation_grace_ms_ = grace_ms;
+    this->command_coordinator_.set_final_confirmation_grace_ms(grace_ms);
+  }
+
   void set_command_worker(bool enabled) {
     this->command_worker_enabled_ = enabled;
   }
@@ -480,6 +490,8 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   SemaphoreHandle_t command_mutex_{nullptr};
 
   uint32_t tx_background_interval_ms_{250U};
+  uint32_t command_confirmation_timeout_ms_{kMhiCommandConfirmationTimeoutMs};
+  uint32_t command_final_confirmation_grace_ms_{kMhiCommandFinalConfirmationGraceMs};
   uint32_t last_background_tx_ms_{0U};
   uint32_t tx_background_interval_deferrals_{0U};
   uint32_t tx_background_confirmation_deferrals_{0U};

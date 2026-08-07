@@ -118,6 +118,21 @@ void command_confirmation_times_out_unconfirmed_commands() {
 }
 
 
+void command_confirmation_honors_configured_normal_timeout() {
+  MhiCommandConfirmation confirmation{};
+
+  MhiCommandIntent intent{};
+  intent.mask = MHI_COMMAND_TARGET_TEMP;
+  intent.target_temp_c = 21.5f;
+  confirmation.stage(intent, intent.mask, 1000U);
+
+  constexpr uint32_t configured_timeout_ms = 1750U;
+  EXPECT_EQ(confirmation.inspect_expiration(1000U + configured_timeout_ms - 1U, configured_timeout_ms).mask, 0U);
+  EXPECT_EQ(confirmation.expire(1000U + configured_timeout_ms, configured_timeout_ms).mask,
+            static_cast<uint32_t>(MHI_COMMAND_TARGET_TEMP));
+  EXPECT_FALSE(confirmation.has_pending());
+}
+
 
 }  // namespace mhi_unit_tests
 

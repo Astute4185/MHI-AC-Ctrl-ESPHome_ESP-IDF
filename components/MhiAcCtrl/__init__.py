@@ -49,6 +49,8 @@ CONF_FAN_PROFILE = "fan_profile"
 CONF_FRAME_START_IDLE_MS = "frame_start_idle_ms"
 CONF_RMT_SPI_FRAME_GAP_US = "rmt_spi_frame_gap_us"
 CONF_TX_BACKGROUND_INTERVAL_MS = "tx_background_interval_ms"
+CONF_COMMAND_CONFIRMATION_TIMEOUT_MS = "command_confirmation_timeout_ms"
+CONF_COMMAND_FINAL_CONFIRMATION_GRACE_MS = "command_final_confirmation_grace_ms"
 CONF_COMMAND_WORKER = "command_worker"
 CONF_COMMAND_WORKER_START_DELAY_MS = "command_worker_start_delay_ms"
 CONF_COMMAND_WORKER_STACK_SIZE = "command_worker_stack_size"
@@ -56,6 +58,8 @@ CONF_COMMAND_WORKER_PRIORITY = "command_worker_priority"
 CONF_COMMAND_WORKER_CORE_ID = "command_worker_core_id"
 
 DEFAULT_TX_BACKGROUND_INTERVAL_MS = 250
+DEFAULT_COMMAND_CONFIRMATION_TIMEOUT_MS = 1500
+DEFAULT_COMMAND_FINAL_CONFIRMATION_GRACE_MS = 500
 
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
@@ -122,6 +126,12 @@ CONFIG_SCHEMA = cv.All(
             **{cv.Optional(name): schema for name, schema in TRANSPORT_SCHEMAS.items()},
             **build_internal_transport_schema(),
             cv.Optional(CONF_TX_BACKGROUND_INTERVAL_MS): cv.int_range(min=0, max=60000),
+            cv.Optional(
+                CONF_COMMAND_CONFIRMATION_TIMEOUT_MS, default=DEFAULT_COMMAND_CONFIRMATION_TIMEOUT_MS
+            ): cv.int_range(min=100, max=60000),
+            cv.Optional(
+                CONF_COMMAND_FINAL_CONFIRMATION_GRACE_MS, default=DEFAULT_COMMAND_FINAL_CONFIRMATION_GRACE_MS
+            ): cv.int_range(min=0, max=60000),
             cv.Optional(CONF_COMMAND_WORKER, default=False): cv.boolean,
             cv.Optional(CONF_COMMAND_WORKER_START_DELAY_MS, default=0): cv.int_range(min=0, max=30000),
             cv.Optional(CONF_COMMAND_WORKER_STACK_SIZE, default=6144): cv.int_range(min=4096, max=16384),
@@ -179,6 +189,8 @@ async def to_code(config):
 
     cg.add(var.set_fan_profile(config[CONF_FAN_PROFILE]))
     cg.add(var.set_tx_background_interval_ms(_default_tx_background_interval_ms(config)))
+    cg.add(var.set_command_confirmation_timeout_ms(config[CONF_COMMAND_CONFIRMATION_TIMEOUT_MS]))
+    cg.add(var.set_command_final_confirmation_grace_ms(config[CONF_COMMAND_FINAL_CONFIRMATION_GRACE_MS]))
     cg.add(var.set_command_worker(config[CONF_COMMAND_WORKER]))
     cg.add(var.set_command_worker_start_delay_ms(config[CONF_COMMAND_WORKER_START_DELAY_MS]))
     cg.add(var.set_command_worker_stack_size(config[CONF_COMMAND_WORKER_STACK_SIZE]))

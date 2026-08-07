@@ -664,8 +664,58 @@ void command_coordinator_retries_only_remaining_fields_and_caps_attempts() {
   timeout = coordinator.expire(20600U + kMhiCommandConfirmationTimeoutMs, command);
   EXPECT_EQ(timeout.attempt, 3U);
   EXPECT_EQ(timeout.retry_mask, 0U);
+  EXPECT_EQ(timeout.grace_mask, static_cast<uint32_t>(MHI_COMMAND_TARGET_TEMP));
+  EXPECT_EQ(timeout.exhausted_mask, 0U);
+  EXPECT_TRUE(coordinator.has_pending_confirmation());
+
+  timeout = coordinator.expire(20600U + kMhiCommandConfirmationTimeoutMs + kMhiCommandFinalConfirmationGraceMs - 1U,
+                               command);
+  EXPECT_FALSE(timeout.actionable());
+  EXPECT_TRUE(coordinator.has_pending_confirmation());
+
+  timeout = coordinator.expire(20600U + kMhiCommandConfirmationTimeoutMs + kMhiCommandFinalConfirmationGraceMs,
+                               command);
+  EXPECT_EQ(timeout.attempt, 3U);
   EXPECT_EQ(timeout.exhausted_mask, static_cast<uint32_t>(MHI_COMMAND_TARGET_TEMP));
+  EXPECT_FALSE(coordinator.has_pending_confirmation());
   EXPECT_FALSE(command.target_temp_set);
+}
+
+void command_coordinator_accepts_confirmation_during_final_grace() {
+  MhiCommandCoordinator coordinator{};
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiCommandState before{};
+
+  for (uint8_t attempt = 1U; attempt <= kMhiMaxCommandAttempts; attempt++) {
+    command.power_set = true;
+    command.power = true;
+    const MhiTxEnvelope envelope = prepare_command_envelope(coordinator, command, runtime, config, before);
+    coordinator.on_stage_result(envelope, before, command, true, 1000U * attempt);
+    EXPECT_TRUE(coordinator.on_tx_completion(completion_for(envelope, true, 1000U * attempt + 100U), command));
+
+    const uint32_t expiry_ms = 1000U * attempt + 100U + kMhiCommandConfirmationTimeoutMs;
+    MhiCommandTimeoutResult timeout = coordinator.expire(expiry_ms, command);
+    EXPECT_EQ(timeout.attempt, attempt);
+    if (attempt < kMhiMaxCommandAttempts) {
+      EXPECT_EQ(timeout.retry_mask, static_cast<uint32_t>(MHI_COMMAND_POWER));
+    } else {
+      EXPECT_EQ(timeout.grace_mask, static_cast<uint32_t>(MHI_COMMAND_POWER));
+      EXPECT_EQ(timeout.exhausted_mask, 0U);
+    }
+  }
+
+  EXPECT_TRUE(coordinator.final_confirmation_grace_active());
+  MhiStatusState status{};
+  status.valid = true;
+  status.power = true;
+  EXPECT_EQ(coordinator.observe_status(status), static_cast<uint32_t>(MHI_COMMAND_POWER));
+  EXPECT_FALSE(coordinator.has_pending_confirmation());
+  EXPECT_FALSE(coordinator.final_confirmation_grace_active());
+
+  const MhiCommandTimeoutResult after_confirmation = coordinator.expire(10000U, command);
+  EXPECT_FALSE(after_confirmation.actionable());
 }
 
 void command_coordinator_reports_staged_timeout_once() {

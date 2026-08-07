@@ -15,12 +15,17 @@ constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE |
 struct MhiCommandTimeoutResult {
   uint32_t timed_out_mask{0U};
   uint32_t retry_mask{0U};
+  uint32_t grace_mask{0U};
   uint32_t exhausted_mask{0U};
   uint32_t superseded_mask{0U};
   uint8_t attempt{0U};
 
   bool timed_out() const {
     return timed_out_mask != 0U;
+  }
+
+  bool actionable() const {
+    return timed_out_mask != 0U || exhausted_mask != 0U;
   }
 };
 
@@ -63,6 +68,26 @@ class MhiCommandCoordinator {
   uint32_t settle_pending_mask(uint32_t mask);
   uint32_t supersede_pending(const MhiCommandState& patch);
   MhiCommandTimeoutResult expire(uint32_t now_ms, MhiCommandState& command);
+
+  void set_confirmation_timeout_ms(uint32_t timeout_ms) {
+    normal_confirmation_timeout_ms_ = timeout_ms;
+  }
+
+  void set_final_confirmation_grace_ms(uint32_t grace_ms) {
+    final_confirmation_grace_ms_ = grace_ms;
+  }
+
+  uint32_t confirmation_timeout_ms() const {
+    return normal_confirmation_timeout_ms_;
+  }
+
+  uint32_t final_confirmation_grace_ms() const {
+    return final_confirmation_grace_ms_;
+  }
+
+  bool final_confirmation_grace_active() const {
+    return final_confirmation_grace_active_;
+  }
 
   uint32_t staged_timeout_mask(uint32_t now_ms, uint32_t timeout_ms);
 
@@ -124,6 +149,9 @@ class MhiCommandCoordinator {
   uint8_t confirmation_attempt_{0U};
   uint32_t in_flight_staged_ms_{0U};
   bool staged_timeout_reported_{false};
+  uint32_t normal_confirmation_timeout_ms_{kMhiCommandConfirmationTimeoutMs};
+  uint32_t final_confirmation_grace_ms_{kMhiCommandFinalConfirmationGraceMs};
+  bool final_confirmation_grace_active_{false};
 
   MhiCommandState coalesced_extended_patch_{};
   bool coalesced_extended_patch_pending_{false};
