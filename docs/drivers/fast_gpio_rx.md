@@ -75,10 +75,16 @@ Even with `command_worker: true`, this RX path remains main-loop driven. The com
 - Useful for comparing a hardware-assisted driver against known software behaviour.
 - Used as the automatic recovery transport for hardware-assisted primaries.
 
+## Hardware validation result
+
+Short hardware validation on both original ESP32 and ESP32-S3 produced clean protocol RX and reliable command confirmation on the no-worker path. The limitation is performance rather than correctness: synchronous receive sampling occupied roughly 200 ms-class main-loop sections on the tested 33-byte configuration and regularly exceeded the project's 30 ms loop budget.
+
+This makes `fast_gpio_rx` a reliable compatibility/recovery backend rather than the preferred performance path.
+
 ## Trade-offs
 
 - Highest CPU pressure of the available RX drivers.
-- Can contribute to long loop sections.
+- Synchronous capture can occupy roughly 200 ms-class loop sections on the validated hardware.
 - More sensitive to logging and publication load.
 - Bit timing remains software-owned.
 

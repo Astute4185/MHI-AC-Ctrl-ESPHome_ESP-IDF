@@ -14,10 +14,10 @@ This is not a clean-room protocol project. It builds on the original community M
 
 The primary runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. Core climate, fan, vane, 3D Auto, command-confirmation, worker, diagnostics, and transport work is implemented and hardware-tested on the available units.
 
-- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative default and the internal recovery path for hardware-assisted transports.
-- `external_clock_rx` with `fast_gpio_tx` is a validated split path on the original ESP32.
-- `rmt_spi_rx` with `fast_gpio_tx` is a validated hardware-assisted split path on ESP32-S3 and completed an approximately 47.5-hour soak with clean RX protocol health.
-- `rmt_cs_spi` is the consolidated FIFO-backed full-duplex path for the original dual-core ESP32 and ESP32-S3. It owns RX and TX, derives an internal chip-select boundary from the SCK idle gap, and uses `SPI_DMA_DISABLED` because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
+- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative compatibility baseline and the internal recovery path for hardware-assisted transports. Hardware validation on both ESP32 and ESP32-S3 showed clean protocol RX and reliable semantic commands, with the known cost of roughly 200 ms-class synchronous RX loop occupancy.
+- `external_clock_rx` with `fast_gpio_tx` is **experimental**. Testing on both ESP32 and ESP32-S3 showed intermittent checksum/synchronisation corruption. The no-worker path is more reliable for commands, but the RX integrity issue remains, so this backend is not currently release-validated.
+- `rmt_spi_rx` with `fast_gpio_tx` is a validated hardware-assisted split path on ESP32-S3 and completed an approximately 47.5-hour soak with clean RX protocol health. Hardware comparison testing showed `command_worker: false` is strongly preferred because worker polling materially increases FastGPIO TX misses and command-confirmation failures.
+- `rmt_cs_spi` is the preferred consolidated FIFO-backed full-duplex path for the original dual-core ESP32 and ESP32-S3. It owns RX and TX, derives an internal chip-select boundary from the SCK idle gap, and uses `SPI_DMA_DISABLED` because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity. Both worker and no-worker configurations have passed short hardware validation.
 - The original ESP32 `rmt_cs_spi` path applies a target-specific mode-3 receive-edge correction. ESP32-S3 uses the normal ESP-IDF mode-3 configuration.
 - The command coordinator now confirms commands from returned MOSI state, suppresses duplicates, retries bounded failures, and supersedes stale horizontal/3D confirmation generations with the latest composite intent.
 - Vertical vane, horizontal vane, and 3D Auto mapping completed an 80-case hardware matrix with all requested combinations confirmed.
@@ -59,23 +59,23 @@ See [Developing a new driver](docs/drivers/developing-drivers.md) for the requir
 
 | RX selection | Effective TX | Status |
 |---|---|---|
-| `fast_gpio_rx` | `fast_gpio_tx` | **Stable baseline** |
-| `external_clock_rx` | `fast_gpio_tx` | **Validated on ESP32 and ESP32-S3** |
-| `rmt_spi_rx` | `fast_gpio_tx` | **Validated on ESP32-S3** |
-| `rmt_cs_spi` | Integrated full-duplex TX | **Validated on ESP32 and ESP32-S3** |
+| `fast_gpio_rx` | `fast_gpio_tx` | **Validated compatibility baseline on ESP32 and ESP32-S3** |
+| `external_clock_rx` | `fast_gpio_tx` | **Experimental; RX integrity failure on ESP32 and ESP32-S3** |
+| `rmt_spi_rx` | `fast_gpio_tx` | **Validated on ESP32-S3; no worker recommended** |
+| `rmt_cs_spi` | Integrated full-duplex TX | **Preferred; validated on ESP32 and ESP32-S3** |
 
-`Stable baseline` identifies the conservative default path. `Validated` means the path has passed hardware operation and regression testing on the listed target, while broader board and air-conditioner compatibility evidence may still be collected. `In development` is reserved for targets without runtime validation.
+`Validated` means the path has passed hardware operation and regression testing on the listed target, while broader board and air-conditioner compatibility evidence may still be collected. `Experimental` means the backend is useful for engineering and comparison work but has a known hardware-validation failure and should not be presented as a stable runtime choice.
 
 The split-driver paths remain available for compatibility and diagnostics. The full-duplex `rmt_cs_spi` path is now one FIFO-backed implementation across both supported chip families; the temporary non-DMA driver label and the DMA implementation have been removed.
 
-`command_worker` remains disabled by default for backward-compatible scheduling behaviour, but the worker-backed command lifecycle and classified RX path have been hardware-tested with queue-backed transports.
+`command_worker` remains disabled by default. Hardware testing shows that worker suitability is transport-dependent: it coexists cleanly with integrated `rmt_cs_spi`, but is not recommended for split `rmt_spi_rx` or `external_clock_rx` configurations that still depend on timing-sensitive `fast_gpio_tx`.
 
 ### Hardware driver guide
 
 | ESP chip | Validated hardware | Recommended selection | Status | Notes |
 |---|---|---|---|---|
-| ESP32 | M5Stack Atom based on original ESP32 | `rmt_cs_spi` for full-duplex hardware-assisted operation; `external_clock_rx` or `fast_gpio_rx` as split/fallback paths | **Validated** | The FIFO-backed full-duplex path passed 33-byte RX/TX and command testing. The original-ESP32 mode-3 receive-edge correction is applied internally. |
-| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_cs_spi` for full-duplex operation; `rmt_spi_rx` with `fast_gpio_tx` as the validated split path | **Validated** | The 80-case louver/3D matrix and clean transport run used the FIFO-backed full-duplex architecture. |
+| ESP32 | M5Stack Atom based on original ESP32 | `rmt_cs_spi` for preferred full-duplex operation; `fast_gpio_rx` as the compatibility fallback | **Validated** | `rmt_cs_spi` passed 33-byte RX/TX and command testing with and without the command worker. `external_clock_rx` remains experimental because intermittent RX corruption was reproduced on this target. |
+| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_cs_spi` for preferred full-duplex operation; `rmt_spi_rx` with `fast_gpio_tx` as the validated split alternative; `fast_gpio_rx` as compatibility fallback | **Validated** | `rmt_spi_rx` is clean with the worker disabled. `external_clock_rx` remains experimental because intermittent RX corruption was reproduced on this target. |
 | ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` with `fast_gpio_tx` | **In development** | Representative compile coverage exists, including 20-byte frames and the three-speed fan profile. Runtime behaviour is not validated. |
 
 Add tested boards or modules to the matching chip row as results become available. Keep one consolidated row per ESP chip family rather than creating a row for every board.
@@ -118,9 +118,12 @@ MhiAcCtrl:
   miso_pin: 39
   rx_driver: rmt_spi_rx
   tx_driver: fast_gpio_tx
+  command_worker: false
   rmt_spi_rx:
     frame_gap_us: 1000
 ```
+
+For this split backend, leave the command worker disabled unless deliberately reproducing worker-specific diagnostics. Hardware comparison testing found materially more FastGPIO TX misses and command-confirmation failures with the worker enabled.
 
 See [the driver documentation](docs/drivers/README.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
 
@@ -220,7 +223,7 @@ The command worker is optional and disabled by default:
 command_worker: false
 ```
 
-The default preserves the conservative main-loop scheduling model. Enable the worker when using a queue-backed transport and you want command coordination and classified RX processing outside the ESPHome main loop:
+The default preserves the conservative main-loop scheduling model. Enable the worker only when the selected transport has been validated with it:
 
 ```yaml
 command_worker: true
@@ -228,7 +231,14 @@ command_worker: true
 
 The worker prepares immutable command frames, coordinates command lifecycle and confirmation, and drains supported queue-backed RX transports. The selected transport still owns all real-time bus timing, and confirmation begins only after the transport reports that the command frame was actually clocked onto the bus.
 
-For `external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`, the worker can perform RX draining, frame synchronisation, classification, and protocol decoding. Decoded status and opdata are committed to bounded latest-value snapshots, while the ESPHome main loop applies those snapshots and publishes entities. `fast_gpio_rx` remains a main-loop RX path because its `read()` operation performs synchronous clock sampling.
+Current hardware guidance is transport-specific:
+
+- `rmt_cs_spi`: worker and no-worker configurations both pass; worker mode is supported.
+- `rmt_spi_rx` + `fast_gpio_tx`: use `command_worker: false`; worker polling increased TX misses and command-confirmation failures in hardware testing.
+- `external_clock_rx` + `fast_gpio_tx`: keep the worker disabled for diagnostics; the backend still has an independent RX-integrity failure and is experimental.
+- `fast_gpio_rx`: RX remains synchronous and main-loop driven regardless of the worker setting; the no-worker path is the validated compatibility configuration.
+
+For queue-backed drivers, decoded status and opdata can be committed to bounded latest-value snapshots while the ESPHome main loop applies those snapshots and publishes entities.
 
 Separate `rx_worker` and `tx_worker` settings are no longer used.
 

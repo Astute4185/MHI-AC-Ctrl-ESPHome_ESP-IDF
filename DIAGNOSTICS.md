@@ -271,7 +271,7 @@ stack_free_min
 |---|---|---|
 | `enabled` | YAML setting | Matches configuration |
 | `running` | FreeRTOS worker task state | `YES` when enabled |
-| `classified_rx` | Worker drains and decodes RX | `YES` for queue-backed drivers; `NO` for `fast_gpio_rx` |
+| `classified_rx` | Worker drains and decodes RX | `YES` for queue-backed drivers; `NO` for `fast_gpio_rx`. Availability does not imply the worker is recommended for that transport. |
 | `wakes` | Explicit worker notifications consumed | Increases with command and completion activity |
 | `service_runs` | Combined command/RX service passes | Increases continuously while active |
 | `idle_polls` | Timed passes without an explicit notification | Can increase steadily without being a fault |

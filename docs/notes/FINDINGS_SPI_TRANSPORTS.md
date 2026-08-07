@@ -119,7 +119,7 @@ MhiAcCtrl:
   frame_size: 33
   rx_driver: rmt_spi_rx
   tx_driver: fast_gpio_tx
-  command_worker: true
+  command_worker: false
   rmt_spi_frame_gap_us: 1000
 ```
 
@@ -204,13 +204,30 @@ main source of loop-budget pressure. The near one-to-one relationship between TX
 frames and loop overruns indicated that RX was no longer the dominant timing
 risk.
 
+### Worker comparison
+
+A later ESP32-S3 hardware comparison confirmed that RX remains protocol-clean
+with or without `command_worker`, but the worker significantly increases
+contention on the separate FastGPIO TX path. The no-worker run processed more
+than twice as many RMT/SPI transactions while recording only 3 TX misses versus
+59 with the worker enabled, and it had no command failures, confirmation
+timeouts, retries, or retry exhaustion.
+
+Current guidance is therefore:
+
+```text
+rmt_spi_rx + fast_gpio_tx
+command_worker: false
+```
+
 ### Current role
 
 Retain `rmt_spi_rx` when an ESP32-S3 split transport is specifically required or
 when comparison against the long-soak DMA receive reference is useful.
 
-It is not the preferred full-duplex configuration because TX remains owned by a
-separate driver.
+It is a validated split alternative, but not the preferred full-duplex
+configuration because TX remains owned by a separate timing-sensitive software
+driver.
 
 ## `rmt_cs_spi`
 
@@ -236,6 +253,16 @@ MhiAcCtrl:
   command_worker: true
   rmt_spi_frame_gap_us: 1000
 ```
+
+### Command-worker coexistence
+
+Short hardware comparison on the original ESP32 found clean RX, TX, semantic
+command confirmation and loop behaviour both with and without `command_worker`.
+This differs from split transports because `rmt_cs_spi` owns the complete
+real-time transaction; worker activity does not have to race a separate
+FastGPIO TX implementation for the bus window.
+
+Worker mode is therefore supported for `rmt_cs_spi`.
 
 ### FIFO-only decision
 

@@ -26,9 +26,9 @@ No physical CS pin is required.
 | Platform | ESP32 |
 | Framework | ESP-IDF |
 | Variants | ESP32, ESP32-S3 |
-| Hardware validation | Original ESP32 and ESP32-S3 full-duplex paths |
+| Hardware validation | Original ESP32 and ESP32-S3 full-duplex paths, with worker and no-worker coverage |
 | Required IDF component | `esp_driver_rmt` |
-| Command-worker classified RX | Yes |
+| Command-worker classified RX | Yes; hardware-validated |
 | Internal FastGPIO recovery | Yes |
 
 ## Driver tunables
@@ -106,6 +106,10 @@ MhiAcCtrl:
   rx_driver: rmt_cs_spi
   tx_driver: none
 ```
+
+## Worker guidance
+
+Unlike split transports that still depend on `fast_gpio_tx`, `rmt_cs_spi` owns the complete real-time RX/TX transaction. Short hardware comparison testing on the original ESP32 found clean protocol, TX, command-confirmation, and loop behaviour both with and without `command_worker`. Worker mode is therefore supported for this backend.
 
 ## Strengths
 

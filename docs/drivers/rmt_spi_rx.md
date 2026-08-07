@@ -12,7 +12,7 @@ MhiAcCtrl:
   mosi_pin: 38
   miso_pin: 39
   rx_driver: rmt_spi_rx
-  command_worker: true
+  command_worker: false
 ```
 
 Effective TX is `fast_gpio_tx` unless `tx_driver: none` is selected for diagnostics.
@@ -24,9 +24,9 @@ Effective TX is `fast_gpio_tx` unless `tx_driver: none` is selected for diagnost
 | Platform | ESP32 |
 | Framework | ESP-IDF |
 | Variants | ESP32-S3 only |
-| Hardware validation | ESP32-S3 split hardware RX |
+| Hardware validation | ESP32-S3 split hardware RX; approximately 47.5-hour clean RX soak |
 | Required IDF component | `esp_driver_rmt` |
-| Command-worker classified RX | Yes |
+| Command-worker classified RX | Available, but no-worker is recommended |
 | Internal FastGPIO recovery | Yes |
 
 ## Driver tunables
@@ -70,7 +70,7 @@ RMT observes SCK and identifies the bus idle gap. The SPI slave peripheral captu
 
 This backend remains RX-only. MISO is driven by `fast_gpio_tx` through the split transport wrapper.
 
-With `command_worker: true`, queued RX frames can be synchronised, classified, and decoded in the worker.
+Queued RX frames can be synchronised, classified, and decoded in the command worker, but normal ESP32-S3 use should keep `command_worker: false`. Hardware comparison testing kept RX protocol integrity clean in both modes, while worker mode produced materially more FastGPIO TX misses, command failures, confirmation timeouts, retries, and one retry exhaustion.
 
 ## Strengths
 
@@ -83,6 +83,7 @@ With `command_worker: true`, queued RX frames can be synchronised, classified, a
 
 - ESP32-S3 only.
 - TX remains software-driven.
+- `command_worker: true` is not recommended because worker polling competes with timing-sensitive `fast_gpio_tx`.
 - Depends on an inferred internal transaction boundary because the MHI connector has no physical CS line.
 - Hardware timing and pin routing still require board-level validation.
 

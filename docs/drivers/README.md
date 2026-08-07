@@ -67,10 +67,10 @@ Older top-level tuning aliases remain accepted for compatibility, but new config
 
 | Selection | Effective TX | Supported ESP32 variants | Driver tunables | Position |
 |---|---|---|---|---|
-| [`fast_gpio_rx`](fast_gpio_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) where supported, otherwise `none` | All Wi-Fi ESP32 variants at compile time | `frame_start_idle_ms` | Conservative baseline and recovery implementation |
-| [`external_clock_rx`](external_clock_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) where supported, otherwise `none` | All Wi-Fi ESP32 variants at compile time | None | Interrupt-driven split RX |
-| [`rmt_spi_rx`](rmt_spi_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) | ESP32-S3 | `frame_gap_us` | Hardware-assisted split RX |
-| [`rmt_cs_spi`](rmt_cs_spi.md) | Integrated | ESP32, ESP32-S3 | `frame_gap_us` | FIFO-backed full-duplex hardware transport |
+| [`fast_gpio_rx`](fast_gpio_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) where supported, otherwise `none` | All Wi-Fi ESP32 variants at compile time | `frame_start_idle_ms` | Validated compatibility baseline and recovery implementation |
+| [`external_clock_rx`](external_clock_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) where supported, otherwise `none` | All Wi-Fi ESP32 variants at compile time | None | Experimental; intermittent RX corruption reproduced on ESP32 and ESP32-S3 |
+| [`rmt_spi_rx`](rmt_spi_rx.md) | [`fast_gpio_tx`](fast_gpio_tx.md) | ESP32-S3 | `frame_gap_us` | Validated hardware-assisted split RX; no worker recommended |
+| [`rmt_cs_spi`](rmt_cs_spi.md) | Integrated | ESP32, ESP32-S3 | `frame_gap_us` | Preferred validated FIFO-backed full-duplex transport |
 | [`none`](none.md) | Disabled | Split RX drivers only | None | RX-only diagnostics; not a normal control configuration |
 
 All current drivers require the ESP-IDF framework. Target support is validated during ESPHome configuration.
@@ -128,15 +128,14 @@ MhiAcCtrl:
   command_worker: true
 ```
 
-Queue-backed transports can move frame draining, classification, and decode into the command worker:
+Queue-backed transports can move frame draining, classification, and decode into the command worker, but hardware validation shows that this is not equally suitable for every backend.
 
-- `external_clock_rx`
-- `rmt_spi_rx`
-- `rmt_cs_spi`
+- `rmt_cs_spi`: worker mode is validated and supported.
+- `rmt_spi_rx`: keep the worker disabled for normal use because the split FastGPIO TX path becomes less reliable under worker polling.
+- `external_clock_rx`: keep the worker disabled during engineering use; the backend is experimental because RX corruption occurs independently of worker mode.
+- `fast_gpio_rx`: remains synchronous and main-loop driven even when the command worker is enabled.
 
-`fast_gpio_rx` remains synchronous and main-loop driven even when the command worker is enabled.
-
-Low-level worker and TX scheduling options are advanced shared settings. They are not driver-specific and should normally remain at their defaults.
+Low-level worker and TX scheduling options are advanced shared settings. They are not driver-specific and should normally remain at their validated defaults.
 
 ## Driver pages
 
