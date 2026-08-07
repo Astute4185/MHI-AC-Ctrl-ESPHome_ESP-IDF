@@ -1178,10 +1178,9 @@ void MhiAcCtrl::service_command_pipeline_() {
   // atomically replace it with one frame representing the latest desired state.
   // Once hardware owns the frame, replacement reports NOT_PENDING and the
   // existing completion/confirmation lifecycle remains authoritative.
-  const bool replacement_due =
-      has_pending_command && this->command_coordinator_.has_command_in_flight() &&
-      !this->command_coordinator_.has_pending_confirmation() &&
-      this->command_request_revision_ != this->staged_replacement_revision_;
+  const bool replacement_due = has_pending_command && this->command_coordinator_.has_command_in_flight() &&
+                               !this->command_coordinator_.has_pending_confirmation() &&
+                               this->command_request_revision_ != this->staged_replacement_revision_;
   if (replacement_due) {
     this->staged_replacement_revision_ = this->command_request_revision_;
     replacement_prepared =
@@ -1192,8 +1191,8 @@ void MhiAcCtrl::service_command_pipeline_() {
           this->transport_.replace_pending_command(staged_replacement.expected_generation, staged_replacement.envelope);
       switch (replacement_result) {
         case MhiTxReplaceResult::REPLACED:
-          replacement_committed = this->command_coordinator_.commit_staged_replacement(
-              staged_replacement, command, this->tx_runtime_, now);
+          replacement_committed =
+              this->command_coordinator_.commit_staged_replacement(staged_replacement, command, this->tx_runtime_, now);
           if (replacement_committed) {
             this->tx_staged_replacement_successes_++;
           } else {
@@ -1243,8 +1242,8 @@ void MhiAcCtrl::service_command_pipeline_() {
              static_cast<unsigned long>(staged_replacement.envelope.generation),
              static_cast<unsigned long>(staged_replacement.envelope.command_mask),
              static_cast<unsigned int>(staged_replacement.frame.len), staged_replacement.frame.data[DB0],
-             staged_replacement.frame.data[DB1], staged_replacement.frame.data[DB2],
-             staged_replacement.frame.data[DB6], staged_replacement.frame.data[DB9],
+             staged_replacement.frame.data[DB1], staged_replacement.frame.data[DB2], staged_replacement.frame.data[DB6],
+             staged_replacement.frame.data[DB9],
              staged_replacement.frame.len > DB16 ? staged_replacement.frame.data[DB16] : 0U,
              staged_replacement.frame.len > DB17 ? staged_replacement.frame.data[DB17] : 0U);
     return;
@@ -2001,8 +2000,9 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
 
   if (timeout.exhausted_mask != 0U) {
     this->diagnostics_.stats().on_command_retry_exhausted(timeout.exhausted_mask, now);
-    ESP_LOGW(DIAG_TAG, "command: confirmation exhausted "
-                       "after %u attempts plus %lums grace mask=0x%08lx superseded=0x%08lx",
+    ESP_LOGW(DIAG_TAG,
+             "command: confirmation exhausted "
+             "after %u attempts plus %lums grace mask=0x%08lx superseded=0x%08lx",
              static_cast<unsigned int>(timeout.attempt),
              static_cast<unsigned long>(this->command_final_confirmation_grace_ms_),
              static_cast<unsigned long>(timeout.exhausted_mask), static_cast<unsigned long>(timeout.superseded_mask));

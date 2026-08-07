@@ -61,8 +61,7 @@ void MhiCommandCoordinator::on_stage_result(const MhiTxEnvelope& envelope, const
   this->on_stage_result_(envelope, command_before_build, &runtime_before_build, command, staged, staged_at_ms);
 }
 
-void MhiCommandCoordinator::on_stage_result_(const MhiTxEnvelope& envelope,
-                                             const MhiCommandState& command_before_build,
+void MhiCommandCoordinator::on_stage_result_(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
                                              const MhiTxRuntime* runtime_before_build, MhiCommandState& command,
                                              bool staged, uint32_t staged_at_ms) {
   if (!envelope.is_command()) {
@@ -93,8 +92,7 @@ void MhiCommandCoordinator::on_stage_result_(const MhiTxEnvelope& envelope,
   staged_timeout_reported_ = false;
 }
 
-bool MhiCommandCoordinator::prepare_staged_replacement(const MhiCommandState& command,
-                                                       const MhiTxBuildConfig& config,
+bool MhiCommandCoordinator::prepare_staged_replacement(const MhiCommandState& command, const MhiTxBuildConfig& config,
                                                        MhiStagedCommandReplacement& replacement) const {
   replacement = {};
   if (!command_in_flight_ || confirmation_.has_pending() || !in_flight_runtime_snapshot_valid_ ||

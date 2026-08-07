@@ -43,7 +43,10 @@ class LogSeverityPolicyTests(unittest.TestCase):
         self.assertIn('ESP_LOGI(DIAG_TAG, "command: confirmed mask=', source)
         self.assertIn('ESP_LOGW(DIAG_TAG, "command: rejected while Active Mode is off', source)
         self.assertIn('ESP_LOGW(DIAG_TAG, "command: confirmation timeout', source)
-        self.assertIn('ESP_LOGW(DIAG_TAG, "command: confirmation exhausted', source)
+        self.assertRegex(
+            source,
+            r'ESP_LOGW\s*\(\s*DIAG_TAG\s*,\s*"command: confirmation exhausted',
+        )
 
     def test_normal_driver_startup_is_not_a_warning(self):
         rmt_cs_spi = self.read("mhi_rmt_cs_spi_transport.cpp")
