@@ -290,4 +290,64 @@ void tx_builder_clears_external_room_temperature_override() {
   EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_ROOM_TEMP_OVERRIDE));
 }
 
+void tx_builder_defers_opdata_when_encoding_semantic_command() {
+  MhiCommandState command{};
+  command.fan_set = true;
+  command.fan = 2U;
+
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_THI_R1 | MHI_OPDATA_REQ_THO_R1;
+
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_FAN));
+  EXPECT_EQ(out.data[DB1], 0x0AU);
+  EXPECT_EQ(out.data[DB6], 0x80U);
+  EXPECT_EQ(out.data[DB9], 0xFFU);
+  EXPECT_EQ(runtime.frame_counter, 1U);
+  EXPECT_EQ(runtime.opdata_index, 0U);
+  EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+
+  // The deferred request remains scheduled and is emitted on the next
+  // command-capable half-frame rather than being silently skipped.
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(result.encoded_command_mask, 0U);
+  EXPECT_EQ(out.data[DB9], 0xFFU);
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(result.encoded_command_mask, 0U);
+  EXPECT_EQ(out.data[DB6], 0xC0U);
+  EXPECT_EQ(out.data[DB9], 0x81U);
+  EXPECT_EQ(runtime.opdata_index, 1U);
+  EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+}
+
+void tx_builder_defers_opdata_when_encoding_extended_command() {
+  MhiCommandState command{};
+  command.horizontal_vane_set = true;
+  command.horizontal_vane = 1U;
+
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.frame_size = kMhiFrame33Bytes;
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_THO_R1 | MHI_OPDATA_REQ_TD;
+
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE));
+  EXPECT_EQ(out.data[DB6], 0x80U);
+  EXPECT_EQ(out.data[DB9], 0xFFU);
+  EXPECT_EQ(out.data[DB16], 0x10U);
+  EXPECT_EQ(out.data[DB17], 0x0AU);
+  EXPECT_EQ(runtime.frame_counter, 1U);
+  EXPECT_EQ(runtime.opdata_index, 0U);
+  EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+  EXPECT_TRUE(mhi_checksum_valid_33(out.data));
+}
+
 }  // namespace mhi_unit_tests

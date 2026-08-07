@@ -140,6 +140,7 @@ void MhiRmtCsSpiTransport::loop() {
   uint32_t dropped_frames = 0U;
   uint32_t overwritten_rx = 0U;
   uint32_t overwritten_tx = 0U;
+  uint32_t replaced_tx = 0U;
   std::size_t queued_frames = 0U;
   std::size_t max_buffered_frames = 0U;
   std::size_t completion_depth = 0U;
@@ -159,6 +160,7 @@ void MhiRmtCsSpiTransport::loop() {
   dropped_frames = dropped_frames_;
   overwritten_rx = completed_frames_.overwritten_frames();
   overwritten_tx = tx_mailbox_.overwritten_frames();
+  replaced_tx = tx_mailbox_.replaced_commands();
   queued_frames = completed_frames_.size();
   max_buffered_frames = completed_frames_.high_water_mark();
   completion_depth = tx_completions_.size();
@@ -168,7 +170,7 @@ void MhiRmtCsSpiTransport::loop() {
   ESP_LOGD(TAG,
            "runtime: boundaries=%lu completed=%lu tx_completed=%lu tx_failures=%lu frame20=%lu frame33=%lu "
            "invalid_len=%lu result_errors=%lu queue_errors=%lu rmt_rearm_errors=%lu buffered_frames=%u "
-           "max_buffered=%u rx_overwritten=%lu tx_overwritten=%lu dropped=%lu completion=%u/%u/%lu "
+           "max_buffered=%u rx_overwritten=%lu tx_overwritten=%lu tx_replaced=%lu dropped=%lu completion=%u/%u/%lu "
            "task_running=%s",
            static_cast<unsigned long>(boundaries), static_cast<unsigned long>(completed_transactions),
            static_cast<unsigned long>(completed_tx_frames), static_cast<unsigned long>(tx_failures),
@@ -177,9 +179,9 @@ void MhiRmtCsSpiTransport::loop() {
            static_cast<unsigned long>(transaction_result_errors), static_cast<unsigned long>(transaction_queue_errors),
            static_cast<unsigned long>(rearm_errors), static_cast<unsigned int>(queued_frames),
            static_cast<unsigned int>(max_buffered_frames), static_cast<unsigned long>(overwritten_rx),
-           static_cast<unsigned long>(overwritten_tx), static_cast<unsigned long>(dropped_frames),
-           static_cast<unsigned int>(completion_depth), static_cast<unsigned int>(completion_high_water),
-           static_cast<unsigned long>(completion_dropped),
+           static_cast<unsigned long>(overwritten_tx), static_cast<unsigned long>(replaced_tx),
+           static_cast<unsigned long>(dropped_frames), static_cast<unsigned int>(completion_depth),
+           static_cast<unsigned int>(completion_high_water), static_cast<unsigned long>(completion_dropped),
            task_running_.load(std::memory_order_acquire) ? "YES" : "NO");
 #endif
 }
@@ -239,6 +241,26 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
   return staged;
 #endif
 }
+
+MhiTxReplaceResult MhiRmtCsSpiTransport::replace_pending_command(uint32_t expected_generation,
+                                                                 const MhiTxEnvelope& replacement) {
+#if !MHI_RMT_CS_SPI_SUPPORTED
+  (void)expected_generation;
+  (void)replacement;
+  return MhiTxReplaceResult::UNSUPPORTED;
+#else
+  if (!this->active_mode() || !ready_.load(std::memory_order_acquire) || !replacement.valid() ||
+      !replacement.is_command() || replacement.len != config_.frame_size_hint) {
+    return MhiTxReplaceResult::REJECTED;
+  }
+
+  portENTER_CRITICAL(&mux_);
+  const bool replaced = tx_mailbox_.replace_command(expected_generation, replacement);
+  portEXIT_CRITICAL(&mux_);
+  return replaced ? MhiTxReplaceResult::REPLACED : MhiTxReplaceResult::NOT_PENDING;
+#endif
+}
+
 void MhiRmtCsSpiTransport::set_active_mode(bool enabled) {
   active_mode_enabled_.store(enabled, std::memory_order_release);
 #if MHI_RMT_CS_SPI_SUPPORTED

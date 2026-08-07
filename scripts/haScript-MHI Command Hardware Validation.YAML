@@ -1,0 +1,582 @@
+alias: MHI Command Hardware Validation
+description: >-
+  Runs one conservative command cycle for ESP32 hardware validation. Commands
+  are confirmed through Home Assistant and separated by a configurable delay.
+  No diagnostic log markers are generated.
+mode: single
+max_exceeded: warning
+
+fields:
+  climate_entity:
+    name: Climate entity
+    required: true
+    selector:
+      entity:
+        filter:
+          domain: climate
+
+  vertical_entity:
+    name: Vertical vane select
+    description: Optional. Leave unset when the unit does not expose this entity.
+    required: false
+    selector:
+      entity:
+        filter:
+          domain: select
+
+  horizontal_entity:
+    name: Horizontal vane select
+    description: Optional. Leave unset when the unit does not expose this entity.
+    required: false
+    selector:
+      entity:
+        filter:
+          domain: select
+
+  three_d_entity:
+    name: 3D Auto switch
+    description: Optional. Leave unset when the unit does not expose this entity.
+    required: false
+    selector:
+      entity:
+        filter:
+          domain: switch
+
+  cycles:
+    name: Cycles
+    description: One cycle provides a complete command-validation pass.
+    required: true
+    default: 1
+    selector:
+      number:
+        min: 1
+        max: 48
+        step: 1
+        mode: box
+
+  command_gap_seconds:
+    name: Delay after each command
+    description: Thirty seconds prevents the test from rapidly changing controls.
+    required: true
+    default: 30
+    selector:
+      number:
+        min: 5
+        max: 300
+        step: 5
+        mode: box
+        unit_of_measurement: s
+
+  cycle_pause_minutes:
+    name: Idle pause after each cycle
+    required: true
+    default: 0
+    selector:
+      number:
+        min: 0
+        max: 60
+        step: 1
+        mode: box
+        unit_of_measurement: min
+
+  confirmation_timeout_seconds:
+    name: Command confirmation timeout
+    required: true
+    default: 8
+    selector:
+      number:
+        min: 2
+        max: 60
+        step: 1
+        mode: box
+        unit_of_measurement: s
+
+  heat_temperature:
+    name: Heat target
+    required: true
+    default: 20
+    selector:
+      number:
+        min: 16
+        max: 31
+        step: 1
+        mode: box
+        unit_of_measurement: "°C"
+
+  cool_temperature:
+    name: Cool target
+    required: true
+    default: 24
+    selector:
+      number:
+        min: 16
+        max: 31
+        step: 1
+        mode: box
+        unit_of_measurement: "°C"
+
+  heat_cool_temperature:
+    name: Heat/Cool target
+    required: true
+    default: 22
+    selector:
+      number:
+        min: 16
+        max: 31
+        step: 1
+        mode: box
+        unit_of_measurement: "°C"
+
+  fan_modes:
+    name: Fan modes
+    description: Unsupported modes are automatically skipped.
+    required: true
+    default:
+      - auto
+      - quiet
+      - low
+      - medium
+      - high
+    selector:
+      select:
+        multiple: true
+        options:
+          - auto
+          - quiet
+          - low
+          - medium
+          - high
+
+  vertical_options:
+    name: Vertical vane positions
+    description: One supported position is selected per cycle, rotating through the list.
+    required: true
+    default:
+      - Up
+      - Up/Center
+      - Center/Down
+      - Down
+      - Swing
+    selector:
+      select:
+        multiple: true
+        custom_value: true
+        options:
+          - Up
+          - Up/Center
+          - Center/Down
+          - Down
+          - Swing
+
+  horizontal_options:
+    name: Horizontal vane positions
+    description: One supported position is selected per cycle, rotating through the list.
+    required: true
+    default:
+      - Left
+      - Left/Center
+      - Center
+      - Center/Right
+      - Right
+      - Wide
+      - Spot
+      - Swing
+    selector:
+      select:
+        multiple: true
+        custom_value: true
+        options:
+          - Left
+          - Left/Center
+          - Center
+          - Center/Right
+          - Right
+          - Wide
+          - Spot
+          - Swing
+
+  test_fan_modes:
+    name: Test fan modes
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_vertical_vanes:
+    name: Test vertical vane positions
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_horizontal_vanes:
+    name: Test horizontal vane positions
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  test_3d_auto:
+    name: Test 3D Auto
+    required: true
+    default: true
+    selector:
+      boolean:
+
+  stop_on_failure:
+    name: Stop when a command is not confirmed
+    required: true
+    default: true
+    selector:
+      boolean:
+
+sequence:
+  - variables:
+      climate_target: "{{ climate_entity | default('', true) | string }}"
+      vertical_target: "{{ vertical_entity | default('', true) | string }}"
+      horizontal_target: "{{ horizontal_entity | default('', true) | string }}"
+      three_d_target: "{{ three_d_entity | default('', true) | string }}"
+      total_cycles: "{{ cycles | default(1, true) | int }}"
+      gap_seconds: "{{ command_gap_seconds | default(30, true) | float }}"
+      pause_minutes: "{{ cycle_pause_minutes | default(0, true) | float }}"
+      timeout_seconds: "{{ confirmation_timeout_seconds | default(8, true) | int }}"
+      stop_for_failure: "{{ stop_on_failure | default(true, true) | bool }}"
+      heat_target: "{{ heat_temperature | default(20, true) | float }}"
+      cool_target: "{{ cool_temperature | default(24, true) | float }}"
+      heat_cool_target: "{{ heat_cool_temperature | default(22, true) | float }}"
+      requested_fan_modes: >-
+        {{ fan_modes |
+           default(['auto', 'quiet', 'low', 'medium', 'high'], true) |
+           list }}
+      requested_vertical_options: >-
+        {{ vertical_options |
+           default(['Up', 'Up/Center', 'Center/Down', 'Down', 'Swing'], true) |
+           list }}
+      requested_horizontal_options: >-
+        {{ horizontal_options |
+           default(
+             ['Left', 'Left/Center', 'Center', 'Center/Right',
+              'Right', 'Wide', 'Spot', 'Swing'],
+             true
+           ) |
+           list }}
+
+  - if:
+      - condition: template
+        value_template: >-
+          {{ climate_target | length == 0 or
+             states(climate_target) in ['unknown', 'unavailable'] }}
+    then:
+      - stop: Select an available MHI climate entity when running this script.
+        error: true
+
+  - variables:
+      supported_hvac_modes: "{{ state_attr(climate_target, 'hvac_modes') or [] }}"
+      available_fan_modes: "{{ state_attr(climate_target, 'fan_modes') or [] }}"
+      supported_fan_modes: >-
+        {{ requested_fan_modes | select('in', available_fan_modes) | list }}
+      vertical_available: >-
+        {{ vertical_target | length > 0 and
+           states(vertical_target) not in ['unknown', 'unavailable'] }}
+      horizontal_available: >-
+        {{ horizontal_target | length > 0 and
+           states(horizontal_target) not in ['unknown', 'unavailable'] }}
+      three_d_available: >-
+        {{ three_d_target | length > 0 and
+           states(three_d_target) not in ['unknown', 'unavailable'] }}
+      available_vertical_options: >-
+        {{ (state_attr(vertical_target, 'options') or [])
+           if vertical_target | length > 0 else [] }}
+      available_horizontal_options: >-
+        {{ (state_attr(horizontal_target, 'options') or [])
+           if horizontal_target | length > 0 else [] }}
+      supported_vertical_options: >-
+        {{ requested_vertical_options |
+           select('in', available_vertical_options) |
+           list }}
+      supported_horizontal_options: >-
+        {{ requested_horizontal_options |
+           select('in', available_horizontal_options) |
+           list }}
+
+  - repeat:
+      count: "{{ total_cycles }}"
+      sequence:
+        - variables:
+            cycle_number: "{{ repeat.index }}"
+
+        - repeat:
+            for_each:
+              - heat
+              - cool
+              - dry
+              - heat_cool
+              - fan_only
+            sequence:
+              - variables:
+                  requested_mode: "{{ repeat.item }}"
+                  requested_temperature: >-
+                    {% if repeat.item == 'heat' %}
+                      {{ heat_target }}
+                    {% elif repeat.item == 'cool' %}
+                      {{ cool_target }}
+                    {% elif repeat.item == 'heat_cool' %}
+                      {{ heat_cool_target }}
+                    {% else %}
+                      none
+                    {% endif %}
+
+              - if:
+                  - condition: template
+                    value_template: "{{ requested_mode in supported_hvac_modes }}"
+                then:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ climate_target }}"
+                    data:
+                      hvac_mode: "{{ requested_mode }}"
+
+                  - wait_template: "{{ is_state(climate_target, requested_mode) }}"
+                    timeout:
+                      seconds: "{{ timeout_seconds }}"
+                    continue_on_timeout: true
+
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ not wait.completed and stop_for_failure }}
+                    then:
+                      - stop: >-
+                          Cycle {{ cycle_number }} failed to confirm climate
+                          mode {{ requested_mode }};
+                          actual={{ states(climate_target) }}.
+                        error: true
+
+                  - delay:
+                      seconds: "{{ gap_seconds }}"
+
+                  - if:
+                      - condition: template
+                        value_template: "{{ requested_temperature != 'none' }}"
+                    then:
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: "{{ climate_target }}"
+                        data:
+                          temperature: "{{ requested_temperature | float }}"
+
+                      - wait_template: >-
+                          {{ state_attr(climate_target, 'temperature') is not none and
+                             ((state_attr(climate_target, 'temperature') | float) -
+                              (requested_temperature | float)) | abs < 0.2 }}
+                        timeout:
+                          seconds: "{{ timeout_seconds }}"
+                        continue_on_timeout: true
+
+                      - if:
+                          - condition: template
+                            value_template: >-
+                              {{ not wait.completed and stop_for_failure }}
+                        then:
+                          - stop: >-
+                              Cycle {{ cycle_number }} failed to confirm
+                              temperature {{ requested_temperature }} °C in
+                              {{ requested_mode }} mode.
+                            error: true
+
+                      - delay:
+                          seconds: "{{ gap_seconds }}"
+
+        - if:
+            - condition: template
+              value_template: >-
+                {{ test_fan_modes | default(true, true) | bool and
+                   supported_fan_modes | count > 0 }}
+          then:
+            - repeat:
+                for_each: "{{ supported_fan_modes }}"
+                sequence:
+                  - variables:
+                      requested_fan_mode: "{{ repeat.item }}"
+
+                  - action: climate.set_fan_mode
+                    target:
+                      entity_id: "{{ climate_target }}"
+                    data:
+                      fan_mode: "{{ requested_fan_mode }}"
+
+                  - wait_template: >-
+                      {{ state_attr(climate_target, 'fan_mode') ==
+                         requested_fan_mode }}
+                    timeout:
+                      seconds: "{{ timeout_seconds }}"
+                    continue_on_timeout: true
+
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ not wait.completed and stop_for_failure }}
+                    then:
+                      - stop: >-
+                          Cycle {{ cycle_number }} failed to confirm fan mode
+                          {{ requested_fan_mode }}.
+                        error: true
+
+                  - delay:
+                      seconds: "{{ gap_seconds }}"
+
+        - if:
+            - condition: template
+              value_template: >-
+                {{ test_vertical_vanes | default(true, true) | bool and
+                   vertical_available | bool and
+                   supported_vertical_options | count > 0 }}
+          then:
+            - variables:
+                requested_vertical: >-
+                  {{ supported_vertical_options[
+                       (cycle_number - 1) %
+                       (supported_vertical_options | count)
+                     ] }}
+
+            - action: select.select_option
+              target:
+                entity_id: "{{ vertical_target }}"
+              data:
+                option: "{{ requested_vertical }}"
+
+            - wait_template: >-
+                {{ is_state(vertical_target, requested_vertical) }}
+              timeout:
+                seconds: "{{ timeout_seconds }}"
+              continue_on_timeout: true
+
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not wait.completed and stop_for_failure }}
+              then:
+                - stop: >-
+                    Cycle {{ cycle_number }} failed to confirm vertical vane
+                    {{ requested_vertical }}.
+                  error: true
+
+            - delay:
+                seconds: "{{ gap_seconds }}"
+
+        - if:
+            - condition: template
+              value_template: >-
+                {{ test_horizontal_vanes | default(true, true) | bool and
+                   horizontal_available | bool and
+                   supported_horizontal_options | count > 0 }}
+          then:
+            - variables:
+                requested_horizontal: >-
+                  {{ supported_horizontal_options[
+                       (cycle_number - 1) %
+                       (supported_horizontal_options | count)
+                     ] }}
+
+            - action: select.select_option
+              target:
+                entity_id: "{{ horizontal_target }}"
+              data:
+                option: "{{ requested_horizontal }}"
+
+            - wait_template: >-
+                {{ is_state(horizontal_target, requested_horizontal) }}
+              timeout:
+                seconds: "{{ timeout_seconds }}"
+              continue_on_timeout: true
+
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not wait.completed and stop_for_failure }}
+              then:
+                - stop: >-
+                    Cycle {{ cycle_number }} failed to confirm horizontal vane
+                    {{ requested_horizontal }}.
+                  error: true
+
+            - delay:
+                seconds: "{{ gap_seconds }}"
+
+        - if:
+            - condition: template
+              value_template: >-
+                {{ test_3d_auto | default(true, true) | bool and
+                   three_d_available | bool }}
+          then:
+            - action: switch.turn_on
+              target:
+                entity_id: "{{ three_d_target }}"
+
+            - wait_template: "{{ is_state(three_d_target, 'on') }}"
+              timeout:
+                seconds: "{{ timeout_seconds }}"
+              continue_on_timeout: true
+
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not wait.completed and stop_for_failure }}
+              then:
+                - stop: >-
+                    Cycle {{ cycle_number }} failed to confirm 3D Auto on.
+                  error: true
+
+            - delay:
+                seconds: "{{ gap_seconds }}"
+
+            - action: switch.turn_off
+              target:
+                entity_id: "{{ three_d_target }}"
+
+            - wait_template: "{{ is_state(three_d_target, 'off') }}"
+              timeout:
+                seconds: "{{ timeout_seconds }}"
+              continue_on_timeout: true
+
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not wait.completed and stop_for_failure }}
+              then:
+                - stop: >-
+                    Cycle {{ cycle_number }} failed to confirm 3D Auto off.
+                  error: true
+
+            - delay:
+                seconds: "{{ gap_seconds }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ 'off' in supported_hvac_modes }}"
+          then:
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: "{{ climate_target }}"
+              data:
+                hvac_mode: "off"
+
+            - wait_template: "{{ is_state(climate_target, 'off') }}"
+              timeout:
+                seconds: "{{ timeout_seconds }}"
+              continue_on_timeout: true
+
+            - if:
+                - condition: template
+                  value_template: >-
+                    {{ not wait.completed and stop_for_failure }}
+              then:
+                - stop: >-
+                    Cycle {{ cycle_number }} failed to confirm power off.
+                  error: true
+
+            - delay:
+                seconds: "{{ gap_seconds }}"
+
+        - delay:
+            minutes: "{{ pause_minutes }}"

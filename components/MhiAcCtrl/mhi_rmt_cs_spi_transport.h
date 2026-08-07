@@ -65,6 +65,7 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   void shutdown() override;
   std::size_t read(uint8_t* dst, std::size_t max_len) override;
   bool send(const MhiTxEnvelope& envelope) override;
+  MhiTxReplaceResult replace_pending_command(uint32_t expected_generation, const MhiTxEnvelope& replacement) override;
   bool take_tx_completion(MhiTxCompletion& completion) override;
   void set_active_mode(bool enabled) override;
   bool active_mode() const override {

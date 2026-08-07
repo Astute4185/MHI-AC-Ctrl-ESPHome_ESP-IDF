@@ -232,6 +232,12 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   }
 
   const uint32_t accepted_mask = merge_command_patch(command, patch, allowed_mask);
+  if (accepted_mask != 0U) {
+    this->command_request_revision_++;
+    if (this->command_request_revision_ == 0U) {
+      this->command_request_revision_ = 1U;
+    }
+  }
 
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
@@ -344,6 +350,13 @@ void MhiAcCtrl::setup() {
   this->tx_background_attempts_ = 0U;
   this->tx_background_failures_ = 0U;
   this->tx_command_priority_attempts_ = 0U;
+  this->tx_staged_replacement_attempts_ = 0U;
+  this->tx_staged_replacement_successes_ = 0U;
+  this->tx_staged_replacement_claimed_misses_ = 0U;
+  this->tx_staged_replacement_unsupported_ = 0U;
+  this->tx_staged_replacement_rejected_ = 0U;
+  this->command_request_revision_ = 0U;
+  this->staged_replacement_revision_ = 0U;
   this->room_temp_api_active_ = false;
   this->room_temp_api_timeout_start_ms_ = 0U;
   this->last_external_room_temperature_c_ = NAN;
@@ -639,6 +652,10 @@ void MhiAcCtrl::dump_config() {
                 this->worker_handles_rx_() ? "classified worker decode; main-loop apply/publish"
                                            : "main-loop capture/sync/decode/apply");
   ESP_LOGCONFIG(TAG, "  TX background interval: %lums", static_cast<unsigned long>(this->tx_background_interval_ms_));
+  ESP_LOGCONFIG(TAG, "  Command confirmation timeout: %lums",
+                static_cast<unsigned long>(this->command_confirmation_timeout_ms_));
+  ESP_LOGCONFIG(TAG, "  Command final confirmation grace: %lums",
+                static_cast<unsigned long>(this->command_final_confirmation_grace_ms_));
   ESP_LOGCONFIG(TAG, "  TX priority: commands bypass interval, background waits for no pending confirmation");
   ESP_LOGCONFIG(TAG, "  TX ownership: transport-owned real-time transmission, auto_flush=%s",
                 this->transport_.auto_tx_flush() ? "YES" : "NO");
@@ -893,12 +910,18 @@ void MhiAcCtrl::log_runtime_diagnostics_() {
 
   ESP_LOGD(DIAG_TAG,
            "runtime: tx_priority command_attempts=%lu background_attempts=%lu background_failures=%lu "
-           "interval_deferrals=%lu confirmation_deferrals=%lu",
+           "interval_deferrals=%lu confirmation_deferrals=%lu staged_replace=%lu/%lu claimed_miss=%lu "
+           "unsupported=%lu rejected=%lu",
            static_cast<unsigned long>(this->tx_command_priority_attempts_),
            static_cast<unsigned long>(this->tx_background_attempts_),
            static_cast<unsigned long>(this->tx_background_failures_),
            static_cast<unsigned long>(this->tx_background_interval_deferrals_),
-           static_cast<unsigned long>(this->tx_background_confirmation_deferrals_));
+           static_cast<unsigned long>(this->tx_background_confirmation_deferrals_),
+           static_cast<unsigned long>(this->tx_staged_replacement_successes_),
+           static_cast<unsigned long>(this->tx_staged_replacement_attempts_),
+           static_cast<unsigned long>(this->tx_staged_replacement_claimed_misses_),
+           static_cast<unsigned long>(this->tx_staged_replacement_unsupported_),
+           static_cast<unsigned long>(this->tx_staged_replacement_rejected_));
 
   ESP_LOGD(DIAG_TAG,
            "runtime: command_worker enabled=%s running=%s classified_rx=%s wakes=%lu service_runs=%lu idle_polls=%lu "
@@ -1132,6 +1155,12 @@ void MhiAcCtrl::service_command_pipeline_() {
   MhiTxBuildResult build_result{};
   MhiTxEnvelope envelope{};
   MhiCommandState command_before_build{};
+  MhiTxRuntime runtime_before_build{};
+  MhiStagedCommandReplacement staged_replacement{};
+  MhiTxReplaceResult replacement_result = MhiTxReplaceResult::UNSUPPORTED;
+  bool replacement_prepared = false;
+  bool replacement_committed = false;
+  bool replacement_commit_failed = false;
   bool should_build = false;
 
   const uint32_t now = millis();
@@ -1144,15 +1173,85 @@ void MhiAcCtrl::service_command_pipeline_() {
   auto& command = this->state_.command();
   const bool has_pending_command = command.has_pending_command();
 
-  if (!this->command_coordinator_.has_command_in_flight() && !this->command_coordinator_.has_pending_confirmation() &&
+  // A command accepted by queue_tx() may still be waiting in the duplex
+  // transport's software mailbox. Before the backend claims that generation,
+  // atomically replace it with one frame representing the latest desired state.
+  // Once hardware owns the frame, replacement reports NOT_PENDING and the
+  // existing completion/confirmation lifecycle remains authoritative.
+  const bool replacement_due = has_pending_command && this->command_coordinator_.has_command_in_flight() &&
+                               !this->command_coordinator_.has_pending_confirmation() &&
+                               this->command_request_revision_ != this->staged_replacement_revision_;
+  if (replacement_due) {
+    this->staged_replacement_revision_ = this->command_request_revision_;
+    replacement_prepared =
+        this->command_coordinator_.prepare_staged_replacement(command, this->tx_config_, staged_replacement);
+    if (replacement_prepared) {
+      this->tx_staged_replacement_attempts_++;
+      replacement_result =
+          this->transport_.replace_pending_command(staged_replacement.expected_generation, staged_replacement.envelope);
+      switch (replacement_result) {
+        case MhiTxReplaceResult::REPLACED:
+          replacement_committed =
+              this->command_coordinator_.commit_staged_replacement(staged_replacement, command, this->tx_runtime_, now);
+          if (replacement_committed) {
+            this->tx_staged_replacement_successes_++;
+          } else {
+            this->tx_staged_replacement_rejected_++;
+            replacement_commit_failed = true;
+          }
+          break;
+        case MhiTxReplaceResult::NOT_PENDING:
+          this->tx_staged_replacement_claimed_misses_++;
+          break;
+        case MhiTxReplaceResult::UNSUPPORTED:
+          this->tx_staged_replacement_unsupported_++;
+          break;
+        case MhiTxReplaceResult::REJECTED:
+          this->tx_staged_replacement_rejected_++;
+          break;
+      }
+    }
+  }
+
+  if (!replacement_committed && !this->command_coordinator_.has_command_in_flight() &&
+      !this->command_coordinator_.has_pending_confirmation() &&
       (has_pending_command || this->background_tx_allowed_(now))) {
     command_before_build = command;
+    runtime_before_build = this->tx_runtime_;
     should_build = this->command_coordinator_.prepare_next(command, this->tx_runtime_, this->tx_config_, tx_frame,
                                                            build_result, envelope);
   }
 
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
+  }
+
+  if (replacement_commit_failed) {
+    ESP_LOGE(DIAG_TAG,
+             "command: transport replaced staged generation=%lu but coordinator commit failed for generation=%lu",
+             static_cast<unsigned long>(staged_replacement.expected_generation),
+             static_cast<unsigned long>(staged_replacement.envelope.generation));
+    return;
+  }
+
+  if (replacement_committed) {
+    ESP_LOGI(DIAG_TAG,
+             "command: replaced staged generation=%lu->%lu mask=0x%08lx len=%u db0=0x%02x db1=0x%02x "
+             "db2=0x%02x db6=0x%02x db9=0x%02x db16=0x%02x db17=0x%02x",
+             static_cast<unsigned long>(staged_replacement.expected_generation),
+             static_cast<unsigned long>(staged_replacement.envelope.generation),
+             static_cast<unsigned long>(staged_replacement.envelope.command_mask),
+             static_cast<unsigned int>(staged_replacement.frame.len), staged_replacement.frame.data[DB0],
+             staged_replacement.frame.data[DB1], staged_replacement.frame.data[DB2], staged_replacement.frame.data[DB6],
+             staged_replacement.frame.data[DB9],
+             staged_replacement.frame.len > DB16 ? staged_replacement.frame.data[DB16] : 0U,
+             staged_replacement.frame.len > DB17 ? staged_replacement.frame.data[DB17] : 0U);
+    return;
+  }
+
+  if (replacement_prepared && replacement_result == MhiTxReplaceResult::NOT_PENDING) {
+    ESP_LOGD(DIAG_TAG, "command: staged replacement missed generation=%lu; transport already claimed frame",
+             static_cast<unsigned long>(staged_replacement.expected_generation));
   }
 
   if (!should_build || !envelope.valid()) {
@@ -1173,7 +1272,8 @@ void MhiAcCtrl::service_command_pipeline_() {
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
-  this->command_coordinator_.on_stage_result(envelope, command_before_build, this->state_.command(), queued, now);
+  this->command_coordinator_.on_stage_result(envelope, command_before_build, runtime_before_build,
+                                             this->state_.command(), queued, now);
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
@@ -1870,11 +1970,23 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
              static_cast<unsigned long>(kStagedCommandWarningMs), static_cast<unsigned long>(staged_timeout_mask));
   }
 
-  if (!timeout.timed_out()) {
+  if (!timeout.actionable()) {
     return;
   }
 
-  this->diagnostics_.stats().on_command_confirmation_timeout(timeout.timed_out_mask, now);
+  if (timeout.timed_out_mask != 0U) {
+    this->diagnostics_.stats().on_command_confirmation_timeout(timeout.timed_out_mask, now);
+  }
+
+  if (timeout.grace_mask != 0U) {
+    ESP_LOGW(DIAG_TAG,
+             "command: confirmation timeout attempt=%u mask=0x%08lx; passive final grace=%lums superseded=0x%08lx",
+             static_cast<unsigned int>(timeout.attempt), static_cast<unsigned long>(timeout.grace_mask),
+             static_cast<unsigned long>(this->command_final_confirmation_grace_ms_),
+             static_cast<unsigned long>(timeout.superseded_mask));
+    return;
+  }
+
   this->rx_runtime_.clear_command_candidate();
 
   if (timeout.retry_mask != 0U) {
@@ -1888,10 +2000,13 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
 
   if (timeout.exhausted_mask != 0U) {
     this->diagnostics_.stats().on_command_retry_exhausted(timeout.exhausted_mask, now);
-    ESP_LOGW(DIAG_TAG, "command: confirmation exhausted after %u attempts mask=0x%08lx superseded=0x%08lx",
-             static_cast<unsigned int>(timeout.attempt), static_cast<unsigned long>(timeout.exhausted_mask),
-             static_cast<unsigned long>(timeout.superseded_mask));
-  } else {
+    ESP_LOGW(DIAG_TAG,
+             "command: confirmation exhausted "
+             "after %u attempts plus %lums grace mask=0x%08lx superseded=0x%08lx",
+             static_cast<unsigned int>(timeout.attempt),
+             static_cast<unsigned long>(this->command_final_confirmation_grace_ms_),
+             static_cast<unsigned long>(timeout.exhausted_mask), static_cast<unsigned long>(timeout.superseded_mask));
+  } else if (timeout.timed_out_mask != 0U) {
     ESP_LOGD(DIAG_TAG, "command: timed-out generation fully superseded mask=0x%08lx",
              static_cast<unsigned long>(timeout.superseded_mask));
   }

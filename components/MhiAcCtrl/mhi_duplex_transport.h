@@ -24,6 +24,15 @@ class IMhiDuplexTransport {
   // stage may replace an older frame that has not yet been handed to hardware.
   virtual bool send(const MhiTxEnvelope& envelope) = 0;
 
+  // Atomically replace a command that is still waiting in the backend's
+  // software mailbox. Backends must return NOT_PENDING after hardware has
+  // claimed the expected generation; transaction-owned buffers are immutable.
+  virtual MhiTxReplaceResult replace_pending_command(uint32_t expected_generation, const MhiTxEnvelope& replacement) {
+    (void)expected_generation;
+    (void)replacement;
+    return MhiTxReplaceResult::UNSUPPORTED;
+  }
+
   // Returns one completed TX attempt. The completion is emitted only after
   // the bus transaction has actually finished.
   virtual bool take_tx_completion(MhiTxCompletion& completion) = 0;

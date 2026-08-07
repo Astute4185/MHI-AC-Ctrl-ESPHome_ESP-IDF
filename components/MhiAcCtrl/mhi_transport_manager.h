@@ -37,6 +37,7 @@ class MhiTransportManager : public IMhiRxSource {
   std::size_t read_rx(uint8_t* dst, std::size_t max_len) override;
   bool queue_tx(const MhiTxEnvelope& envelope);
   bool take_tx_completion(MhiTxCompletion& completion);
+  MhiTxReplaceResult replace_pending_command(uint32_t expected_generation, const MhiTxEnvelope& replacement);
   void set_active_mode(bool enabled);
   bool active_mode() const {
     return active_mode_enabled_;
