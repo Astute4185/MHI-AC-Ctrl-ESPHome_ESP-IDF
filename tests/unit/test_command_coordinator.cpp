@@ -685,4 +685,156 @@ void command_coordinator_reports_staged_timeout_once() {
   EXPECT_EQ(coordinator.staged_timeout_mask(5000U, 2000U), 0U);
 }
 
+void command_coordinator_replaces_unclaimed_command_with_latest_combined_state() {
+  MhiCommandCoordinator coordinator{};
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer frame{};
+  MhiTxBuildResult result{};
+  MhiTxEnvelope first{};
+
+  command.mode_set = true;
+  command.mode = 2U;
+  const MhiCommandState first_before = command;
+  const MhiTxRuntime runtime_before = runtime;
+  EXPECT_TRUE(coordinator.prepare_next(command, runtime, config, frame, result, first));
+  EXPECT_TRUE(first.is_command());
+  coordinator.on_stage_result(first, first_before, runtime_before, command, true, 100U);
+
+  command.target_temp_set = true;
+  command.target_temp_c = 24.0F;
+
+  MhiStagedCommandReplacement replacement{};
+  EXPECT_TRUE(coordinator.prepare_staged_replacement(command, config, replacement));
+  EXPECT_EQ(replacement.expected_generation, first.generation);
+  EXPECT_TRUE(replacement.envelope.generation != first.generation);
+  EXPECT_EQ(replacement.envelope.command_mask,
+            static_cast<uint32_t>(MHI_COMMAND_MODE | MHI_COMMAND_TARGET_TEMP));
+  EXPECT_EQ(replacement.envelope.intent.mode, 2U);
+  expect_near(replacement.envelope.intent.target_temp_c, 24.0F);
+
+  // Preparation is speculative until the transport confirms that the old
+  // mailbox generation was replaced.
+  EXPECT_TRUE(command.target_temp_set);
+  EXPECT_EQ(coordinator.in_flight_generation(), first.generation);
+
+  EXPECT_TRUE(coordinator.commit_staged_replacement(replacement, command, runtime, 150U));
+  EXPECT_FALSE(command.mode_set);
+  EXPECT_FALSE(command.target_temp_set);
+  EXPECT_EQ(coordinator.in_flight_generation(), replacement.envelope.generation);
+
+  EXPECT_FALSE(coordinator.on_tx_completion(completion_for(first, true, 175U), command));
+  EXPECT_TRUE(coordinator.on_tx_completion(completion_for(replacement.envelope, true, 200U), command));
+  EXPECT_EQ(coordinator.pending_mask(),
+            static_cast<uint32_t>(MHI_COMMAND_MODE | MHI_COMMAND_TARGET_TEMP));
+}
+
+void command_coordinator_replacement_supersedes_same_field_before_transmit() {
+  MhiCommandCoordinator coordinator{};
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer frame{};
+  MhiTxBuildResult result{};
+  MhiTxEnvelope first{};
+
+  command.fan_set = true;
+  command.fan = 1U;
+  const MhiCommandState first_before = command;
+  const MhiTxRuntime runtime_before = runtime;
+  EXPECT_TRUE(coordinator.prepare_next(command, runtime, config, frame, result, first));
+  coordinator.on_stage_result(first, first_before, runtime_before, command, true, 100U);
+
+  command.fan_set = true;
+  command.fan = 6U;
+
+  MhiStagedCommandReplacement replacement{};
+  EXPECT_TRUE(coordinator.prepare_staged_replacement(command, config, replacement));
+  EXPECT_EQ(replacement.envelope.command_mask, static_cast<uint32_t>(MHI_COMMAND_FAN));
+  EXPECT_EQ(replacement.envelope.intent.fan, 6U);
+  EXPECT_TRUE(coordinator.commit_staged_replacement(replacement, command, runtime, 120U));
+  EXPECT_FALSE(command.fan_set);
+
+  EXPECT_TRUE(coordinator.on_tx_completion(completion_for(replacement.envelope, true, 200U), command));
+  EXPECT_EQ(coordinator.pending_mask(), static_cast<uint32_t>(MHI_COMMAND_FAN));
+  EXPECT_EQ(coordinator.pending_intent().fan, 6U);
+}
+
+void command_coordinator_replacement_is_transactional_until_commit() {
+  MhiCommandCoordinator coordinator{};
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer frame{};
+  MhiTxBuildResult result{};
+  MhiTxEnvelope first{};
+
+  command.power_set = true;
+  command.power = true;
+  const MhiCommandState first_before = command;
+  const MhiTxRuntime runtime_before = runtime;
+  EXPECT_TRUE(coordinator.prepare_next(command, runtime, config, frame, result, first));
+  coordinator.on_stage_result(first, first_before, runtime_before, command, true, 100U);
+  const MhiTxRuntime runtime_after_first = runtime;
+
+  command.mode_set = true;
+  command.mode = 4U;
+
+  MhiStagedCommandReplacement replacement{};
+  EXPECT_TRUE(coordinator.prepare_staged_replacement(command, config, replacement));
+
+  // Simulate NOT_PENDING: the transport already claimed the old generation,
+  // so the speculative result is discarded and the original lifecycle stays intact.
+  EXPECT_EQ(coordinator.in_flight_generation(), first.generation);
+  EXPECT_TRUE(command.mode_set);
+  EXPECT_EQ(command.mode, 4U);
+  EXPECT_EQ(runtime.double_frame, runtime_after_first.double_frame);
+  EXPECT_EQ(runtime.frame_counter, runtime_after_first.frame_counter);
+  EXPECT_EQ(runtime.opdata_index, runtime_after_first.opdata_index);
+
+  EXPECT_TRUE(coordinator.on_tx_completion(completion_for(first, true, 200U), command));
+  EXPECT_EQ(coordinator.pending_mask(), static_cast<uint32_t>(MHI_COMMAND_POWER));
+  EXPECT_TRUE(command.mode_set);
+}
+
+void command_coordinator_replacement_preserves_extended_louver_composite() {
+  MhiCommandCoordinator coordinator{};
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer frame{};
+  MhiTxBuildResult result{};
+  MhiTxEnvelope first{};
+
+  config.frame_size = kMhiFrame33Bytes;
+  config.has_extended_louver_state = true;
+  config.extended_louver_horizontal_vane = 3U;
+  config.extended_louver_three_d_auto = false;
+
+  command.horizontal_vane_set = true;
+  command.horizontal_vane = 5U;
+  const MhiCommandState first_before = command;
+  const MhiTxRuntime runtime_before = runtime;
+  EXPECT_TRUE(coordinator.prepare_next(command, runtime, config, frame, result, first));
+  EXPECT_EQ(first.command_mask, static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE));
+  coordinator.on_stage_result(first, first_before, runtime_before, command, true, 100U);
+
+  command.three_d_auto_set = true;
+  command.three_d_auto = true;
+
+  MhiStagedCommandReplacement replacement{};
+  EXPECT_TRUE(coordinator.prepare_staged_replacement(command, config, replacement));
+  EXPECT_EQ(replacement.envelope.command_mask,
+            static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO));
+  EXPECT_TRUE(replacement.envelope.intent.has_extended_louver_context);
+  EXPECT_EQ(replacement.envelope.intent.horizontal_vane, 5U);
+  EXPECT_TRUE(replacement.envelope.intent.three_d_auto);
+  EXPECT_TRUE(coordinator.commit_staged_replacement(replacement, command, runtime, 125U));
+
+  EXPECT_TRUE(coordinator.on_tx_completion(completion_for(replacement.envelope, true, 200U), command));
+  EXPECT_EQ(coordinator.pending_mask(),
+            static_cast<uint32_t>(MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO));
+}
+
 }  // namespace mhi_unit_tests

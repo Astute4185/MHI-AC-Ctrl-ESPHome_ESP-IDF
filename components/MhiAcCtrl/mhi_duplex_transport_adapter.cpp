@@ -85,6 +85,14 @@ bool MhiDuplexTransportAdapter::take_tx_completion(MhiTxCompletion& completion) 
   return this->active_mode() && backend_ != nullptr && backend_->take_tx_completion(completion);
 }
 
+MhiTxReplaceResult MhiDuplexTransportAdapter::replace_pending_command(uint32_t expected_generation,
+                                                                      const MhiTxEnvelope& replacement) {
+  if (!this->active_mode() || backend_ == nullptr || !backend_->ready()) {
+    return MhiTxReplaceResult::REJECTED;
+  }
+  return backend_->replace_pending_command(expected_generation, replacement);
+}
+
 void MhiDuplexTransportAdapter::set_active_mode(bool enabled) {
   active_mode_enabled_.store(enabled, std::memory_order_release);
   if (backend_ != nullptr) {

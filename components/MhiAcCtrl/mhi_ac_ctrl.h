@@ -486,6 +486,13 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   uint32_t tx_background_attempts_{0U};
   uint32_t tx_background_failures_{0U};
   uint32_t tx_command_priority_attempts_{0U};
+  uint32_t tx_staged_replacement_attempts_{0U};
+  uint32_t tx_staged_replacement_successes_{0U};
+  uint32_t tx_staged_replacement_claimed_misses_{0U};
+  uint32_t tx_staged_replacement_unsupported_{0U};
+  uint32_t tx_staged_replacement_rejected_{0U};
+  uint32_t command_request_revision_{0U};
+  uint32_t staged_replacement_revision_{0U};
   std::atomic<bool> transport_commands_enabled_{true};
   std::atomic<bool> active_mode_enabled_{true};
   switch_::Switch* active_mode_switch_{nullptr};

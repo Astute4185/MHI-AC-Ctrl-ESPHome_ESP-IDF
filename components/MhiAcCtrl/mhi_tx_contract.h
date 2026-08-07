@@ -16,6 +16,17 @@ enum class MhiTxKind : uint8_t {
   COMMAND = 1,
 };
 
+// Result of an attempt to replace a command that is staged in a transport
+// mailbox but has not yet been claimed by hardware. Once a backend has handed
+// the frame to its peripheral, replacement must report NOT_PENDING rather than
+// mutating an owned transaction buffer.
+enum class MhiTxReplaceResult : uint8_t {
+  UNSUPPORTED = 0,
+  REPLACED,
+  NOT_PENDING,
+  REJECTED,
+};
+
 struct MhiTxEnvelope {
   std::array<uint8_t, kMhiMaxFrameBytes> frame{};
   std::size_t len{0U};

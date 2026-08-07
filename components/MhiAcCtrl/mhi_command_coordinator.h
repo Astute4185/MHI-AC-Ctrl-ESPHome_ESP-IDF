@@ -24,6 +24,20 @@ struct MhiCommandTimeoutResult {
   }
 };
 
+struct MhiStagedCommandReplacement {
+  uint32_t expected_generation{0U};
+  MhiCommandState command_before_build{};
+  MhiCommandState command_after_build{};
+  MhiTxRuntime runtime_after_build{};
+  MhiFrameBuffer frame{};
+  MhiTxBuildResult build_result{};
+  MhiTxEnvelope envelope{};
+
+  bool valid() const {
+    return expected_generation != 0U && envelope.is_command();
+  }
+};
+
 // Owns command generations and starts semantic confirmation only after the
 // transport reports that a command frame was actually clocked onto the bus.
 class MhiCommandCoordinator {
@@ -34,6 +48,14 @@ class MhiCommandCoordinator {
                     MhiFrameBuffer& frame, MhiTxBuildResult& result, MhiTxEnvelope& envelope);
   void on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
                        MhiCommandState& command, bool staged, uint32_t staged_at_ms = 0U);
+  void on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
+                       const MhiTxRuntime& runtime_before_build, MhiCommandState& command, bool staged,
+                       uint32_t staged_at_ms = 0U);
+
+  bool prepare_staged_replacement(const MhiCommandState& command, const MhiTxBuildConfig& config,
+                                  MhiStagedCommandReplacement& replacement) const;
+  bool commit_staged_replacement(const MhiStagedCommandReplacement& replacement, MhiCommandState& command,
+                                 MhiTxRuntime& runtime, uint32_t staged_at_ms);
 
   bool on_tx_completion(const MhiTxCompletion& completion, MhiCommandState& command);
 
@@ -85,6 +107,9 @@ class MhiCommandCoordinator {
   uint32_t coalesce_extended_supersession_(const MhiCommandIntent& intent, uint32_t confirm_mask,
                                            const MhiCommandState& patch);
   void apply_coalesced_extended_patch_(MhiCommandState& command);
+  void on_stage_result_(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
+                        const MhiTxRuntime* runtime_before_build, MhiCommandState& command, bool staged,
+                        uint32_t staged_at_ms);
   void reset_attempts_();
 
   MhiCommandConfirmation confirmation_{};
@@ -92,6 +117,8 @@ class MhiCommandCoordinator {
   bool command_in_flight_{false};
   MhiTxEnvelope in_flight_envelope_{};
   MhiCommandState in_flight_command_before_build_{};
+  MhiTxRuntime in_flight_runtime_before_build_{};
+  bool in_flight_runtime_snapshot_valid_{false};
   uint8_t next_attempt_{1U};
   uint8_t in_flight_attempt_{0U};
   uint8_t confirmation_attempt_{0U};

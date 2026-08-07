@@ -255,6 +255,14 @@ bool MhiTransportManager::take_tx_completion(MhiTxCompletion& completion) {
   return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->take_tx_completion(completion);
 }
 
+MhiTxReplaceResult MhiTransportManager::replace_pending_command(uint32_t expected_generation,
+                                                                const MhiTxEnvelope& replacement) {
+  if (!active_mode_enabled_ || active_ == nullptr || safe_mode_) {
+    return MhiTxReplaceResult::REJECTED;
+  }
+  return active_->replace_pending_command(expected_generation, replacement);
+}
+
 void MhiTransportManager::set_active_mode(bool enabled) {
   active_mode_enabled_ = enabled;
   if (primary_ != nullptr) {

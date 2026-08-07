@@ -41,6 +41,11 @@ class IMhiTransport {
   virtual std::size_t read(uint8_t* dst, std::size_t max_len) = 0;
   virtual bool queue_tx(const MhiTxEnvelope& envelope) = 0;
   virtual bool take_tx_completion(MhiTxCompletion& completion) = 0;
+  virtual MhiTxReplaceResult replace_pending_command(uint32_t expected_generation, const MhiTxEnvelope& replacement) {
+    (void)expected_generation;
+    (void)replacement;
+    return MhiTxReplaceResult::UNSUPPORTED;
+  }
 
   // Active Mode controls transmit participation without stopping RX.
   // Disabling must clear staged TX so it cannot replay when re-enabled.

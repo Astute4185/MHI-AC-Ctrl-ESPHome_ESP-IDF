@@ -20,6 +20,7 @@ int main() {
   duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data();
   duplex_tx_mailbox_preserves_pending_command_from_background_replacement();
   duplex_tx_mailbox_command_replaces_pending_background();
+  duplex_tx_mailbox_replaces_only_expected_pending_command();
   command_coordinator_starts_confirmation_after_tx_completion();
   command_coordinator_restores_command_when_stage_is_rejected();
   command_coordinator_requeues_failed_command();
@@ -42,6 +43,10 @@ int main() {
   command_coordinator_does_not_confirm_old_value_when_newer_request_is_queued();
   command_coordinator_retries_only_remaining_fields_and_caps_attempts();
   command_coordinator_reports_staged_timeout_once();
+  command_coordinator_replaces_unclaimed_command_with_latest_combined_state();
+  command_coordinator_replacement_supersedes_same_field_before_transmit();
+  command_coordinator_replacement_is_transactional_until_commit();
+  command_coordinator_replacement_preserves_extended_louver_composite();
   command_coordinator_extended_louver_supersession_suite();
   tx_completion_queue_preserves_order_and_rejects_overflow();
   worker_decoded_store_latest_status_overwrites_stale_status();
@@ -94,6 +99,8 @@ int main() {
   tx_builder_uses_configured_sensor_parity_opdata_mask();
   tx_builder_uses_configured_sensor_parity_slice2_opdata_mask();
   tx_builder_reports_encoded_command_mask();
+  tx_builder_defers_opdata_when_encoding_semantic_command();
+  tx_builder_defers_opdata_when_encoding_extended_command();
   tx_builder_encodes_quiet_fan_code_zero();
   tx_builder_keeps_double_frame_commands_pending_until_command_frame();
   tx_builder_drops_33_byte_only_commands_in_20_byte_mode();

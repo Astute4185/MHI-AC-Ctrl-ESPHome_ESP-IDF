@@ -51,11 +51,26 @@ class MhiDuplexTxMailbox {
     return true;
   }
 
+  bool replace_command(uint32_t expected_generation, const MhiTxEnvelope& replacement) {
+    if (!replacement.valid() || !replacement.is_command()) {
+      return false;
+    }
+
+    if (!pending_ || !envelope_.is_command() || envelope_.generation != expected_generation) {
+      return false;
+    }
+
+    envelope_ = replacement;
+    replaced_commands_++;
+    return true;
+  }
+
   void clear() {
     envelope_ = {};
     pending_ = false;
     overwritten_frames_ = 0U;
     rejected_background_frames_ = 0U;
+    replaced_commands_ = 0U;
   }
 
   bool pending() const {
@@ -82,11 +97,16 @@ class MhiDuplexTxMailbox {
     return rejected_background_frames_;
   }
 
+  uint32_t replaced_commands() const {
+    return replaced_commands_;
+  }
+
  private:
   MhiTxEnvelope envelope_{};
   bool pending_{false};
   uint32_t overwritten_frames_{0U};
   uint32_t rejected_background_frames_{0U};
+  uint32_t replaced_commands_{0U};
 };
 
 }  // namespace mhi_ac_ctrl

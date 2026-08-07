@@ -9,6 +9,8 @@ void MhiCommandCoordinator::reset() {
   command_in_flight_ = false;
   in_flight_envelope_ = {};
   in_flight_command_before_build_ = {};
+  in_flight_runtime_before_build_ = {};
+  in_flight_runtime_snapshot_valid_ = false;
   in_flight_staged_ms_ = 0U;
   staged_timeout_reported_ = false;
   coalesced_extended_patch_ = {};
@@ -49,6 +51,18 @@ bool MhiCommandCoordinator::prepare_next(MhiCommandState& command, MhiTxRuntime&
 
 void MhiCommandCoordinator::on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
                                             MhiCommandState& command, bool staged, uint32_t staged_at_ms) {
+  this->on_stage_result_(envelope, command_before_build, nullptr, command, staged, staged_at_ms);
+}
+
+void MhiCommandCoordinator::on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
+                                            const MhiTxRuntime& runtime_before_build, MhiCommandState& command,
+                                            bool staged, uint32_t staged_at_ms) {
+  this->on_stage_result_(envelope, command_before_build, &runtime_before_build, command, staged, staged_at_ms);
+}
+
+void MhiCommandCoordinator::on_stage_result_(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
+                                             const MhiTxRuntime* runtime_before_build, MhiCommandState& command,
+                                             bool staged, uint32_t staged_at_ms) {
   if (!envelope.is_command()) {
     return;
   }
@@ -65,9 +79,81 @@ void MhiCommandCoordinator::on_stage_result(const MhiTxEnvelope& envelope, const
   command_in_flight_ = true;
   in_flight_envelope_ = envelope;
   in_flight_command_before_build_ = command_before_build;
+  if (runtime_before_build != nullptr) {
+    in_flight_runtime_before_build_ = *runtime_before_build;
+    in_flight_runtime_snapshot_valid_ = true;
+  } else {
+    in_flight_runtime_before_build_ = {};
+    in_flight_runtime_snapshot_valid_ = false;
+  }
   in_flight_attempt_ = next_attempt_;
   in_flight_staged_ms_ = staged_at_ms;
   staged_timeout_reported_ = false;
+}
+
+bool MhiCommandCoordinator::prepare_staged_replacement(const MhiCommandState& command, const MhiTxBuildConfig& config,
+                                                       MhiStagedCommandReplacement& replacement) const {
+  replacement = {};
+  if (!command_in_flight_ || confirmation_.has_pending() || !in_flight_runtime_snapshot_valid_ ||
+      !command.has_pending_command()) {
+    return false;
+  }
+
+  MhiCommandState combined = command;
+
+  // Rebuild the same not-yet-transmitted command generation plus the latest
+  // queued user state. Existing queued fields take precedence, so a newer
+  // value for the same field supersedes the staged value before transmission.
+  restore_command_mask_(combined, in_flight_command_before_build_, in_flight_envelope_.command_mask);
+  restore_intent_mask_(combined, in_flight_envelope_.intent, in_flight_envelope_.command_mask);
+
+  replacement.expected_generation = in_flight_envelope_.generation;
+  replacement.command_before_build = combined;
+  replacement.command_after_build = combined;
+  replacement.runtime_after_build = in_flight_runtime_before_build_;
+
+  if (!MhiTxBuilder::build_next_frame(replacement.command_after_build, replacement.runtime_after_build, config,
+                                      replacement.frame, replacement.build_result) ||
+      replacement.frame.len == 0U || !replacement.build_result.has_encoded_commands()) {
+    replacement = {};
+    return false;
+  }
+
+  if (!replacement.envelope.set_frame(replacement.frame.bytes(), replacement.frame.len)) {
+    replacement = {};
+    return false;
+  }
+
+  replacement.envelope.kind = MhiTxKind::COMMAND;
+  replacement.envelope.generation = next_generation_;
+  replacement.envelope.command_mask = replacement.build_result.encoded_command_mask;
+  replacement.envelope.intent = replacement.build_result.intent;
+  return true;
+}
+
+bool MhiCommandCoordinator::commit_staged_replacement(const MhiStagedCommandReplacement& replacement,
+                                                      MhiCommandState& command, MhiTxRuntime& runtime,
+                                                      uint32_t staged_at_ms) {
+  if (!replacement.valid() || !command_in_flight_ ||
+      replacement.expected_generation != in_flight_envelope_.generation ||
+      replacement.envelope.generation != next_generation_) {
+    return false;
+  }
+
+  command = replacement.command_after_build;
+  runtime = replacement.runtime_after_build;
+  in_flight_envelope_ = replacement.envelope;
+  in_flight_command_before_build_ = replacement.command_before_build;
+  in_flight_attempt_ = 1U;
+  next_attempt_ = 1U;
+  in_flight_staged_ms_ = staged_at_ms;
+  staged_timeout_reported_ = false;
+
+  next_generation_++;
+  if (next_generation_ == 0U) {
+    next_generation_ = 1U;
+  }
+  return true;
 }
 
 bool MhiCommandCoordinator::on_tx_completion(const MhiTxCompletion& completion, MhiCommandState& command) {
@@ -106,6 +192,8 @@ bool MhiCommandCoordinator::on_tx_completion(const MhiTxCompletion& completion, 
   command_in_flight_ = false;
   in_flight_envelope_ = {};
   in_flight_command_before_build_ = {};
+  in_flight_runtime_before_build_ = {};
+  in_flight_runtime_snapshot_valid_ = false;
   in_flight_attempt_ = 0U;
   in_flight_staged_ms_ = 0U;
   staged_timeout_reported_ = false;
