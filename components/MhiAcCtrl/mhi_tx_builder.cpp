@@ -40,6 +40,10 @@ constexpr MhiOpdataRequest kMhiOpdataRequests[] = {
 constexpr uint32_t kNoFramesPerOpDataCycle = 400;
 constexpr uint8_t kMinEffectiveOpdataCount = 5;
 
+constexpr uint32_t kMhiSemanticCommandMask = MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN |
+                                             MHI_COMMAND_TARGET_TEMP | MHI_COMMAND_VERTICAL_VANE |
+                                             MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
+
 uint32_t normalize_opdata_mask(uint32_t mask) {
   return mask == 0U ? kMhiDefaultOpdataMask : mask;
 }
@@ -103,8 +107,26 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
 
   out.data[DB14] = static_cast<uint8_t>(runtime.double_frame ? 0x04U : 0x00U);
 
+  const uint32_t frame_counter_before_opdata = runtime.frame_counter;
+  const uint8_t opdata_index_before = runtime.opdata_index;
+
   apply_opdata_request(out, runtime, config.enabled_opdata_mask);
+  const bool routine_opdata_request_encoded = out.data[DB9] != 0xFFU;
+
   apply_commands(out, command, runtime, config, result);
+
+  // Some MHI units do not reliably apply a state-changing command when the
+  // same MISO frame also requests operation data. Keep command frames
+  // protocol-clean and defer the opdata request to the next eligible frame.
+  // Error-opdata is an explicit command and retains its DB6/DB9 payload.
+  if (routine_opdata_request_encoded && (result.encoded_command_mask & kMhiSemanticCommandMask) != 0U &&
+      (result.encoded_command_mask & MHI_COMMAND_ERROR_OPDATA_REQUEST) == 0U) {
+    runtime.frame_counter = frame_counter_before_opdata;
+    runtime.opdata_index = opdata_index_before;
+    out.data[DB6] = runtime.double_frame ? 0x80U : 0x00U;
+    out.data[DB9] = 0xFFU;
+  }
+
   apply_checksums(out);
 
   return true;
