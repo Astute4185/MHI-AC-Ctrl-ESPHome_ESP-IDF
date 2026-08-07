@@ -8,7 +8,7 @@ This project controls a timing-sensitive, externally clocked bus. Keep changes f
 
 - Search existing issues and pull requests for the same board, air-conditioner model, driver, or protocol field.
 - Read [`ARCHITECTURE.md`](ARCHITECTURE.md) before changing transport, worker, state, command, or publication code.
-- Read [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) and [`DIAGNOSTICS.md`](DIAGNOSTICS.md) before changing or validating a transport.
+- Read [the driver documentation](docs/drivers/README.md) and [`DIAGNOSTICS.md`](DIAGNOSTICS.md) before changing or validating a transport.
 - Keep unrelated cleanup out of behavioural changes so regressions remain easy to isolate.
 
 For substantial protocol or transport changes, open an issue first with the observed frames, hardware, current configuration, and intended behaviour.
@@ -46,9 +46,14 @@ Run these before opening a pull request:
 ./scripts/compile-tests.sh
 ```
 
-`compile-tests.sh` builds four representative ESP-IDF configurations covering ESP32-C3 FastGPIO, original ESP32 `rmt_cs_spi`, ESP32-S3 `rmt_cs_spi`, and ESP32-S3 `rmt_spi_rx` with `fast_gpio_tx`.
+`compile-tests.sh` defaults to four representative ESP-IDF configurations. The optional extended scope compiles the portable RX-only path across every Wi-Fi-capable ESP32 variant supported by the pinned ESPHome release, including ESP32-S31:
 
-A successful compile does not prove that a timing-sensitive transport works on hardware.
+```bash
+./scripts/compile-tests.sh validate extended
+./scripts/compile-tests.sh compile extended
+```
+
+See [`TRANSPORT_COMPILE_MATRIX.md`](TRANSPORT_COMPILE_MATRIX.md). A successful compile proves source/toolchain compatibility only; it does not prove that a timing-sensitive transport works on hardware.
 
 ## Architecture rules
 
@@ -63,8 +68,11 @@ Changes must preserve these core rules:
 - Horizontal vane and 3D Auto state remain one composite extended-frame context.
 - Full-duplex transports exclusively own both RX and TX.
 - `rmt_cs_spi` remains FIFO-backed on ESP32 and ESP32-S3 unless new hardware evidence justifies a design change.
+- New drivers remain self-contained and declare their own schema, target support, dependencies, compile definition, construction, hardware state, and diagnostics.
+- Adding a driver must not introduce concrete-driver conditionals into `MhiAcCtrl`, `MhiTransportManager`, protocol, command, state, or entity code.
+- Unselected transport implementation files remain excluded through whole-translation-unit compile guards.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete ownership and lifecycle model.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the complete ownership and lifecycle model and [`docs/drivers/developing-drivers.md`](docs/drivers/developing-drivers.md) for the driver contribution example.
 
 ## Tests
 
@@ -131,3 +139,22 @@ A pull request should:
 - avoid committing `.esphome`, `.test-build`, logs, secrets, or generated build output.
 
 Prefer a small sequence of reviewable pull requests over one change that combines protocol behaviour, transport timing, broad refactoring, and documentation cleanup.
+
+## Consolidated release gate
+
+For transport or cross-cutting runtime changes, use the consolidated gate:
+
+```bash
+./scripts/release-gate.sh validate
+```
+
+Before a release or integration into `master`, run the full compile gate:
+
+```bash
+rm -rf tests/components/MhiAcCtrl/.esphome
+./scripts/release-gate.sh compile
+```
+
+The host-test script uses an explicit source manifest and fails early when a listed file was deleted or a new `test_*.cpp` file was not added. This prevents stale test-runner and linker failures after cleanup phases.
+
+See [`TRANSPORT_REFACTOR_VALIDATION.md`](TRANSPORT_REFACTOR_VALIDATION.md) for the final software and hardware evidence checklist.

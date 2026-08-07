@@ -26,7 +26,6 @@
 #include "mhi_rmt_cs_spi_mode.h"
 #include "mhi_status_decoder.h"
 #include "mhi_tx_builder.h"
-#include "mhi_worker_policy.h"
 #include "mhi_worker_decoded_store.h"
 #define EXPECT_TRUE(expr)                                                                            \
   do {                                                                                               \
@@ -190,6 +189,9 @@ void frame_queue_overwrites_oldest_complete_frame();
 void duplex_tx_mailbox_stages_and_consumes_20_byte_frame();
 void duplex_tx_mailbox_latest_stage_replaces_unclaimed_frame();
 void duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data();
+void duplex_tx_mailbox_preserves_pending_command_from_background_replacement();
+void duplex_tx_mailbox_command_replaces_pending_background();
+void duplex_tx_mailbox_replaces_only_expected_pending_command();
 void command_coordinator_starts_confirmation_after_tx_completion();
 void command_coordinator_restores_command_when_stage_is_rejected();
 void command_coordinator_requeues_failed_command();
@@ -211,7 +213,12 @@ void command_coordinator_assigns_increasing_generations();
 void command_coordinator_supersedes_pending_confirmation_with_newer_value();
 void command_coordinator_does_not_confirm_old_value_when_newer_request_is_queued();
 void command_coordinator_retries_only_remaining_fields_and_caps_attempts();
+void command_coordinator_accepts_confirmation_during_final_grace();
 void command_coordinator_reports_staged_timeout_once();
+void command_coordinator_replaces_unclaimed_command_with_latest_combined_state();
+void command_coordinator_replacement_supersedes_same_field_before_transmit();
+void command_coordinator_replacement_is_transactional_until_commit();
+void command_coordinator_replacement_preserves_extended_louver_composite();
 void command_coordinator_extended_louver_supersession_suite();
 void tx_completion_queue_preserves_order_and_rejects_overflow();
 
@@ -257,6 +264,8 @@ void tx_builder_applies_pending_commands_once();
 void tx_builder_uses_configured_sensor_parity_opdata_mask();
 void tx_builder_uses_configured_sensor_parity_slice2_opdata_mask();
 void tx_builder_reports_encoded_command_mask();
+void tx_builder_defers_opdata_when_encoding_semantic_command();
+void tx_builder_defers_opdata_when_encoding_extended_command();
 void tx_builder_keeps_double_frame_commands_pending_until_command_frame();
 void tx_builder_drops_33_byte_only_commands_in_20_byte_mode();
 void tx_builder_applies_3d_auto_in_33_byte_frame();
@@ -270,6 +279,7 @@ void command_confirmation_keeps_partial_pending_until_later_status();
 void command_confirmation_confirms_auto_fan();
 void command_confirmation_confirms_supported_fan_codes();
 void command_confirmation_times_out_unconfirmed_commands();
+void command_confirmation_honors_configured_normal_timeout();
 void command_confirmation_detects_duplicate_pending_commands();
 void command_confirmation_confirms_horizontal_vane_feedback();
 void command_confirmation_confirms_horizontal_swing_feedback();
@@ -304,8 +314,6 @@ void publish_bridge_three_speed_maps_code_zero_to_low();
 void publish_bridge_four_speed_maps_code_zero_to_quiet();
 void tx_builder_encodes_quiet_fan_code_zero();
 void command_confirmation_confirms_quiet_fan_code_zero();
-void worker_policy_allows_queue_backed_rx_drivers();
-void worker_policy_keeps_synchronous_rx_in_main_loop();
 void rmt_cs_spi_supports_esp32_and_s3();
 void rmt_cs_spi_exposes_single_driver_name();
 void rmt_cs_spi_applies_original_esp32_mode3_edge_fix();

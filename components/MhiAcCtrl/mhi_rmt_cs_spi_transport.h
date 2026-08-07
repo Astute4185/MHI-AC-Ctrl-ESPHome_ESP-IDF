@@ -51,13 +51,26 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   void set_config(const MhiRmtCsSpiConfig& config) {
     config_ = config;
   }
+  void set_frame_size_hint(int frame_size) {
+    config_.frame_size_hint = frame_size == 33 ? 33U : 20U;
+  }
+  void set_frame_gap_us(int frame_gap_us) {
+    if (frame_gap_us >= 500 && frame_gap_us <= 5000) {
+      config_.frame_gap_us = static_cast<uint32_t>(frame_gap_us);
+    }
+  }
 
   bool setup(const MhiTransportPins& pins) override;
   void loop() override;
   void shutdown() override;
   std::size_t read(uint8_t* dst, std::size_t max_len) override;
   bool send(const MhiTxEnvelope& envelope) override;
+  MhiTxReplaceResult replace_pending_command(uint32_t expected_generation, const MhiTxEnvelope& replacement) override;
   bool take_tx_completion(MhiTxCompletion& completion) override;
+  void set_active_mode(bool enabled) override;
+  bool active_mode() const override {
+    return active_mode_enabled_.load(std::memory_order_acquire);
+  }
 
   const char* name() const override {
     return mhi_rmt_cs_spi_driver_name();
@@ -131,6 +144,7 @@ class MhiRmtCsSpiTransport final : public IMhiDuplexTransport {
   MhiRmtCsSpiConfig config_{};
   MhiTransportPins pins_{};
   std::atomic<bool> ready_{false};
+  std::atomic<bool> active_mode_enabled_{true};
 
   uint32_t completed_transactions_{0U};
   uint32_t completed_tx_frames_{0U};

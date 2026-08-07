@@ -2,29 +2,37 @@
 
 This guide explains the current MHI runtime diagnostics, how to distinguish recoverable events from real failures, and what evidence should accompany a hardware or driver result.
 
-Driver availability and configuration rules are documented in [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md).
+Driver availability and configuration rules are documented in [the driver documentation](docs/drivers/README.md).
 
 ## Logging strategy
 
-Use DEBUG during initial bring-up and focused command testing:
+The component uses four severity classes consistently:
+
+| Level | Purpose | Examples |
+|---|---|---|
+| `DEBUG` | Periodic telemetry and expected coalescing detail | 30-second runtime counters, driver queue snapshots, duplicate requests |
+| `INFO` | Meaningful lifecycle transitions | driver enabled, Active Mode changed, command staged, superseded, or confirmed |
+| `WARN` | Recoverable degradation or rejected user intent | unsupported command, confirmation timeout, recovery activation, queue or RMT anomaly |
+| `ERROR` | Setup failure or loss of safe operation | transport setup failure, safe mode, unrecoverable runtime failure |
+
+For normal operation, `INFO` now gives a low-noise event log without the repeating runtime counter block:
 
 ```yaml
 logger:
-  level: DEBUG
+  level: INFO
 ```
 
-For a longer soak, reduce unrelated log load while retaining MHI health lines:
+Use DEBUG during initial bring-up, focused command testing, or when collecting periodic transport evidence:
 
 ```yaml
 logger:
   level: WARN
   logs:
-    mhi.diag: INFO
-    mhi_rmt_cs_spi: INFO
-    mhi_rmt_spi_rx: INFO
+    mhi.diag: DEBUG
+    mhi_rmt_cs_spi: DEBUG
 ```
 
-Only enable the driver tag that applies to the selected transport.
+Only enable the driver tag that applies to the selected transport. Equivalent driver tags are `mhi_rmt_spi_rx` and `mhi_extclk_rx`.
 
 A clean startup log is not sufficient. Review diagnostics after command sequences, Home Assistant reconnects, opdata polling, Wi-Fi activity, and sustained runtime.
 
@@ -153,7 +161,7 @@ Horizontal vane and 3D Auto confirmation use three-second windows. Other command
 
 Horizontal vane and 3D Auto share DB16/DB17. When newer intent changes the composite desired state, the old confirmation generation is superseded and a combined command can be transmitted immediately.
 
-Typical trace:
+Typical INFO trace:
 
 ```text
 command: superseded pending confirmation mask=0x00000020
@@ -161,7 +169,7 @@ command: staged=YES mask=0x00000060 ...
 command: confirmed mask=0x00000060 pending=0x00000000
 ```
 
-This is expected behaviour, not a failure. The latest requested composite state must confirm without stale intent carrying into the next command.
+Supersession is logged at INFO because it explains why an intermediate requested state may never confirm. This is expected behaviour, not a failure. The latest requested composite state must confirm without stale intent carrying into the next command.
 
 ### Command test scope
 
@@ -263,7 +271,7 @@ stack_free_min
 |---|---|---|
 | `enabled` | YAML setting | Matches configuration |
 | `running` | FreeRTOS worker task state | `YES` when enabled |
-| `classified_rx` | Worker drains and decodes RX | `YES` for queue-backed drivers; `NO` for `fast_gpio_rx` |
+| `classified_rx` | Worker drains and decodes RX | `YES` for queue-backed drivers; `NO` for `fast_gpio_rx`. Availability does not imply the worker is recommended for that transport. |
 | `wakes` | Explicit worker notifications consumed | Increases with command and completion activity |
 | `service_runs` | Combined command/RX service passes | Increases continuously while active |
 | `idle_polls` | Timed passes without an explicit notification | Can increase steadily without being a fault |

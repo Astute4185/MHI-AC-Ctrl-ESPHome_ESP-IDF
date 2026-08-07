@@ -58,6 +58,14 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
     this->energy_used_sensor_ = sensor;
   }
 
+  void set_estimated_power(sensor::Sensor* sensor) {
+    this->estimated_power_sensor_ = sensor;
+  }
+
+  void set_estimated_energy(sensor::Sensor* sensor) {
+    this->estimated_energy_sensor_ = sensor;
+  }
+
   void set_indoor_unit_thi_r1(sensor::Sensor* sensor) {
     this->indoor_unit_thi_r1_sensor_ = sensor;
   }
@@ -90,6 +98,18 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
     this->protection_state_number_sensor_ = sensor;
   }
 
+  void set_opdata_oldest_age(sensor::Sensor* sensor) {
+    this->opdata_oldest_age_sensor_ = sensor;
+  }
+
+  void set_opdata_stale_count(sensor::Sensor* sensor) {
+    this->opdata_stale_count_sensor_ = sensor;
+  }
+
+  void set_opdata_timeout_events(sensor::Sensor* sensor) {
+    this->opdata_timeout_events_sensor_ = sensor;
+  }
+
  protected:
   sensor::Sensor* room_temperature_sensor_{nullptr};
   sensor::Sensor* target_temperature_sensor_{nullptr};
@@ -102,6 +122,8 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
   sensor::Sensor* indoor_unit_total_run_time_sensor_{nullptr};
   sensor::Sensor* compressor_total_run_time_sensor_{nullptr};
   sensor::Sensor* energy_used_sensor_{nullptr};
+  sensor::Sensor* estimated_power_sensor_{nullptr};
+  sensor::Sensor* estimated_energy_sensor_{nullptr};
   sensor::Sensor* indoor_unit_thi_r1_sensor_{nullptr};
   sensor::Sensor* indoor_unit_thi_r2_sensor_{nullptr};
   sensor::Sensor* indoor_unit_thi_r3_sensor_{nullptr};
@@ -110,6 +132,9 @@ class MhiSensors : public Component, public Parented<MhiAcCtrl> {
   sensor::Sensor* outdoor_unit_discharge_pipe_sensor_{nullptr};
   sensor::Sensor* outdoor_unit_discharge_pipe_super_heat_sensor_{nullptr};
   sensor::Sensor* protection_state_number_sensor_{nullptr};
+  sensor::Sensor* opdata_oldest_age_sensor_{nullptr};
+  sensor::Sensor* opdata_stale_count_sensor_{nullptr};
+  sensor::Sensor* opdata_timeout_events_sensor_{nullptr};
 };
 
 }  // namespace mhi_ac_ctrl

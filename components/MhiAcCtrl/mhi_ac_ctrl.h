@@ -1,7 +1,6 @@
 #pragma once
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/portmacro.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
@@ -22,26 +21,22 @@
 #include "mhi_defs.h"
 #include "mhi_diag.h"
 #include "mhi_fan_profile.h"
-#include "mhi_frame_catalog.h"
-#include "mhi_frame_sync.h"
 #include "mhi_opdata_decoder.h"
+#include "mhi_opdata_freshness.h"
+#include "mhi_opdata_freshness_publisher.h"
+#include "mhi_power_estimator.h"
 #include "mhi_publish_bridge.h"
+#include "mhi_rx_runtime.h"
 #include "mhi_state.h"
 #include "mhi_status_decoder.h"
+#include "mhi_transport_diagnostics_publisher.h"
 #include "mhi_transport_manager.h"
 #include "mhi_tx_builder.h"
-#include "mhi_worker_decoded_store.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-struct MhiPins {
-  int sck{-1};
-  int mosi{-1};
-  int miso{-1};
-};
-
-class MhiAcCtrl : public Component {
+class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
  public:
   void setup() override;
   void loop() override;
@@ -53,21 +48,22 @@ class MhiAcCtrl : public Component {
     this->frame_size_ = frame_size;
   }
 
-  void set_sck_pin(int pin) {
-    this->pins_.sck = pin;
-  }
-  void set_mosi_pin(int pin) {
-    this->pins_.mosi = pin;
-  }
-  void set_miso_pin(int pin) {
-    this->pins_.miso = pin;
+  void set_primary_transport(IMhiTransport* transport) {
+    this->transport_.set_primary(transport);
   }
 
-  void set_rx_driver(const std::string& driver) {
-    this->rx_driver_ = driver;
+  void set_recovery_transport(IMhiTransport* transport) {
+    this->transport_.set_recovery(transport);
   }
-  void set_tx_driver(const std::string& driver) {
-    this->tx_driver_ = driver;
+
+  bool set_active_mode(bool enabled);
+  bool active_mode() const {
+    return active_mode_enabled_.load(std::memory_order_acquire);
+  }
+
+  void set_active_mode_switch(switch_::Switch* sw) {
+    active_mode_switch_ = sw;
+    this->publish_active_mode_state_();
   }
 
   void set_fan_profile(const std::string& profile) {
@@ -83,22 +79,20 @@ class MhiAcCtrl : public Component {
     return mhi_fan_profile_supports_quiet(this->fan_profile_);
   }
 
-  void set_frame_start_idle_ms(int idle_ms) {
-    if (idle_ms > 0) {
-      this->frame_start_idle_ms_ = static_cast<uint32_t>(idle_ms);
-    }
-  }
-
-  void set_rmt_spi_frame_gap_us(int frame_gap_us) {
-    if (frame_gap_us >= 500 && frame_gap_us <= 5000) {
-      this->rmt_spi_frame_gap_us_ = static_cast<uint32_t>(frame_gap_us);
-    }
-  }
-
   void set_tx_background_interval_ms(int interval_ms) {
     if (interval_ms >= 0) {
       this->tx_background_interval_ms_ = static_cast<uint32_t>(interval_ms);
     }
+  }
+
+  void set_command_confirmation_timeout_ms(uint32_t timeout_ms) {
+    this->command_confirmation_timeout_ms_ = timeout_ms;
+    this->command_coordinator_.set_confirmation_timeout_ms(timeout_ms);
+  }
+
+  void set_command_final_confirmation_grace_ms(uint32_t grace_ms) {
+    this->command_final_confirmation_grace_ms_ = grace_ms;
+    this->command_coordinator_.set_final_confirmation_grace_ms(grace_ms);
   }
 
   void set_command_worker(bool enabled) {
@@ -169,6 +163,7 @@ class MhiAcCtrl : public Component {
   void add_opdata_mask(uint32_t mask) {
     this->opdata_mask_ |= mask;
     this->tx_config_.enabled_opdata_mask = this->opdata_mask_;
+    this->opdata_freshness_.set_enabled_mask(this->opdata_mask_);
   }
 
   void set_publish_targets(const MhiPublishTargets& targets) {
@@ -241,6 +236,23 @@ class MhiAcCtrl : public Component {
     this->refresh_publish_targets_();
   }
 
+  void set_estimated_power_sensor(sensor::Sensor* sensor) {
+    this->publish_targets_.estimated_power_sensor = sensor;
+    this->power_estimator_.set_enabled(true);
+    this->refresh_publish_targets_();
+  }
+
+  void set_estimated_energy_sensor(sensor::Sensor* sensor) {
+    this->publish_targets_.estimated_energy_sensor = sensor;
+    this->power_estimator_.set_enabled(true);
+    this->refresh_publish_targets_();
+  }
+
+  void configure_power_estimation(float nominal_voltage_v, float power_factor, float standby_power_w,
+                                  uint32_t max_sample_interval_ms) {
+    this->power_estimator_.configure(nominal_voltage_v, power_factor, standby_power_w, max_sample_interval_ms);
+  }
+
   void set_indoor_unit_thi_r1_sensor(sensor::Sensor* sensor) {
     this->publish_targets_.indoor_unit_thi_r1_sensor = sensor;
     this->refresh_publish_targets_();
@@ -306,6 +318,51 @@ class MhiAcCtrl : public Component {
     this->refresh_publish_targets_();
   }
 
+  void set_transport_healthy_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->transport_diagnostics_publisher_.set_healthy_binary_sensor(sensor);
+  }
+
+  void set_transport_recovery_active_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->transport_diagnostics_publisher_.set_recovery_active_binary_sensor(sensor);
+  }
+
+  void set_transport_safe_mode_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->transport_diagnostics_publisher_.set_safe_mode_binary_sensor(sensor);
+  }
+
+  void set_active_transport_text_sensor(text_sensor::TextSensor* sensor) {
+    this->transport_diagnostics_publisher_.set_active_transport_text_sensor(sensor);
+  }
+
+  void set_transport_state_text_sensor(text_sensor::TextSensor* sensor) {
+    this->transport_diagnostics_publisher_.set_state_text_sensor(sensor);
+  }
+
+  void set_last_transport_error_text_sensor(text_sensor::TextSensor* sensor) {
+    this->transport_diagnostics_publisher_.set_last_error_text_sensor(sensor);
+  }
+
+  void set_opdata_freshness_timeout_ms(uint32_t timeout_ms) {
+    this->opdata_freshness_timeout_ms_ = timeout_ms;
+    this->opdata_freshness_.set_timeout_ms(timeout_ms);
+  }
+
+  void set_opdata_fresh_binary_sensor(binary_sensor::BinarySensor* sensor) {
+    this->opdata_freshness_publisher_.set_fresh_binary_sensor(sensor);
+  }
+
+  void set_opdata_oldest_age_sensor(sensor::Sensor* sensor) {
+    this->opdata_freshness_publisher_.set_oldest_age_sensor(sensor);
+  }
+
+  void set_opdata_stale_count_sensor(sensor::Sensor* sensor) {
+    this->opdata_freshness_publisher_.set_stale_count_sensor(sensor);
+  }
+
+  void set_opdata_timeout_events_sensor(sensor::Sensor* sensor) {
+    this->opdata_freshness_publisher_.set_timeout_events_sensor(sensor);
+  }
+
   void set_vertical_vanes_select(select::Select* select) {
     this->publish_targets_.vertical_vanes_select = select;
     this->refresh_publish_targets_();
@@ -345,24 +402,23 @@ class MhiAcCtrl : public Component {
   }
 
  protected:
+  void on_transport_switch_begin(const MhiTransportErrorDetail& reason) override;
+  void on_transport_recovery_ready() override;
+  void on_transport_safe_mode(const MhiTransportErrorDetail& reason) override;
+  void reset_command_runtime_();
+  void reset_runtime_for_transport_switch_();
+  void publish_active_mode_state_();
+  bool transport_command_path_ready_() const;
+  void publish_transport_diagnostics_(bool force = false);
+  void service_opdata_freshness_(bool force = false);
+
   void refresh_publish_targets_();
   void record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent);
   bool read_and_sync_rx_frame_();
   bool service_classified_rx_pipeline_();
-  bool ingest_rx_frame_(const MhiFrameBuffer& frame);
   bool decode_cataloged_frames_();
-  bool decode_cataloged_frames_to_worker_store_();
   bool decode_cataloged_frame_(const MhiCatalogedFrame& cataloged_frame);
-  bool decode_cataloged_frame_to_worker_store_(const MhiCatalogedFrame& cataloged_frame,
-                                               bool command_candidate = false);
   bool apply_worker_decoded_snapshots_();
-  bool take_latest_extended_status_(MhiCatalogedFrame& out);
-  bool take_latest_status_(MhiCatalogedFrame& out);
-  bool take_latest_command_candidate_(MhiCatalogedFrame& out);
-  void clear_command_candidate_();
-  bool take_next_opdata_(MhiCatalogedFrame& out);
-  bool take_latest_unknown_(MhiCatalogedFrame& out);
-  MhiCatalogStats catalog_stats_snapshot_();
   void start_command_worker_();
   void stop_command_worker_();
   static void command_worker_task_entry_(void* arg);
@@ -408,24 +464,22 @@ class MhiAcCtrl : public Component {
   int initial_vertical_vanes_position_{0};
   int initial_horizontal_vanes_position_{0};
 
-  MhiPins pins_{};
-
-  std::string rx_driver_{"fast_gpio_rx"};
-  std::string tx_driver_{"fast_gpio_tx"};
   MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
 
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
+  uint32_t opdata_freshness_timeout_ms_{120000U};
+  uint32_t last_opdata_freshness_publish_ms_{0U};
 
   MhiStateStore state_{};
-  MhiFrameSync frame_sync_{};
-  MhiFrameCatalog frame_catalog_{};
-  portMUX_TYPE frame_catalog_mux_ = portMUX_INITIALIZER_UNLOCKED;
-  MhiWorkerDecodedStore worker_decoded_store_{};
-  portMUX_TYPE worker_decoded_store_mux_ = portMUX_INITIALIZER_UNLOCKED;
+  MhiRxRuntime rx_runtime_{};
   MhiTransportManager transport_{};
   MhiDiagnostics diagnostics_{};
+  MhiTransportDiagnosticsPublisher transport_diagnostics_publisher_{};
+  MhiOpDataFreshnessTracker opdata_freshness_{};
+  MhiOpDataFreshnessPublisher opdata_freshness_publisher_{};
+  MhiPowerEstimator power_estimator_{};
 
   MhiPublishTargets publish_targets_{};
   MhiPublishBridge publish_bridge_{};
@@ -435,18 +489,26 @@ class MhiAcCtrl : public Component {
   MhiCommandCoordinator command_coordinator_{};
   SemaphoreHandle_t command_mutex_{nullptr};
 
-  uint32_t frame_start_idle_ms_{10U};
-  uint32_t rmt_spi_frame_gap_us_{1000U};
   uint32_t tx_background_interval_ms_{250U};
+  uint32_t command_confirmation_timeout_ms_{kMhiCommandConfirmationTimeoutMs};
+  uint32_t command_final_confirmation_grace_ms_{kMhiCommandFinalConfirmationGraceMs};
   uint32_t last_background_tx_ms_{0U};
   uint32_t tx_background_interval_deferrals_{0U};
   uint32_t tx_background_confirmation_deferrals_{0U};
   uint32_t tx_background_attempts_{0U};
   uint32_t tx_background_failures_{0U};
   uint32_t tx_command_priority_attempts_{0U};
-  bool rx_byte_critical_sections_enabled_{true};
+  uint32_t tx_staged_replacement_attempts_{0U};
+  uint32_t tx_staged_replacement_successes_{0U};
+  uint32_t tx_staged_replacement_claimed_misses_{0U};
+  uint32_t tx_staged_replacement_unsupported_{0U};
+  uint32_t tx_staged_replacement_rejected_{0U};
+  uint32_t command_request_revision_{0U};
+  uint32_t staged_replacement_revision_{0U};
+  std::atomic<bool> transport_commands_enabled_{true};
+  std::atomic<bool> active_mode_enabled_{true};
+  switch_::Switch* active_mode_switch_{nullptr};
   bool publish_requested_{false};
-  uint32_t frame_catalog_sequence_{0U};
 
   bool command_worker_enabled_{false};
   bool command_worker_classified_rx_enabled_{false};

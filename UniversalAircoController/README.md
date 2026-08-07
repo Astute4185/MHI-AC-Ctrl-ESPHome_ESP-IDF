@@ -33,7 +33,7 @@ The pin values above are retained from the v1.0 example. Confirm them against th
 
 See also:
 
-- [Driver selection](../DRIVER_SELECTION.md)
+- [Driver selection](../docs/drivers/README.md)
 - [Diagnostics](../DIAGNOSTICS.md)
 - [SPI transport findings](../notes/FINDINGS_SPI_TRANSPORTS.md)
 

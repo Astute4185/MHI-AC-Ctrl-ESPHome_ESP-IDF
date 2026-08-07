@@ -30,6 +30,16 @@ class IMhiRxDriver {
     return {};
   }
 
+  virtual void set_byte_critical_sections(bool enabled) {
+    (void)enabled;
+  }
+  virtual bool byte_critical_sections() const {
+    return false;
+  }
+  virtual bool supports_byte_critical_sections() const {
+    return false;
+  }
+
   virtual const char* name() const = 0;
   virtual bool ready() const = 0;
 

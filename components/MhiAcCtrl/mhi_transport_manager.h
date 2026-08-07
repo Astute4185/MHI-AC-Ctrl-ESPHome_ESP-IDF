@@ -1,61 +1,30 @@
 #pragma once
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/portmacro.h>
-
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
 #include "mhi_defs.h"
 #include "mhi_diag.h"
-#include "mhi_duplex_transport.h"
-#include "mhi_fast_gpio_rx_driver.h"
-#include "mhi_rx_driver.h"
-#include "mhi_transport_pins.h"
-#include "mhi_tx_contract.h"
-#include "mhi_tx_driver.h"
-#include "mhi_worker_policy.h"
-
-#ifdef USE_ESP_IDF
-#include <sdkconfig.h>
-#endif
-#if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 1
-#define MHI_ENABLE_SPLIT_TX_DRIVER 1
-#include "mhi_external_clock_rx_driver.h"
-#include "mhi_fast_gpio_tx_driver.h"
-#include "mhi_null_tx_driver.h"
-#else
-#define MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER 0
-#define MHI_ENABLE_SPLIT_TX_DRIVER 0
-#endif
-#if defined(USE_ESP_IDF) && defined(CONFIG_IDF_TARGET_ESP32S3)
-#define MHI_ENABLE_RMT_SPI_RX_DRIVER 1
-#include "mhi_rmt_spi_rx_driver.h"
-#else
-#define MHI_ENABLE_RMT_SPI_RX_DRIVER 0
-#endif
-#if defined(USE_ESP_IDF) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3))
-#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 1
-#include "mhi_rmt_cs_spi_transport.h"
-#else
-#define MHI_ENABLE_RMT_CS_SPI_TRANSPORT 0
-#endif
+#include "mhi_transport.h"
+#include "mhi_transport_transition.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
-class MhiTransportManager {
+
+// Generic, non-owning runtime coordinator for one configured primary transport
+// and an optional internal recovery transport. Concrete transport construction,
+// pin configuration, and driver-specific tuning are owned by ESPHome codegen.
+class MhiTransportManager : public IMhiRxSource {
  public:
-  void configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver, const std::string& tx_driver,
-                 uint8_t frame_size_hint = 20U, uint32_t frame_start_idle_ms = 10U,
-                 uint32_t external_clock_byte_gap_us = 80U, uint32_t external_clock_frame_gap_us = 5000U,
-                 uint32_t external_clock_min_edge_gap_us = 4U, const std::string& external_clock_edge = "falling",
-                 uint32_t external_clock_sample_delay_nops = 0U);
-  void set_rmt_spi_frame_gap_us(uint32_t frame_gap_us) {
-    rmt_spi_frame_gap_us_ = frame_gap_us;
+  void set_primary(IMhiTransport* transport);
+  void set_recovery(IMhiTransport* transport);
+  void set_transition_listener(IMhiTransportTransitionListener* listener) {
+    transition_listener_ = listener;
   }
+  void set_health_policy(const MhiTransportHealthPolicy& policy) {
+    health_policy_ = policy;
+  }
+  void observe_protocol_health(const MhiProtocolHealth& health);
 
   void set_diagnostics(MhiDiagnostics* diagnostics) {
     diagnostics_ = diagnostics;
@@ -65,105 +34,125 @@ class MhiTransportManager {
   void loop();
   void shutdown();
 
-  std::size_t read_rx(uint8_t* dst, std::size_t max_len);
-  // Stages an immutable TX envelope. Real-time transmission remains owned by
-  // the selected transport. Completion is reported only after the frame was
-  // actually clocked onto the bus.
+  std::size_t read_rx(uint8_t* dst, std::size_t max_len) override;
   bool queue_tx(const MhiTxEnvelope& envelope);
   bool take_tx_completion(MhiTxCompletion& completion);
+  MhiTxReplaceResult replace_pending_command(uint32_t expected_generation, const MhiTxEnvelope& replacement);
+  void set_active_mode(bool enabled);
+  bool active_mode() const {
+    return active_mode_enabled_;
+  }
   bool has_pending_tx() const;
   bool flush_tx_on_bus_marker();
+
   std::size_t tx_completion_queue_depth() const;
   std::size_t tx_completion_queue_high_water() const;
   uint32_t tx_completion_queue_dropped() const;
   std::size_t rx_queue_depth() const;
   std::size_t rx_queue_high_water() const;
   uint32_t rx_queue_overwritten() const;
-  void set_auto_tx_flush(bool enabled) {
-    auto_tx_flush_ = enabled;
-  }
-  bool auto_tx_flush() const {
-    return auto_tx_flush_;
-  }
+
+  void set_auto_tx_flush(bool enabled);
+  bool auto_tx_flush() const;
   void set_rx_byte_critical_sections(bool enabled);
   bool rx_byte_critical_sections() const;
   bool tx_uses_bus_marker() const;
-  bool tx_uses_bus_window() const {
-    return this->tx_uses_bus_marker();
-  }
-
   const char* rx_name() const;
   const char* tx_name() const;
+  const char* primary_name() const {
+    return primary_ == nullptr ? "none" : primary_->name();
+  }
+  const char* recovery_name() const {
+    return recovery_ == nullptr ? "none" : recovery_->name();
+  }
+  bool recovery_active() const {
+    return recovery_active_;
+  }
+  bool recovery_attempted() const {
+    return recovery_attempted_;
+  }
+  bool safe_mode() const {
+    return safe_mode_;
+  }
+  MhiTransportState state() const;
+  MhiTransportDiagnosticsSnapshot diagnostics_snapshot(uint32_t now_ms) const;
 
   bool rx_ready() const {
-    return rx_ready_;
-  }
-
-  bool rx_supports_classified_worker() const {
-    return rx_ready_ && mhi_rx_driver_supports_classified_worker(this->rx_name());
+    return active_ != nullptr && active_->rx_ready();
   }
   bool tx_ready() const {
-    return tx_ready_;
+    return active_ != nullptr && active_->tx_ready();
+  }
+  bool rx_supports_classified_worker() const {
+    return this->rx_ready() && active_->capabilities().supports_classified_worker;
+  }
+  MhiTransportHealth transport_health() const {
+    MhiTransportHealth snapshot = active_ == nullptr ? MhiTransportHealth{} : active_->health();
+    snapshot.state = state_;
+    return snapshot;
+  }
+  MhiTransportErrorDetail last_transport_error() const {
+    return last_transport_error_;
+  }
+  MhiTransportErrorDetail primary_failure() const {
+    return primary_failure_;
+  }
+  MhiTransportErrorDetail recovery_failure() const {
+    return recovery_failure_;
   }
 
  private:
-  void resolve_drivers();
-  void update_duplex_diagnostics_();
-  std::size_t read_rx_raw_(uint8_t* dst, std::size_t max_len);
-  void queue_pending_tx_(const MhiTxEnvelope& envelope);
-  bool pending_tx_available_() const;
-  void clear_pending_tx_();
-  bool flush_pending_tx_on_bus_marker_();
+  bool activate_recovery_(const MhiTransportResult& primary_result);
+  bool handle_runtime_failure_(const MhiTransportErrorDetail& reason);
+  bool enter_safe_mode_(const MhiTransportErrorDetail& reason);
+  void reset_runtime_health_window_(uint32_t now_ms);
+  void evaluate_runtime_health_(uint32_t now_ms);
+  void mark_runtime_healthy_();
+  void set_state_(MhiTransportState state, uint32_t now_ms);
+  static uint32_t elapsed_ms_(uint32_t now_ms, uint32_t then_ms) {
+    return static_cast<uint32_t>(now_ms - then_ms);
+  }
+  void update_transport_diagnostics_();
+  void reset_transport_diagnostic_cursors_();
+  void publish_driver_diagnostics_();
 
-  MhiTransportPins pins_{};
+  IMhiTransport* primary_{nullptr};
+  IMhiTransport* recovery_{nullptr};
+  IMhiTransport* active_{nullptr};
+  IMhiTransportTransitionListener* transition_listener_{nullptr};
+  bool recovery_active_{false};
+  bool recovery_attempted_{false};
+  bool safe_mode_{false};
+  MhiTransportState state_{MhiTransportState::STOPPED};
 
-  std::string transport_driver_name_{"split"};
-  std::string rx_driver_name_{"fast_gpio_rx"};
-  std::string tx_driver_name_{"fast_gpio_tx"};
-  MhiFastGpioRxDriver fast_gpio_rx_{};
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  MhiFastGpioTxDriver fast_gpio_tx_{};
-  MhiNullTxDriver null_tx_{};
-#endif
-#if MHI_ENABLE_RMT_SPI_RX_DRIVER
-  MhiRmtSpiRxDriver rmt_spi_rx_{};
-#endif
-#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
-  MhiRmtCsSpiTransport rmt_cs_spi_{};
-#endif
-#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
-  MhiExternalClockRxDriver external_clock_rx_{};
-#endif
-  IMhiDuplexTransport* duplex_{nullptr};
-  IMhiRxDriver* rx_{&fast_gpio_rx_};
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  IMhiTxDriver* tx_{&fast_gpio_tx_};
-#else
-  IMhiTxDriver* tx_{nullptr};
-#endif
-
-  bool rx_ready_{false};
-  bool tx_ready_{false};
   bool auto_tx_flush_{true};
-  portMUX_TYPE tx_mux_ = portMUX_INITIALIZER_UNLOCKED;
-  MhiTxEnvelope pending_tx_envelope_{};
-  MhiTxCompletionQueue<8U> tx_completions_{};
-  bool pending_tx_{false};
-  bool tx_in_progress_{false};
-  uint32_t pending_tx_generation_{0U};
-  uint32_t pending_tx_queued_after_marker_sequence_{0U};
-  uint32_t last_consumed_bus_marker_sequence_{0U};
-  uint32_t last_stale_bus_marker_sequence_{0U};
-  uint32_t tx_backoff_until_ms_{0U};
-  // Arm TX from a new RX frame-end marker, then make one blocking TX attempt
-  // against the real next SCK burst. This avoids age-window retry storms while
-  // still giving the AC-owned clock enough time to arrive.
-  uint32_t tx_marker_arm_max_age_us_{3000U};
-  uint32_t tx_marker_timeout_ms_{60U};
-  uint32_t tx_failure_backoff_ms_{250U};
-  uint32_t rmt_spi_frame_gap_us_{1000U};
-  uint32_t last_duplex_tx_completed_{0U};
-  uint32_t last_duplex_tx_failures_{0U};
+  bool rx_byte_critical_sections_{true};
+  bool active_mode_enabled_{true};
+
+  MhiTransportHealthPolicy health_policy_{};
+  MhiProtocolHealth protocol_health_{};
+  uint32_t active_started_ms_{0U};
+  uint32_t first_traffic_seen_ms_{0U};
+  uint32_t valid_frames_at_activation_{0U};
+  uint32_t last_health_check_ms_{0U};
+  bool protocol_health_observed_{false};
+  bool traffic_observed_{false};
+  bool active_health_confirmed_{false};
+  bool recovery_ready_notified_{false};
+
+  uint32_t state_since_ms_{0U};
+  uint32_t last_transition_ms_{0U};
+  uint32_t state_changes_{0U};
+  uint32_t recovery_attempts_{0U};
+  uint32_t recovery_activations_{0U};
+  uint32_t recovery_failures_{0U};
+  uint32_t safe_mode_entries_{0U};
+
+  uint32_t last_transport_tx_completed_{0U};
+  uint32_t last_transport_tx_failures_{0U};
+  MhiTransportErrorDetail last_transport_error_{};
+  MhiTransportErrorDetail primary_failure_{};
+  MhiTransportErrorDetail recovery_failure_{};
   MhiDiagnostics* diagnostics_{nullptr};
 };
 

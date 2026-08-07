@@ -1,10 +1,13 @@
-#include "mhi_rmt_cs_spi_transport.h"
+#include "esphome/core/defines.h"
+
+#ifdef MHI_USE_TRANSPORT_RMT_CS_SPI
 
 #include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_rmt_cs_spi_transport.h"
 #if MHI_RMT_CS_SPI_SUPPORTED
 #include <driver/gpio.h>
 #include <esp_err.h>
@@ -101,7 +104,7 @@ bool MhiRmtCsSpiTransport::setup(const MhiTransportPins& pins) {
   // only after SPI, RMT, and the owner task are ready.
   this->connect_internal_cs_(false);
   ready_ = true;
-  ESP_LOGW(TAG,
+  ESP_LOGI(TAG,
            "RMT-CS SPI duplex enabled: driver=%s host=SPI2 SCK=%d MOSI=%d MISO=%d mode=3 LSB-first "
            "buffer=FIFO transfer=%u bytes "
            "frame=%u frame_gap=%luus task_core=%d task_priority=%lu task_stack=%lu",
@@ -137,6 +140,7 @@ void MhiRmtCsSpiTransport::loop() {
   uint32_t dropped_frames = 0U;
   uint32_t overwritten_rx = 0U;
   uint32_t overwritten_tx = 0U;
+  uint32_t replaced_tx = 0U;
   std::size_t queued_frames = 0U;
   std::size_t max_buffered_frames = 0U;
   std::size_t completion_depth = 0U;
@@ -156,16 +160,17 @@ void MhiRmtCsSpiTransport::loop() {
   dropped_frames = dropped_frames_;
   overwritten_rx = completed_frames_.overwritten_frames();
   overwritten_tx = tx_mailbox_.overwritten_frames();
+  replaced_tx = tx_mailbox_.replaced_commands();
   queued_frames = completed_frames_.size();
   max_buffered_frames = completed_frames_.high_water_mark();
   completion_depth = tx_completions_.size();
   completion_high_water = tx_completions_.high_water_mark();
   completion_dropped = tx_completions_.dropped();
   portEXIT_CRITICAL(&mux_);
-  ESP_LOGI(TAG,
+  ESP_LOGD(TAG,
            "runtime: boundaries=%lu completed=%lu tx_completed=%lu tx_failures=%lu frame20=%lu frame33=%lu "
            "invalid_len=%lu result_errors=%lu queue_errors=%lu rmt_rearm_errors=%lu buffered_frames=%u "
-           "max_buffered=%u rx_overwritten=%lu tx_overwritten=%lu dropped=%lu completion=%u/%u/%lu "
+           "max_buffered=%u rx_overwritten=%lu tx_overwritten=%lu tx_replaced=%lu dropped=%lu completion=%u/%u/%lu "
            "task_running=%s",
            static_cast<unsigned long>(boundaries), static_cast<unsigned long>(completed_transactions),
            static_cast<unsigned long>(completed_tx_frames), static_cast<unsigned long>(tx_failures),
@@ -174,9 +179,9 @@ void MhiRmtCsSpiTransport::loop() {
            static_cast<unsigned long>(transaction_result_errors), static_cast<unsigned long>(transaction_queue_errors),
            static_cast<unsigned long>(rearm_errors), static_cast<unsigned int>(queued_frames),
            static_cast<unsigned int>(max_buffered_frames), static_cast<unsigned long>(overwritten_rx),
-           static_cast<unsigned long>(overwritten_tx), static_cast<unsigned long>(dropped_frames),
-           static_cast<unsigned int>(completion_depth), static_cast<unsigned int>(completion_high_water),
-           static_cast<unsigned long>(completion_dropped),
+           static_cast<unsigned long>(overwritten_tx), static_cast<unsigned long>(replaced_tx),
+           static_cast<unsigned long>(dropped_frames), static_cast<unsigned int>(completion_depth),
+           static_cast<unsigned int>(completion_high_water), static_cast<unsigned long>(completion_dropped),
            task_running_.load(std::memory_order_acquire) ? "YES" : "NO");
 #endif
 }
@@ -225,7 +230,8 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
   (void)envelope;
   return false;
 #else
-  if (!ready_.load(std::memory_order_acquire) || !envelope.valid() || envelope.len != config_.frame_size_hint) {
+  if (!this->active_mode() || !ready_.load(std::memory_order_acquire) || !envelope.valid() ||
+      envelope.len != config_.frame_size_hint) {
     return false;
   }
 
@@ -235,11 +241,49 @@ bool MhiRmtCsSpiTransport::send(const MhiTxEnvelope& envelope) {
   return staged;
 #endif
 }
+
+MhiTxReplaceResult MhiRmtCsSpiTransport::replace_pending_command(uint32_t expected_generation,
+                                                                 const MhiTxEnvelope& replacement) {
+#if !MHI_RMT_CS_SPI_SUPPORTED
+  (void)expected_generation;
+  (void)replacement;
+  return MhiTxReplaceResult::UNSUPPORTED;
+#else
+  if (!this->active_mode() || !ready_.load(std::memory_order_acquire) || !replacement.valid() ||
+      !replacement.is_command() || replacement.len != config_.frame_size_hint) {
+    return MhiTxReplaceResult::REJECTED;
+  }
+
+  portENTER_CRITICAL(&mux_);
+  const bool replaced = tx_mailbox_.replace_command(expected_generation, replacement);
+  portEXIT_CRITICAL(&mux_);
+  return replaced ? MhiTxReplaceResult::REPLACED : MhiTxReplaceResult::NOT_PENDING;
+#endif
+}
+
+void MhiRmtCsSpiTransport::set_active_mode(bool enabled) {
+  active_mode_enabled_.store(enabled, std::memory_order_release);
+#if MHI_RMT_CS_SPI_SUPPORTED
+  portENTER_CRITICAL(&mux_);
+  tx_mailbox_.clear();
+  tx_completions_.reset();
+  for (auto& slot : transaction_slots_) {
+    slot.tx_envelope = {};
+  }
+  portEXIT_CRITICAL(&mux_);
+#else
+  (void)enabled;
+#endif
+}
+
 bool MhiRmtCsSpiTransport::take_tx_completion(MhiTxCompletion& completion) {
 #if !MHI_RMT_CS_SPI_SUPPORTED
   (void)completion;
   return false;
 #else
+  if (!this->active_mode()) {
+    return false;
+  }
   portENTER_CRITICAL(&mux_);
   const bool available = tx_completions_.pop(completion);
   portEXIT_CRITICAL(&mux_);
@@ -440,7 +484,7 @@ bool MhiRmtCsSpiTransport::setup_spi_() {
     }
     hw->pin.ck_idle_edge = 1;
     hw->user.ck_i_edge = 1;
-    ESP_LOGW(TAG, "Applied original ESP32 FIFO mode-3 edge correction");
+    ESP_LOGI(TAG, "Applied original ESP32 FIFO mode-3 edge correction");
   }
 #endif
 
@@ -540,7 +584,9 @@ bool MhiRmtCsSpiTransport::queue_transaction_(TransactionSlot& slot) {
   slot.tx_envelope = {};
 
   portENTER_CRITICAL(&mux_);
-  tx_mailbox_.take(slot.tx_buffer, kTransferBytes, slot.tx_envelope);
+  if (active_mode_enabled_.load(std::memory_order_acquire)) {
+    tx_mailbox_.take(slot.tx_buffer, kTransferBytes, slot.tx_envelope);
+  }
   portEXIT_CRITICAL(&mux_);
   slot.transaction = {};
   slot.transaction.length = kTransferBytes * 8U;
@@ -666,7 +712,7 @@ void MhiRmtCsSpiTransport::process_completed_transaction_(spi_slave_transaction_
     invalid_length_transactions_++;
   }
 
-  if (slot->tx_envelope.valid()) {
+  if (active_mode_enabled_.load(std::memory_order_acquire) && slot->tx_envelope.valid()) {
     const bool tx_success = valid_frame_len && received_bytes == slot->tx_envelope.len;
     if (tx_success) {
       completed_tx_frames_++;
@@ -785,3 +831,5 @@ void IRAM_ATTR MhiRmtCsSpiTransport::on_frame_boundary_from_isr_() {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+
+#endif  // MHI_USE_TRANSPORT_RMT_CS_SPI

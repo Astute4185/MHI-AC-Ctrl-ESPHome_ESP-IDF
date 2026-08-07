@@ -15,12 +15,31 @@ constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE |
 struct MhiCommandTimeoutResult {
   uint32_t timed_out_mask{0U};
   uint32_t retry_mask{0U};
+  uint32_t grace_mask{0U};
   uint32_t exhausted_mask{0U};
   uint32_t superseded_mask{0U};
   uint8_t attempt{0U};
 
   bool timed_out() const {
     return timed_out_mask != 0U;
+  }
+
+  bool actionable() const {
+    return timed_out_mask != 0U || exhausted_mask != 0U;
+  }
+};
+
+struct MhiStagedCommandReplacement {
+  uint32_t expected_generation{0U};
+  MhiCommandState command_before_build{};
+  MhiCommandState command_after_build{};
+  MhiTxRuntime runtime_after_build{};
+  MhiFrameBuffer frame{};
+  MhiTxBuildResult build_result{};
+  MhiTxEnvelope envelope{};
+
+  bool valid() const {
+    return expected_generation != 0U && envelope.is_command();
   }
 };
 
@@ -34,6 +53,14 @@ class MhiCommandCoordinator {
                     MhiFrameBuffer& frame, MhiTxBuildResult& result, MhiTxEnvelope& envelope);
   void on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
                        MhiCommandState& command, bool staged, uint32_t staged_at_ms = 0U);
+  void on_stage_result(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
+                       const MhiTxRuntime& runtime_before_build, MhiCommandState& command, bool staged,
+                       uint32_t staged_at_ms = 0U);
+
+  bool prepare_staged_replacement(const MhiCommandState& command, const MhiTxBuildConfig& config,
+                                  MhiStagedCommandReplacement& replacement) const;
+  bool commit_staged_replacement(const MhiStagedCommandReplacement& replacement, MhiCommandState& command,
+                                 MhiTxRuntime& runtime, uint32_t staged_at_ms);
 
   bool on_tx_completion(const MhiTxCompletion& completion, MhiCommandState& command);
 
@@ -41,6 +68,26 @@ class MhiCommandCoordinator {
   uint32_t settle_pending_mask(uint32_t mask);
   uint32_t supersede_pending(const MhiCommandState& patch);
   MhiCommandTimeoutResult expire(uint32_t now_ms, MhiCommandState& command);
+
+  void set_confirmation_timeout_ms(uint32_t timeout_ms) {
+    normal_confirmation_timeout_ms_ = timeout_ms;
+  }
+
+  void set_final_confirmation_grace_ms(uint32_t grace_ms) {
+    final_confirmation_grace_ms_ = grace_ms;
+  }
+
+  uint32_t confirmation_timeout_ms() const {
+    return normal_confirmation_timeout_ms_;
+  }
+
+  uint32_t final_confirmation_grace_ms() const {
+    return final_confirmation_grace_ms_;
+  }
+
+  bool final_confirmation_grace_active() const {
+    return final_confirmation_grace_active_;
+  }
 
   uint32_t staged_timeout_mask(uint32_t now_ms, uint32_t timeout_ms);
 
@@ -85,6 +132,9 @@ class MhiCommandCoordinator {
   uint32_t coalesce_extended_supersession_(const MhiCommandIntent& intent, uint32_t confirm_mask,
                                            const MhiCommandState& patch);
   void apply_coalesced_extended_patch_(MhiCommandState& command);
+  void on_stage_result_(const MhiTxEnvelope& envelope, const MhiCommandState& command_before_build,
+                        const MhiTxRuntime* runtime_before_build, MhiCommandState& command, bool staged,
+                        uint32_t staged_at_ms);
   void reset_attempts_();
 
   MhiCommandConfirmation confirmation_{};
@@ -92,11 +142,16 @@ class MhiCommandCoordinator {
   bool command_in_flight_{false};
   MhiTxEnvelope in_flight_envelope_{};
   MhiCommandState in_flight_command_before_build_{};
+  MhiTxRuntime in_flight_runtime_before_build_{};
+  bool in_flight_runtime_snapshot_valid_{false};
   uint8_t next_attempt_{1U};
   uint8_t in_flight_attempt_{0U};
   uint8_t confirmation_attempt_{0U};
   uint32_t in_flight_staged_ms_{0U};
   bool staged_timeout_reported_{false};
+  uint32_t normal_confirmation_timeout_ms_{kMhiCommandConfirmationTimeoutMs};
+  uint32_t final_confirmation_grace_ms_{kMhiCommandFinalConfirmationGraceMs};
+  bool final_confirmation_grace_active_{false};
 
   MhiCommandState coalesced_extended_patch_{};
   bool coalesced_extended_patch_pending_{false};

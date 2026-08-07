@@ -55,48 +55,26 @@ MhiAcCtrl:
   # rmt_cs_spi owns both RX and TX; do not configure tx_driver.
   rx_driver: rmt_cs_spi
   command_worker: true
-
-globals:
-  - id: grid_voltage
-    type: int
-    restore_value: off
-    initial_value: "230"
+  power_estimation:
+    nominal_voltage: 230.0
+    power_factor: 1.0
+    standby_power: 0.0
+    max_sample_interval: 5min
 
 climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: "${friendly_name}"
-    on_control:
-      - logger.log: "Control input received; resetting derived power"
-      - sensor.template.publish:
-          id: power
-          state: 0
 
 sensor:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     current_power:
       name: "Current"
-      id: ac_current_power
-      on_value:
-        then:
-          - sensor.template.publish:
-              id: power
-              state: !lambda "return id(ac_current_power).state * id(grid_voltage);"
-  - platform: template
-    name: "MHI Current Power"
-    id: power
-    unit_of_measurement: W
-    icon: mdi:lightning-bolt
-  - platform: total_daily_energy
-    name: "MHI Daily Energy"
-    power_id: power
-    filters:
-      - multiply: 0.001
-      - throttle: 300s
-    unit_of_measurement: kWh
-    method: left
-    icon: mdi:lightning-bolt
+    estimated_power:
+      name: "MHI Estimated Power"
+    estimated_energy:
+      name: "MHI Estimated Energy"
 
 select:
   - platform: MhiAcCtrl

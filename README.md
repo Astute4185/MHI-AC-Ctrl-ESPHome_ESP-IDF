@@ -4,6 +4,8 @@ ESPHome external component for controlling Mitsubishi Heavy Industries air condi
 
 This project is an ESP-IDF-focused rewrite and hardening of the existing MHI-AC-Ctrl ESPHome integration. It keeps the ESPHome and Home Assistant entity model while separating protocol decoding, transport, state, publication, diagnostics, command confirmation, and hardware-driver responsibilities.
 
+Transport drivers are intentionally modular and portable. Each driver owns its ESPHome schema, target restrictions, compile definition, ESP-IDF dependencies, construction, hardware state, and diagnostics. The controller, transport manager, protocol decoder, command coordinator, and entity code depend only on common transport contracts. Adding or adapting a backend therefore requires local driver registration, code-generation wiring, tests, and hardware evidence rather than concrete-driver changes throughout the component.
+
 The major rewrite and feature implementation phase is now substantially complete. The project has moved into compatibility validation, maintenance, and incremental protocol discovery rather than further architectural replacement.
 
 This is not a clean-room protocol project. It builds on the original community MHI-AC-Ctrl work, upstream ESPHome component behaviour, and public MHI trace and capture knowledge.
@@ -12,10 +14,10 @@ This is not a clean-room protocol project. It builds on the original community M
 
 The primary runtime targets are the original **ESP32** and **ESP32-S3**, both using ESP-IDF. Core climate, fan, vane, 3D Auto, command-confirmation, worker, diagnostics, and transport work is implemented and hardware-tested on the available units.
 
-- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative default and fallback.
-- `external_clock_rx` with `fast_gpio_tx` is a validated split path on the original ESP32.
-- `rmt_spi_rx` with `fast_gpio_tx` is a validated hardware-assisted split path on ESP32-S3 and completed an approximately 47.5-hour soak with clean RX protocol health.
-- `rmt_cs_spi` is the consolidated FIFO-backed full-duplex path for the original dual-core ESP32 and ESP32-S3. It owns RX and TX, derives an internal chip-select boundary from the SCK idle gap, and uses `SPI_DMA_DISABLED` because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity.
+- `fast_gpio_rx` with `fast_gpio_tx` remains the conservative compatibility baseline and the internal recovery path for hardware-assisted transports. Hardware validation on both ESP32 and ESP32-S3 showed clean protocol RX and reliable semantic commands, with the known cost of roughly 200 ms-class synchronous RX loop occupancy.
+- `external_clock_rx` with `fast_gpio_tx` is **experimental**. Testing on both ESP32 and ESP32-S3 showed intermittent checksum/synchronisation corruption. The no-worker path is more reliable for commands, but the RX integrity issue remains, so this backend is not currently release-validated.
+- `rmt_spi_rx` with `fast_gpio_tx` is a validated hardware-assisted split path on ESP32-S3 and completed an approximately 47.5-hour soak with clean RX protocol health. Hardware comparison testing showed `command_worker: false` is strongly preferred because worker polling materially increases FastGPIO TX misses and command-confirmation failures.
+- `rmt_cs_spi` is the preferred consolidated FIFO-backed full-duplex path for the original dual-core ESP32 and ESP32-S3. It owns RX and TX, derives an internal chip-select boundary from the SCK idle gap, and uses `SPI_DMA_DISABLED` because 20-byte and 33-byte MHI frames fit within the SPI slave FIFO transaction capacity. Both worker and no-worker configurations have passed short hardware validation.
 - The original ESP32 `rmt_cs_spi` path applies a target-specific mode-3 receive-edge correction. ESP32-S3 uses the normal ESP-IDF mode-3 configuration.
 - The command coordinator now confirms commands from returned MOSI state, suppresses duplicates, retries bounded failures, and supersedes stale horizontal/3D confirmation generations with the latest composite intent.
 - Vertical vane, horizontal vane, and 3D Auto mapping completed an 80-case hardware matrix with all requested combinations confirmed.
@@ -26,31 +28,54 @@ The remaining work is primarily wider hardware compatibility testing, ESP32-C3 r
 
 Implemented functionality includes 20-byte and 33-byte frames, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, command confirmation, duplicate suppression, latest-intent command coalescing, common status sensors, opdata sensors, room-temperature publication control, external temperature input, and detailed runtime diagnostics.
 
+
+### Runtime Active Mode
+
+An optional Active Mode switch allows the component to remain connected as a
+receive-only observer without transmitting commands or background frames:
+
+```yaml
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    active_mode:
+      name: MHI Active Mode
+```
+
+Turning Active Mode off keeps RX, state publication, transport health, and
+diagnostics running. Pending commands and staged TX are cleared immediately.
+Turning it back on resumes transmission without replaying work queued before or
+while listen-only mode was active. Active Mode defaults to on after boot.
+
 ## Driver selection
 
 `rx_driver` is the primary selection. For split transports, TX is selected automatically. Existing configurations may still specify `tx_driver` explicitly.
+
+The modular transport boundary keeps hardware-specific implementation details out of the rest of the component. Selecting one driver compiles only that primary backend and its required recovery path. An unselected driver does not add runtime branches or alter protocol, command, state, or entity behaviour. Portability does not imply universal chip support: every driver declares the exact ESP32 variants and framework it supports, and invalid selections fail during configuration.
+
+See [Developing a new driver](docs/drivers/developing-drivers.md) for the required C++ contract, Python registration, compile guards, tests, and hardware-validation evidence.
 
 ### Driver combinations
 
 | RX selection | Effective TX | Status |
 |---|---|---|
-| `fast_gpio_rx` | `fast_gpio_tx` | **Stable baseline** |
-| `external_clock_rx` | `fast_gpio_tx` | **Validated on ESP32 and ESP32-S3** |
-| `rmt_spi_rx` | `fast_gpio_tx` | **Validated on ESP32-S3** |
-| `rmt_cs_spi` | Integrated full-duplex TX | **Validated on ESP32 and ESP32-S3** |
+| `fast_gpio_rx` | `fast_gpio_tx` | **Validated compatibility baseline on ESP32 and ESP32-S3** |
+| `external_clock_rx` | `fast_gpio_tx` | **Experimental; RX integrity failure on ESP32 and ESP32-S3** |
+| `rmt_spi_rx` | `fast_gpio_tx` | **Validated on ESP32-S3; no worker recommended** |
+| `rmt_cs_spi` | Integrated full-duplex TX | **Preferred; validated on ESP32 and ESP32-S3** |
 
-`Stable baseline` identifies the conservative default path. `Validated` means the path has passed hardware operation and regression testing on the listed target, while broader board and air-conditioner compatibility evidence may still be collected. `In development` is reserved for targets without runtime validation.
+`Validated` means the path has passed hardware operation and regression testing on the listed target, while broader board and air-conditioner compatibility evidence may still be collected. `Experimental` means the backend is useful for engineering and comparison work but has a known hardware-validation failure and should not be presented as a stable runtime choice.
 
 The split-driver paths remain available for compatibility and diagnostics. The full-duplex `rmt_cs_spi` path is now one FIFO-backed implementation across both supported chip families; the temporary non-DMA driver label and the DMA implementation have been removed.
 
-`command_worker` remains disabled by default for backward-compatible scheduling behaviour, but the worker-backed command lifecycle and classified RX path have been hardware-tested with queue-backed transports.
+`command_worker` remains disabled by default. Hardware testing shows that worker suitability is transport-dependent: it coexists cleanly with integrated `rmt_cs_spi`, but is not recommended for split `rmt_spi_rx` or `external_clock_rx` configurations that still depend on timing-sensitive `fast_gpio_tx`.
 
 ### Hardware driver guide
 
 | ESP chip | Validated hardware | Recommended selection | Status | Notes |
 |---|---|---|---|---|
-| ESP32 | M5Stack Atom based on original ESP32 | `rmt_cs_spi` for full-duplex hardware-assisted operation; `external_clock_rx` or `fast_gpio_rx` as split/fallback paths | **Validated** | The FIFO-backed full-duplex path passed 33-byte RX/TX and command testing. The original-ESP32 mode-3 receive-edge correction is applied internally. |
-| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_cs_spi` for full-duplex operation; `rmt_spi_rx` with `fast_gpio_tx` as the validated split path | **Validated** | The 80-case louver/3D matrix and clean transport run used the FIFO-backed full-duplex architecture. |
+| ESP32 | M5Stack Atom based on original ESP32 | `rmt_cs_spi` for preferred full-duplex operation; `fast_gpio_rx` as the compatibility fallback | **Validated** | `rmt_cs_spi` passed 33-byte RX/TX and command testing with and without the command worker. `external_clock_rx` remains experimental because intermittent RX corruption was reproduced on this target. |
+| ESP32-S3 | Current ESP32-S3 test unit; M5Stack Atom S3 Lite | `rmt_cs_spi` for preferred full-duplex operation; `rmt_spi_rx` with `fast_gpio_tx` as the validated split alternative; `fast_gpio_rx` as compatibility fallback | **Validated** | `rmt_spi_rx` is clean with the worker disabled. `external_clock_rx` remains experimental because intermittent RX corruption was reproduced on this target. |
 | ESP32-C3 | No runtime-validated board yet | `fast_gpio_rx` with `fast_gpio_tx` | **In development** | Representative compile coverage exists, including 20-byte frames and the three-speed fan profile. Runtime behaviour is not validated. |
 
 Add tested boards or modules to the matching chip row as results become available. Keep one consolidated row per ESP chip family rather than creating a row for every board.
@@ -93,10 +118,14 @@ MhiAcCtrl:
   miso_pin: 39
   rx_driver: rmt_spi_rx
   tx_driver: fast_gpio_tx
-  rmt_spi_frame_gap_us: 1000
+  command_worker: false
+  rmt_spi_rx:
+    frame_gap_us: 1000
 ```
 
-See [`DRIVER_SELECTION.md`](DRIVER_SELECTION.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
+For this split backend, leave the command worker disabled unless deliberately reproducing worker-specific diagnostics. Hardware comparison testing found materially more FastGPIO TX misses and command-confirmation failures with the worker enabled.
+
+See [the driver documentation](docs/drivers/README.md) for backend design, hardware constraints, tuning options, and invalid combinations. See [`DIAGNOSTICS.md`](DIAGNOSTICS.md) for runtime counters, health interpretation, soak-test evidence, and troubleshooting. The consolidated bus, frame, field, and confirmation findings are in [`notes/FINDINGS_MHI_PROTOCOL.md`](notes/FINDINGS_MHI_PROTOCOL.md).
 
 ## Hardware assumptions
 
@@ -123,7 +152,7 @@ external_components:
 | [`examples/rmt_cs_spi.yaml`](examples/rmt_cs_spi.yaml) | Minimal hardware-assisted ESP32/ESP32-S3 configuration | Integrated `rmt_cs_spi` with `command_worker` |
 | [`examples/full.yaml`](examples/full.yaml) | Full entity and sensor configuration | Integrated `rmt_cs_spi` with `command_worker` |
 | [`examples/external_sensor.yaml`](examples/external_sensor.yaml) | Home Assistant room-temperature input | Integrated `rmt_cs_spi` with `command_worker` |
-| [`examples/simple-energy-measurement.yaml`](examples/simple-energy-measurement.yaml) | Derived power and daily energy | Integrated `rmt_cs_spi` with `command_worker` |
+| [`examples/simple-energy-measurement.yaml`](examples/simple-energy-measurement.yaml) | Estimated power and session energy | Integrated `rmt_cs_spi` with `command_worker` |
 | [`examples/UniversalAircoController.yaml`](examples/UniversalAircoController.yaml) | Universal Airco Controller v1.0 | Integrated `rmt_cs_spi` with board-specific pins |
 
 The example pin values are not universal. Confirm the board mapping before flashing. The Universal Airco Controller installation guide is in [`UniversalAircoController/README.md`](UniversalAircoController/README.md).
@@ -153,25 +182,22 @@ mosi_pin
 miso_pin
 ```
 
-Optional fields:
+Optional base fields:
 
 ```text
 rx_driver
 tx_driver
 command_worker
-command_worker_start_delay_ms
-command_worker_stack_size
-command_worker_priority
-command_worker_core_id
-tx_background_interval_ms
-frame_start_idle_ms
-rmt_spi_frame_gap_us
 room_temp_timeout
 room_temperature_publish_interval
 room_temperature_immediate_delta
+opdata_freshness_timeout
 external_temperature_sensor
 fan_profile
+power_estimation
 ```
+
+Transport and command-worker tuning is optional and should normally be left at the selected backend's defaults. Driver-specific options are configured under the selected driver's nested subsection rather than as shared component fields. See [driver summary and tuning guide](docs/drivers/README.md#calling-a-driver-tunable) for the available tunables and when to use them.
 
 ## Room temperature publication rate limiting
 
@@ -197,7 +223,7 @@ The command worker is optional and disabled by default:
 command_worker: false
 ```
 
-The default preserves the conservative main-loop scheduling model. Enable the worker when using a queue-backed transport and you want command coordination and classified RX processing outside the ESPHome main loop:
+The default preserves the conservative main-loop scheduling model. Enable the worker only when the selected transport has been validated with it:
 
 ```yaml
 command_worker: true
@@ -205,7 +231,14 @@ command_worker: true
 
 The worker prepares immutable command frames, coordinates command lifecycle and confirmation, and drains supported queue-backed RX transports. The selected transport still owns all real-time bus timing, and confirmation begins only after the transport reports that the command frame was actually clocked onto the bus.
 
-For `external_clock_rx`, `rmt_spi_rx`, and `rmt_cs_spi`, the worker can perform RX draining, frame synchronisation, classification, and protocol decoding. Decoded status and opdata are committed to bounded latest-value snapshots, while the ESPHome main loop applies those snapshots and publishes entities. `fast_gpio_rx` remains a main-loop RX path because its `read()` operation performs synchronous clock sampling.
+Current hardware guidance is transport-specific:
+
+- `rmt_cs_spi`: worker and no-worker configurations both pass; worker mode is supported.
+- `rmt_spi_rx` + `fast_gpio_tx`: use `command_worker: false`; worker polling increased TX misses and command-confirmation failures in hardware testing.
+- `external_clock_rx` + `fast_gpio_tx`: keep the worker disabled for diagnostics; the backend still has an independent RX-integrity failure and is experimental.
+- `fast_gpio_rx`: RX remains synchronous and main-loop driven regardless of the worker setting; the no-worker path is the validated compatibility configuration.
+
+For queue-backed drivers, decoded status and opdata can be committed to bounded latest-value snapshots while the ESPHome main loop applies those snapshots and publishes entities.
 
 Separate `rx_worker` and `tx_worker` settings are no longer used.
 
@@ -387,6 +420,10 @@ sensor:
       name: Compressor total run time
     energy_used:
       name: Energy used
+    estimated_power:
+      name: Estimated power
+    estimated_energy:
+      name: Estimated energy
     indoor_unit_thi_r1:
       name: Indoor unit THI R1
     indoor_unit_thi_r2:
@@ -406,6 +443,40 @@ sensor:
 ```
 
 Opdata sensors are validity-gated. If the air conditioner does not provide a field, the entity should remain unavailable instead of publishing a bogus zero.
+
+### Estimated power and energy
+
+Units that expose CT/current opdata but not native energy can publish optional derived values:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  power_estimation:
+    nominal_voltage: 230.0
+    power_factor: 0.95
+    standby_power: 0.0
+    max_sample_interval: 5min
+
+sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    estimated_power:
+      name: MHI Estimated Power
+    estimated_energy:
+      name: MHI Estimated Energy
+```
+
+`estimated_power` is calculated from decoded current, configured voltage, and
+power factor. `standby_power` is an optional floor used only when decoded status
+confirms that the AC is off. No standby consumption is assumed by default.
+
+`estimated_energy` integrates consecutive fresh current samples and skips
+intervals longer than `max_sample_interval`, preventing a stale current value
+from being integrated across an outage or transport change. It is a boot-session
+total and may reset after restart; Home Assistant can handle resets for
+`total_increasing` sensors. Native `energy_used` remains separate and should be
+preferred when the unit provides it. These values are estimates, not
+revenue-grade measurements.
 
 ## External room temperature
 
@@ -529,16 +600,14 @@ tests/fixtures/
 tests/components/
 ```
 
-The ESPHome compile suite uses four representative configurations rather than compiling every runtime permutation:
+The default ESPHome compile gate uses four representative configurations for the current material transport boundaries. An optional extended gate also compiles the portable RX-only path across ESP32, S2, S3, C2, C3, C5, C6, C61, and S31:
 
-| Compile target | Representative coverage |
-|---|---|
-| ESP32-C3 FastGPIO | Legacy FastGPIO RX/TX, 20-byte frames, three-speed fan profile |
-| ESP32 `rmt_cs_spi` | Original ESP32 FIFO full-duplex path and mode-3 edge correction |
-| ESP32-S3 `rmt_cs_spi` | ESP32-S3 FIFO full-duplex path and command worker |
-| ESP32-S3 `rmt_spi_rx` | Split hardware RX with legacy `fast_gpio_tx` |
+```bash
+./scripts/compile-tests.sh compile representative
+./scripts/compile-tests.sh compile extended
+```
 
-Driver defaults, invalid combinations, frame semantics, fan profiles, command coordination, and confirmation behaviour are covered by host unit tests. Hardware timing and transport stability remain hardware-test concerns rather than compile-test permutations.
+See [`TRANSPORT_COMPILE_MATRIX.md`](TRANSPORT_COMPILE_MATRIX.md) for the target and driver breakdown. Extended success proves source/toolchain compatibility only; hardware timing and transport stability still require physical validation.
 
 Run host tests:
 
@@ -562,7 +631,7 @@ Run lint:
 
 - Keep sensor and opdata fields validity-gated.
 - Keep confirmed decoded state authoritative.
-- Keep `fast_gpio_rx` as the conservative default and fallback.
+- Keep `fast_gpio_rx` as the conservative default and internal recovery transport.
 - Treat `rx_driver` as the primary selector and auto-resolve TX for split drivers.
 - Preserve explicit `tx_driver` support for valid split configurations and RX-only diagnostics.
 - Give full-duplex transports exclusive ownership of RX and TX.
@@ -620,3 +689,48 @@ This project builds on prior MHI reverse-engineering and ESPHome integration wor
 ## License
 
 See `LICENSE`.
+
+### Operation-data freshness diagnostics
+
+Operation-data values are requested in a rotating cycle, so a previously valid
+sensor can remain unchanged even when its individual response has stopped. The
+component tracks the last accepted response for every enabled operation-data
+request and exposes optional diagnostic entities:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  opdata_freshness_timeout: 120s
+
+binary_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    opdata_fresh:
+      name: MHI Operation Data Fresh
+
+sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    opdata_oldest_age:
+      name: MHI Oldest Operation Data Age
+    opdata_stale_count:
+      name: MHI Stale Operation Data Requests
+    opdata_timeout_events:
+      name: MHI Operation Data Timeout Events
+```
+
+`opdata_fresh` becomes true only after every enabled request has produced an
+accepted response and none has exceeded the configured timeout. Timeout events
+count transitions into a stale state rather than every polling cycle. Existing
+operation-data values are retained; this phase adds observability without
+changing the current scheduler or publication behaviour.
+
+## Refactor validation
+
+The modular transport architecture, recovery path, Active Mode, operation-data freshness, and optional estimated-energy features have a consolidated software gate:
+
+```bash
+./scripts/release-gate.sh validate
+```
+
+Use `./scripts/release-gate.sh compile` for the representative ESP-IDF compile matrix and footprint report. Hardware validation remains a separate requirement for timing-sensitive transports. See [`TRANSPORT_REFACTOR_VALIDATION.md`](TRANSPORT_REFACTOR_VALIDATION.md).

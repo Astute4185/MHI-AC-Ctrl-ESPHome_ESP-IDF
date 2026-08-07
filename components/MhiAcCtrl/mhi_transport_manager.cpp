@@ -1,8 +1,5 @@
 #include "mhi_transport_manager.h"
 
-#include <algorithm>
-#include <cstring>
-
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -11,578 +8,552 @@ namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_transport";
 
-namespace {
-
-inline uint32_t elapsed_us(uint32_t now_us, uint32_t then_us) {
-  return static_cast<uint32_t>(now_us - then_us);
+void MhiTransportManager::set_primary(IMhiTransport* transport) {
+  primary_ = transport;
+  if (primary_ != nullptr) {
+    primary_->set_active_mode(active_mode_enabled_);
+  }
+  active_ = transport;
+  recovery_active_ = false;
+  recovery_attempted_ = false;
+  safe_mode_ = false;
+  state_ = MhiTransportState::STOPPED;
+  const uint32_t now_ms = millis();
+  state_since_ms_ = now_ms;
+  last_transition_ms_ = 0U;
+  state_changes_ = 0U;
+  recovery_attempts_ = 0U;
+  recovery_activations_ = 0U;
+  recovery_failures_ = 0U;
+  safe_mode_entries_ = 0U;
+  last_transport_error_ = {};
+  primary_failure_ = {};
+  recovery_failure_ = {};
+  protocol_health_ = {};
+  this->reset_runtime_health_window_(millis());
+  this->reset_transport_diagnostic_cursors_();
 }
 
-}  // namespace
-void MhiTransportManager::configure(int sck_pin, int mosi_pin, int miso_pin, const std::string& rx_driver,
-                                    const std::string& tx_driver, uint8_t frame_size_hint, uint32_t frame_start_idle_ms,
-                                    uint32_t external_clock_byte_gap_us, uint32_t external_clock_frame_gap_us,
-                                    uint32_t external_clock_min_edge_gap_us, const std::string& external_clock_edge,
-                                    uint32_t external_clock_sample_delay_nops) {
-  pins_.sck = sck_pin;
-  pins_.mosi = mosi_pin;
-  pins_.miso = miso_pin;
-  rx_driver_name_ = rx_driver.empty() ? "fast_gpio_rx" : rx_driver;
-  const bool integrated_duplex = rx_driver_name_ == "rmt_cs_spi";
-  transport_driver_name_ = integrated_duplex ? rx_driver_name_ : "split";
-  tx_driver_name_ = tx_driver.empty() ? (integrated_duplex ? rx_driver_name_ : "fast_gpio_tx") : tx_driver;
-
-  MhiFastGpioRxConfig fast_gpio_rx_config{};
-  fast_gpio_rx_config.frame_size_hint = frame_size_hint;
-  fast_gpio_rx_config.frame_start_idle_ms = frame_start_idle_ms;
-  fast_gpio_rx_.set_config(fast_gpio_rx_config);
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  MhiFastGpioTxConfig fast_gpio_tx_config{};
-  fast_gpio_tx_config.frame_size_hint = frame_size_hint;
-  fast_gpio_tx_config.frame_start_idle_ms = frame_start_idle_ms;
-  fast_gpio_tx_config.max_exchange_time_ms = tx_marker_timeout_ms_;
-  fast_gpio_tx_.set_config(fast_gpio_tx_config);
-#endif
-#if MHI_ENABLE_RMT_SPI_RX_DRIVER
-  MhiRmtSpiRxConfig rmt_spi_rx_config{};
-  rmt_spi_rx_config.frame_size_hint = frame_size_hint;
-  rmt_spi_rx_config.frame_gap_us = rmt_spi_frame_gap_us_;
-  rmt_spi_rx_.set_config(rmt_spi_rx_config);
-#endif
-#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
-  MhiRmtCsSpiConfig rmt_cs_spi_config{};
-  rmt_cs_spi_config.frame_size_hint = frame_size_hint;
-  rmt_cs_spi_config.frame_gap_us = rmt_spi_frame_gap_us_;
-  rmt_cs_spi_.set_config(rmt_cs_spi_config);
-#endif
-#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
-  MhiExternalClockRxConfig external_clock_rx_config{};
-  external_clock_rx_config.frame_size_hint = frame_size_hint;
-  external_clock_rx_config.byte_gap_reset_us = external_clock_byte_gap_us;
-  external_clock_rx_config.frame_gap_reset_us = external_clock_frame_gap_us;
-  external_clock_rx_config.min_edge_gap_us = external_clock_min_edge_gap_us;
-  external_clock_rx_config.sample_edge =
-      external_clock_edge == "falling" ? MhiExternalClockSampleEdge::FALLING : MhiExternalClockSampleEdge::RISING;
-  external_clock_rx_config.sample_delay_nops = external_clock_sample_delay_nops;
-  external_clock_rx_.set_config(external_clock_rx_config);
-#endif
-  portENTER_CRITICAL(&tx_mux_);
-  pending_tx_ = false;
-  pending_tx_envelope_ = {};
-  tx_completions_.reset();
-  tx_in_progress_ = false;
-  pending_tx_generation_ = 0U;
-  pending_tx_queued_after_marker_sequence_ = 0U;
-  portEXIT_CRITICAL(&tx_mux_);
-  last_consumed_bus_marker_sequence_ = 0U;
-  last_stale_bus_marker_sequence_ = 0U;
-  tx_backoff_until_ms_ = 0U;
-  last_duplex_tx_completed_ = 0U;
-  last_duplex_tx_failures_ = 0U;
-
-  this->resolve_drivers();
-}
-void MhiTransportManager::resolve_drivers() {
-  duplex_ = nullptr;
-  if (rx_driver_name_ == "rmt_cs_spi") {
-#if MHI_ENABLE_RMT_CS_SPI_TRANSPORT
-    transport_driver_name_ = "rmt_cs_spi";
-    tx_driver_name_ = "rmt_cs_spi";
-    duplex_ = &rmt_cs_spi_;
-    rx_ = nullptr;
-    tx_ = nullptr;
-    return;
-#else
-    ESP_LOGW(TAG,
-             "rmt_cs_spi is only built for ESP-IDF on ESP32 and ESP32-S3; falling back to split "
-             "FastGPIO transport");
-    transport_driver_name_ = "split";
-    rx_driver_name_ = "fast_gpio_rx";
-    tx_driver_name_ = "fast_gpio_tx";
-#endif
+void MhiTransportManager::set_recovery(IMhiTransport* transport) {
+  recovery_ = transport;
+  if (recovery_ != nullptr) {
+    recovery_->set_active_mode(active_mode_enabled_);
   }
-  transport_driver_name_ = "split";
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &fast_gpio_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#else
-  if (rx_driver_name_ == "fast_gpio_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &fast_gpio_rx_;
-    tx_ = nullptr;
-    ESP_LOGW(TAG, "Split FastGPIO TX is not built for this target; TX disabled");
-    return;
-  }
-#endif
-#if MHI_ENABLE_RMT_SPI_RX_DRIVER
-  if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "none") {
-    rx_ = &rmt_spi_rx_;
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-    tx_ = &null_tx_;
-#else
-    tx_ = nullptr;
-#endif
-    return;
-  }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "rmt_spi_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &rmt_spi_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#endif
-#endif
-
-#if MHI_ENABLE_EXTERNAL_CLOCK_RX_DRIVER
-  if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "none") {
-    rx_ = &external_clock_rx_;
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-    tx_ = &null_tx_;
-#else
-    tx_ = nullptr;
-#endif
-    return;
-  }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (rx_driver_name_ == "external_clock_rx" && tx_driver_name_ == "fast_gpio_tx") {
-    rx_ = &external_clock_rx_;
-    tx_ = &fast_gpio_tx_;
-    return;
-  }
-#endif
-#else
-  if (rx_driver_name_ == "external_clock_rx") {
-    ESP_LOGW(TAG, "external_clock_rx is only built for ESP32 and ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
-  }
-#endif
-#if !MHI_ENABLE_RMT_SPI_RX_DRIVER
-  if (rx_driver_name_ == "rmt_spi_rx") {
-    ESP_LOGW(TAG, "rmt_spi_rx is only built for ESP32-S3; falling back to fast_gpio_rx/fast_gpio_tx");
-  }
-#endif
-
-  ESP_LOGW(TAG, "Unsupported driver combination RX=%s TX=%s; falling back to fast_gpio_rx/fast_gpio_tx",
-           rx_driver_name_.c_str(), tx_driver_name_.c_str());
-
-  rx_driver_name_ = "fast_gpio_rx";
-  tx_driver_name_ = "fast_gpio_tx";
-  rx_ = &fast_gpio_rx_;
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  tx_ = &fast_gpio_tx_;
-#else
-  tx_ = nullptr;
-#endif
 }
 
 bool MhiTransportManager::setup() {
-  ESP_LOGCONFIG(TAG, "Transport setup: requested transport=%s RX=%s TX=%s", transport_driver_name_.c_str(),
-                rx_driver_name_.c_str(), tx_driver_name_.c_str());
-  if (duplex_ != nullptr) {
-    const bool duplex_ready = duplex_->setup(pins_);
-    rx_ready_ = duplex_ready;
-    tx_ready_ = duplex_ready;
+  active_ = primary_;
+  recovery_active_ = false;
+  recovery_attempted_ = false;
+  safe_mode_ = false;
+  state_changes_ = 0U;
+  recovery_attempts_ = 0U;
+  recovery_activations_ = 0U;
+  recovery_failures_ = 0U;
+  safe_mode_entries_ = 0U;
+  state_ = MhiTransportState::STOPPED;
+  state_since_ms_ = millis();
+  last_transition_ms_ = 0U;
+  this->set_state_(MhiTransportState::STARTING, millis());
+  last_transport_error_ = {};
+  primary_failure_ = {};
+  recovery_failure_ = {};
+
+  if (primary_ == nullptr) {
+    last_transport_error_ =
+        MhiTransportResult::failure(MhiTransportError::DRIVER_NOT_BOUND, "bind_primary_transport").error;
+    ESP_LOGE(TAG, "No primary transport was injected by codegen");
+    this->enter_safe_mode_(last_transport_error_);
+    this->publish_driver_diagnostics_();
+    return false;
+  }
+
+  ESP_LOGCONFIG(TAG, "Transport setup: primary=%s recovery=%s", this->primary_name(), this->recovery_name());
+
+  primary_->set_auto_tx_flush(auto_tx_flush_);
+  primary_->set_rx_byte_critical_sections(rx_byte_critical_sections_);
+  primary_->set_active_mode(active_mode_enabled_);
+
+  MhiTransportResult setup_result = primary_->setup();
+  if (setup_result.ok && (!primary_->rx_ready() || !primary_->tx_ready())) {
+    setup_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "primary_ready_after_setup", 0,
+                                               "transport setup succeeded without ready RX/TX");
+  }
+
+  bool ready = setup_result.ok;
+  if (!ready) {
+    primary_failure_ = setup_result.error;
+    last_transport_error_ = setup_result.error;
+    ready = this->activate_recovery_(setup_result);
   } else {
-    rx_ready_ = rx_ != nullptr && rx_->setup(pins_);
-    tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
+    this->set_state_(MhiTransportState::WAITING_FOR_TRAFFIC, millis());
+    this->reset_runtime_health_window_(millis());
   }
 
-  if (!rx_ready_ || !tx_ready_) {
-    ESP_LOGW(TAG, "Transport %s RX=%s TX=%s failed to start; falling back to fast_gpio_rx/fast_gpio_tx",
-             transport_driver_name_.c_str(), rx_driver_name_.c_str(), tx_driver_name_.c_str());
-    if (duplex_ != nullptr) {
-      duplex_->shutdown();
-      duplex_ = nullptr;
-    } else if (rx_ != nullptr && rx_ready_) {
-      rx_->shutdown();
-    }
+  this->publish_driver_diagnostics_();
 
-    transport_driver_name_ = "split";
-    rx_driver_name_ = "fast_gpio_rx";
-    tx_driver_name_ = "fast_gpio_tx";
-    rx_ = &fast_gpio_rx_;
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-    tx_ = &fast_gpio_tx_;
-#else
-    tx_ = nullptr;
-#endif
-    rx_ready_ = rx_->setup(pins_);
-    tx_ready_ = tx_ == nullptr || tx_->setup(pins_);
-  }
-  if (diagnostics_ != nullptr) {
-    diagnostics_->set_rx_driver_name(this->rx_name());
-    diagnostics_->set_tx_driver_name(this->tx_name());
-    diagnostics_->set_rx_driver_ready(rx_ready_);
-    diagnostics_->set_tx_driver_ready(tx_ready_);
-  }
+  ESP_LOGCONFIG(TAG, "Transport active: strategy=%s RX=%s ready=%s TX=%s ready=%s recovery=%s state=%s",
+                active_ == nullptr ? "none" : active_->name(), this->rx_name(), this->rx_ready() ? "YES" : "NO",
+                this->tx_name(), this->tx_ready() ? "YES" : "NO", recovery_active_ ? "YES" : "NO",
+                mhi_transport_state_name(this->state()));
 
-  ESP_LOGCONFIG(TAG, "Transport active: transport=%s RX=%s ready=%s TX=%s ready=%s", transport_driver_name_.c_str(),
-                this->rx_name(), rx_ready_ ? "YES" : "NO", this->tx_name(), tx_ready_ ? "YES" : "NO");
-  if (duplex_ == nullptr) {
-    ESP_LOGCONFIG(TAG, "TX armed marker scheduling: max_marker_age=%luus timeout=%lums fail_backoff=%lums",
-                  static_cast<unsigned long>(tx_marker_arm_max_age_us_),
-                  static_cast<unsigned long>(tx_marker_timeout_ms_),
-                  static_cast<unsigned long>(tx_failure_backoff_ms_));
-  } else {
+  if (active_ != nullptr && active_->capabilities().uses_bus_marker) {
+    ESP_LOGCONFIG(TAG, "TX ownership: split transport uses marker-armed real-time transmission");
+  } else if (active_ != nullptr && active_->capabilities().integrated_duplex) {
     ESP_LOGCONFIG(TAG, "TX ownership: duplex transport stages one frame for the next GP-SPI transaction");
   }
 
-  return rx_ready_ && tx_ready_;
+  return ready && this->rx_ready() && this->tx_ready() && !safe_mode_;
 }
+
+bool MhiTransportManager::activate_recovery_(const MhiTransportResult& primary_result) {
+  if (recovery_attempted_) {
+    return this->enter_safe_mode_(primary_result.error);
+  }
+  recovery_attempted_ = true;
+  recovery_attempts_++;
+
+  if (transition_listener_ != nullptr) {
+    transition_listener_->on_transport_switch_begin(primary_result.error);
+  }
+
+  IMhiTransport* failed_primary = primary_;
+  active_ = nullptr;
+  this->reset_transport_diagnostic_cursors_();
+
+  if (failed_primary != nullptr) {
+    failed_primary->shutdown();
+  }
+
+  if (recovery_ == nullptr || recovery_ == primary_) {
+    ESP_LOGE(TAG, "Primary transport %s failed and no internal recovery transport is available",
+             failed_primary == nullptr ? "none" : failed_primary->name());
+    return this->enter_safe_mode_(primary_result.error);
+  }
+
+  ESP_LOGW(TAG, "Primary transport %s failed: error=%s operation=%s native=%ld; activating internal recovery %s",
+           failed_primary == nullptr ? "none" : failed_primary->name(),
+           mhi_transport_error_name(primary_result.error.code),
+           primary_result.error.operation == nullptr ? "none" : primary_result.error.operation,
+           static_cast<long>(primary_result.error.native_code), recovery_->name());
+
+  recovery_->set_auto_tx_flush(auto_tx_flush_);
+  recovery_->set_rx_byte_critical_sections(rx_byte_critical_sections_);
+  recovery_->set_active_mode(active_mode_enabled_);
+
+  MhiTransportResult recovery_result = recovery_->setup();
+  if (recovery_result.ok && (!recovery_->rx_ready() || !recovery_->tx_ready())) {
+    recovery_result = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "recovery_ready_after_setup",
+                                                  0, "recovery setup succeeded without ready RX/TX");
+  }
+
+  if (!recovery_result.ok) {
+    recovery_failure_ = recovery_result.error;
+    recovery_failures_++;
+    last_transport_error_ = recovery_result.error;
+    recovery_->shutdown();
+    ESP_LOGE(TAG, "Internal recovery transport %s failed: error=%s operation=%s native=%ld", recovery_->name(),
+             mhi_transport_error_name(recovery_result.error.code),
+             recovery_result.error.operation == nullptr ? "none" : recovery_result.error.operation,
+             static_cast<long>(recovery_result.error.native_code));
+    return this->enter_safe_mode_(recovery_result.error);
+  }
+
+  active_ = recovery_;
+  recovery_active_ = true;
+  safe_mode_ = false;
+  this->set_state_(MhiTransportState::WAITING_FOR_TRAFFIC, millis());
+  this->reset_runtime_health_window_(millis());
+  this->reset_transport_diagnostic_cursors_();
+
+  ESP_LOGW(TAG, "Internal recovery transport %s started; waiting for valid MHI traffic", recovery_->name());
+  return true;
+}
+
+bool MhiTransportManager::enter_safe_mode_(const MhiTransportErrorDetail& reason) {
+  if (safe_mode_) {
+    return false;
+  }
+
+  if (active_ != nullptr) {
+    active_->shutdown();
+  }
+
+  active_ = nullptr;
+  recovery_active_ = false;
+  safe_mode_ = true;
+  safe_mode_entries_++;
+  this->set_state_(MhiTransportState::SAFE_MODE, millis());
+  last_transport_error_ = reason;
+  this->reset_transport_diagnostic_cursors_();
+
+  if (transition_listener_ != nullptr) {
+    transition_listener_->on_transport_safe_mode(reason);
+  }
+
+  ESP_LOGE(TAG, "Transport safe mode entered: error=%s operation=%s native=%ld", mhi_transport_error_name(reason.code),
+           reason.operation == nullptr ? "none" : reason.operation, static_cast<long>(reason.native_code));
+  return false;
+}
+
 void MhiTransportManager::loop() {
-  if (duplex_ != nullptr) {
-    duplex_->loop();
-    this->update_duplex_diagnostics_();
+  if (active_ == nullptr || safe_mode_) {
     return;
   }
 
-  if (rx_ != nullptr) {
-    rx_->loop();
-  }
+  active_->loop();
+  this->update_transport_diagnostics_();
+  this->evaluate_runtime_health_(millis());
+}
 
-  if (tx_ != nullptr) {
-    tx_->loop();
-  }
-
-  if (auto_tx_flush_) {
-    this->flush_tx_on_bus_marker();
-  }
+void MhiTransportManager::observe_protocol_health(const MhiProtocolHealth& health) {
+  protocol_health_ = health;
+  protocol_health_observed_ = true;
 }
 
 void MhiTransportManager::shutdown() {
-  if (duplex_ != nullptr) {
-    duplex_->shutdown();
-  } else if (rx_ != nullptr) {
-    rx_->shutdown();
+  if (active_ != nullptr) {
+    active_->shutdown();
   }
-  portENTER_CRITICAL(&tx_mux_);
-  pending_tx_ = false;
-  tx_in_progress_ = false;
-  pending_tx_envelope_ = {};
-  tx_completions_.reset();
-  portEXIT_CRITICAL(&tx_mux_);
-
-  rx_ready_ = false;
-  tx_ready_ = false;
+  active_ = nullptr;
+  this->set_state_(MhiTransportState::STOPPED, millis());
 }
 
 std::size_t MhiTransportManager::read_rx(uint8_t* dst, std::size_t max_len) {
-  const std::size_t len = this->read_rx_raw_(dst, max_len);
-
-  if (duplex_ == nullptr && auto_tx_flush_) {
-    this->flush_tx_on_bus_marker();
-  }
-
-  return len;
-}
-std::size_t MhiTransportManager::read_rx_raw_(uint8_t* dst, std::size_t max_len) {
-  if (!rx_ready_ || dst == nullptr || max_len == 0U) {
+  if (active_ == nullptr || safe_mode_) {
     return 0U;
   }
 
-  std::size_t len = 0U;
-  if (duplex_ != nullptr) {
-    len = duplex_->read(dst, max_len);
-  } else if (rx_ != nullptr) {
-    len = rx_->read(dst, max_len);
-  }
+  const std::size_t len = active_->read(dst, max_len);
   if (len > 0U && diagnostics_ != nullptr) {
+    // MhiStats owns its own ESP-IDF critical section, so worker-side RX
+    // accounting is safe. Transport counter aggregation remains main-loop
+    // owned because its cursors are manager state, not atomic counters.
     const uint32_t now = millis();
     diagnostics_->stats().on_rx_chunk(now);
     diagnostics_->stats().on_rx_bytes(static_cast<uint32_t>(len), now);
   }
-
   return len;
 }
 
 bool MhiTransportManager::queue_tx(const MhiTxEnvelope& envelope) {
-  if (!tx_ready_ || !envelope.valid()) {
-    if (diagnostics_ != nullptr) {
-      diagnostics_->stats().on_tx_failure();
-    }
+  if (!active_mode_enabled_) {
     return false;
-  }
-  if (duplex_ != nullptr) {
-    const bool staged = duplex_->send(envelope);
-    if (!staged && diagnostics_ != nullptr) {
-      diagnostics_->stats().on_tx_failure();
-    }
-    return staged;
   }
 
-  if (tx_ == nullptr) {
+  if (active_ == nullptr || safe_mode_) {
     if (diagnostics_ != nullptr) {
       diagnostics_->stats().on_tx_failure();
     }
     return false;
   }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  if (tx_ == &null_tx_) {
-    if (envelope.is_command()) {
-      MhiTxCompletion completion{};
-      completion.generation = envelope.generation;
-      completion.kind = envelope.kind;
-      completion.command_mask = envelope.command_mask;
-      completion.intent = envelope.intent;
-      completion.success = false;
-      completion.completed_at_ms = millis();
-      portENTER_CRITICAL(&tx_mux_);
-      const bool stored = tx_completions_.push(completion);
-      portEXIT_CRITICAL(&tx_mux_);
-      if (!stored && diagnostics_ != nullptr) {
-        diagnostics_->stats().on_tx_failure();
-      }
-    }
-    return true;
-  }
-#endif
-  this->queue_pending_tx_(envelope);
-  return true;
+
+  return active_->queue_tx(envelope);
 }
 
 bool MhiTransportManager::take_tx_completion(MhiTxCompletion& completion) {
-  if (duplex_ != nullptr) {
-    return duplex_->take_tx_completion(completion);
-  }
-
-  portENTER_CRITICAL(&tx_mux_);
-  const bool available = tx_completions_.pop(completion);
-  portEXIT_CRITICAL(&tx_mux_);
-  return available;
-}
-std::size_t MhiTransportManager::tx_completion_queue_depth() const {
-  if (duplex_ != nullptr) {
-    return duplex_->tx_completion_queue_depth();
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const std::size_t value = tx_completions_.size();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return value;
-}
-std::size_t MhiTransportManager::tx_completion_queue_high_water() const {
-  if (duplex_ != nullptr) {
-    return duplex_->tx_completion_queue_high_water();
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const std::size_t value = tx_completions_.high_water_mark();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return value;
-}
-uint32_t MhiTransportManager::tx_completion_queue_dropped() const {
-  if (duplex_ != nullptr) {
-    return duplex_->tx_completion_queue_dropped();
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const uint32_t value = tx_completions_.dropped();
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return value;
+  return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->take_tx_completion(completion);
 }
 
-std::size_t MhiTransportManager::rx_queue_depth() const {
-  return duplex_ == nullptr ? 0U : duplex_->rx_queue_depth();
-}
-std::size_t MhiTransportManager::rx_queue_high_water() const {
-  return duplex_ == nullptr ? 0U : duplex_->rx_queue_high_water();
+MhiTxReplaceResult MhiTransportManager::replace_pending_command(uint32_t expected_generation,
+                                                                const MhiTxEnvelope& replacement) {
+  if (!active_mode_enabled_ || active_ == nullptr || safe_mode_) {
+    return MhiTxReplaceResult::REJECTED;
+  }
+  return active_->replace_pending_command(expected_generation, replacement);
 }
 
-uint32_t MhiTransportManager::rx_queue_overwritten() const {
-  return duplex_ == nullptr ? 0U : duplex_->rx_queue_overwritten();
+void MhiTransportManager::set_active_mode(bool enabled) {
+  active_mode_enabled_ = enabled;
+  if (primary_ != nullptr) {
+    primary_->set_active_mode(enabled);
+  }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_active_mode(enabled);
+  }
 }
 
 bool MhiTransportManager::has_pending_tx() const {
-  if (duplex_ != nullptr) {
-    return false;
-  }
-  portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  const bool pending = pending_tx_ || tx_in_progress_;
-  portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&tx_mux_));
-  return pending;
+  return active_mode_enabled_ && active_ != nullptr && !safe_mode_ && active_->has_pending_tx();
 }
 
 bool MhiTransportManager::flush_tx_on_bus_marker() {
-  if (duplex_ != nullptr) {
+  if (!active_mode_enabled_ || active_ == nullptr || safe_mode_) {
     return false;
   }
-  return this->flush_pending_tx_on_bus_marker_();
+  return active_->flush_tx_on_bus_marker();
 }
 
-void MhiTransportManager::update_duplex_diagnostics_() {
-  if (duplex_ == nullptr || diagnostics_ == nullptr) {
-    return;
-  }
-  const uint32_t completed = duplex_->completed_tx_frames();
-  const uint32_t failures = duplex_->tx_failures();
+std::size_t MhiTransportManager::tx_completion_queue_depth() const {
+  return active_ == nullptr ? 0U : active_->tx_completion_queue_depth();
+}
 
-  while (last_duplex_tx_completed_ != completed) {
-    diagnostics_->stats().on_tx_frame(millis());
-    last_duplex_tx_completed_++;
-  }
+std::size_t MhiTransportManager::tx_completion_queue_high_water() const {
+  return active_ == nullptr ? 0U : active_->tx_completion_queue_high_water();
+}
 
-  while (last_duplex_tx_failures_ != failures) {
-    diagnostics_->stats().on_tx_failure();
-    last_duplex_tx_failures_++;
+uint32_t MhiTransportManager::tx_completion_queue_dropped() const {
+  return active_ == nullptr ? 0U : active_->tx_completion_queue_dropped();
+}
+
+std::size_t MhiTransportManager::rx_queue_depth() const {
+  return active_ == nullptr ? 0U : active_->rx_queue_depth();
+}
+
+std::size_t MhiTransportManager::rx_queue_high_water() const {
+  return active_ == nullptr ? 0U : active_->rx_queue_high_water();
+}
+
+uint32_t MhiTransportManager::rx_queue_overwritten() const {
+  return active_ == nullptr ? 0U : active_->rx_queue_overwritten();
+}
+
+void MhiTransportManager::set_auto_tx_flush(bool enabled) {
+  auto_tx_flush_ = enabled;
+  if (primary_ != nullptr) {
+    primary_->set_auto_tx_flush(enabled);
   }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_auto_tx_flush(enabled);
+  }
+}
+
+bool MhiTransportManager::auto_tx_flush() const {
+  return active_ != nullptr ? active_->auto_tx_flush() : auto_tx_flush_;
 }
 
 void MhiTransportManager::set_rx_byte_critical_sections(bool enabled) {
-  fast_gpio_rx_.set_byte_critical_sections(enabled);
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  fast_gpio_tx_.set_byte_critical_sections(enabled);
-#endif
+  rx_byte_critical_sections_ = enabled;
+  if (primary_ != nullptr) {
+    primary_->set_rx_byte_critical_sections(enabled);
+  }
+  if (recovery_ != nullptr && recovery_ != primary_) {
+    recovery_->set_rx_byte_critical_sections(enabled);
+  }
 }
 
 bool MhiTransportManager::rx_byte_critical_sections() const {
-  return fast_gpio_rx_.byte_critical_sections();
+  return active_ != nullptr ? active_->rx_byte_critical_sections() : rx_byte_critical_sections_;
 }
 
 bool MhiTransportManager::tx_uses_bus_marker() const {
-  if (duplex_ != nullptr) {
-    return false;
-  }
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  return tx_ == &fast_gpio_tx_;
-#else
-  return false;
-#endif
+  return active_ != nullptr && active_->capabilities().uses_bus_marker;
 }
+
 const char* MhiTransportManager::rx_name() const {
-  if (duplex_ != nullptr) {
-    return duplex_->name();
-  }
-  return rx_ == nullptr ? "none" : rx_->name();
+  return active_ == nullptr ? "none" : active_->rx_name();
 }
 
 const char* MhiTransportManager::tx_name() const {
-  if (duplex_ != nullptr) {
-    return duplex_->name();
+  return active_ == nullptr ? "none" : active_->tx_name();
+}
+
+MhiTransportState MhiTransportManager::state() const {
+  return state_;
+}
+
+MhiTransportDiagnosticsSnapshot MhiTransportManager::diagnostics_snapshot(uint32_t now_ms) const {
+  MhiTransportDiagnosticsSnapshot snapshot{};
+  snapshot.state = state_;
+  snapshot.active_transport_name = active_ == nullptr ? "none" : active_->name();
+  snapshot.primary_transport_name = this->primary_name();
+  snapshot.recovery_transport_name = this->recovery_name();
+  snapshot.last_error = last_transport_error_;
+  snapshot.primary_failure = primary_failure_;
+  snapshot.recovery_failure = recovery_failure_;
+  snapshot.state_since_ms = state_since_ms_;
+  snapshot.last_transition_ms = last_transition_ms_;
+  snapshot.last_valid_frame_age_ms =
+      protocol_health_.last_valid_frame_ms == 0U || now_ms < protocol_health_.last_valid_frame_ms
+          ? 0U
+          : this->elapsed_ms_(now_ms, protocol_health_.last_valid_frame_ms);
+  snapshot.state_changes = state_changes_;
+  snapshot.recovery_attempts = recovery_attempts_;
+  snapshot.recovery_activations = recovery_activations_;
+  snapshot.recovery_failures = recovery_failures_;
+  snapshot.safe_mode_entries = safe_mode_entries_;
+  snapshot.transport_healthy = state_ == MhiTransportState::HEALTHY || state_ == MhiTransportState::RECOVERY_ACTIVE;
+  snapshot.recovery_active = recovery_active_;
+  snapshot.safe_mode = safe_mode_;
+  return snapshot;
+}
+
+void MhiTransportManager::set_state_(MhiTransportState state, uint32_t now_ms) {
+  if (state_ == state) {
+    return;
   }
-  return tx_ == nullptr ? "none" : tx_->name();
-}
-void MhiTransportManager::queue_pending_tx_(const MhiTxEnvelope& envelope) {
-  portENTER_CRITICAL(&tx_mux_);
-  pending_tx_envelope_ = envelope;
-  pending_tx_ = pending_tx_envelope_.valid();
-  pending_tx_generation_++;
 
-  const MhiBusMarker marker = rx_ == nullptr ? MhiBusMarker{} : rx_->bus_marker();
-  pending_tx_queued_after_marker_sequence_ = marker.valid ? marker.sequence : 0U;
-  portEXIT_CRITICAL(&tx_mux_);
-}
-bool MhiTransportManager::pending_tx_available_() const {
-  return pending_tx_ && pending_tx_envelope_.valid();
+  state_ = state;
+  state_since_ms_ = now_ms;
+  last_transition_ms_ = now_ms;
+  state_changes_++;
 }
 
-void MhiTransportManager::clear_pending_tx_() {
-  pending_tx_ = false;
-  pending_tx_envelope_ = {};
-}
+bool MhiTransportManager::handle_runtime_failure_(const MhiTransportErrorDetail& reason) {
+  last_transport_error_ = reason;
+  this->set_state_(MhiTransportState::FAILED, millis());
 
-bool MhiTransportManager::flush_pending_tx_on_bus_marker_() {
-  if (tx_ == nullptr || !tx_ready_ || rx_ == nullptr || !rx_ready_) {
-    return false;
+  if (recovery_active_) {
+    recovery_failure_ = reason;
+    recovery_failures_++;
+    ESP_LOGE(TAG, "Internal recovery transport %s failed at runtime: error=%s operation=%s",
+             active_ == nullptr ? "none" : active_->name(), mhi_transport_error_name(reason.code),
+             reason.operation == nullptr ? "none" : reason.operation);
+    return this->enter_safe_mode_(reason);
   }
 
-  const MhiBusMarker marker = rx_->bus_marker();
-  if (!marker.valid || marker.sequence == 0U) {
-    return false;
+  primary_failure_ = reason;
+  return this->activate_recovery_({false, reason});
+}
+
+void MhiTransportManager::reset_runtime_health_window_(uint32_t now_ms) {
+  active_started_ms_ = now_ms;
+  first_traffic_seen_ms_ = 0U;
+  valid_frames_at_activation_ = protocol_health_.valid_frames;
+  last_health_check_ms_ = now_ms;
+  traffic_observed_ = false;
+  active_health_confirmed_ = false;
+  recovery_ready_notified_ = false;
+}
+
+void MhiTransportManager::mark_runtime_healthy_() {
+  active_health_confirmed_ = true;
+  this->set_state_(recovery_active_ ? MhiTransportState::RECOVERY_ACTIVE : MhiTransportState::HEALTHY, millis());
+
+  if (recovery_active_ && !recovery_ready_notified_) {
+    recovery_activations_++;
+    recovery_ready_notified_ = true;
+    if (transition_listener_ != nullptr) {
+      transition_listener_->on_transport_recovery_ready();
+    }
+    ESP_LOGW(TAG, "Internal recovery transport %s confirmed healthy after %lu valid frames",
+             active_ == nullptr ? "none" : active_->name(),
+             static_cast<unsigned long>(protocol_health_.valid_frames - valid_frames_at_activation_));
   }
-  const uint32_t marker_age_us = elapsed_us(micros(), marker.frame_end_us);
+}
+
+void MhiTransportManager::evaluate_runtime_health_(uint32_t now_ms) {
+  if (active_ == nullptr || safe_mode_) {
+    return;
+  }
+
+  if (health_policy_.health_check_interval_ms > 0U &&
+      this->elapsed_ms_(now_ms, last_health_check_ms_) < health_policy_.health_check_interval_ms) {
+    return;
+  }
+  last_health_check_ms_ = now_ms;
+
+  const MhiTransportHealth transport_health = active_->health();
+  if (transport_health.fault_latched) {
+    MhiTransportErrorDetail error = active_->last_error();
+    if (!error.present()) {
+      error = MhiTransportResult::failure(MhiTransportError::INTERNAL_INVARIANT, "transport_fault_latched").error;
+    }
+    this->handle_runtime_failure_(error);
+    return;
+  }
+
+  if (transport_health.traffic_seen && !traffic_observed_) {
+    traffic_observed_ = true;
+    first_traffic_seen_ms_ = now_ms;
+  }
+
+  const uint32_t valid_frames = protocol_health_.valid_frames - valid_frames_at_activation_;
+  const uint32_t required_valid_frames =
+      health_policy_.healthy_frame_count == 0U ? 1U : health_policy_.healthy_frame_count;
+
+  if (protocol_health_observed_ && valid_frames >= required_valid_frames) {
+    this->mark_runtime_healthy_();
+  }
+
+  if (active_health_confirmed_) {
+    const uint32_t last_valid_ms = protocol_health_.last_valid_frame_ms;
+    if (health_policy_.stalled_traffic_timeout_ms > 0U &&
+        this->elapsed_ms_(now_ms, last_valid_ms) >= health_policy_.stalled_traffic_timeout_ms) {
+      const MhiTransportErrorDetail error =
+          MhiTransportResult::failure(MhiTransportError::RX_STALLED, "valid_frame_timeout").error;
+      ESP_LOGE(TAG, "Transport %s stalled: last valid frame age=%lums", active_->name(),
+               static_cast<unsigned long>(this->elapsed_ms_(now_ms, last_valid_ms)));
+      this->handle_runtime_failure_(error);
+    }
+    return;
+  }
+
+  this->set_state_(MhiTransportState::WAITING_FOR_TRAFFIC, now_ms);
+  const uint32_t startup_age_ms = this->elapsed_ms_(now_ms, active_started_ms_);
+  if (startup_age_ms < health_policy_.startup_grace_ms) {
+    return;
+  }
+
+  if (!traffic_observed_) {
+    if (health_policy_.no_traffic_timeout_ms > 0U &&
+        startup_age_ms >= health_policy_.startup_grace_ms + health_policy_.no_traffic_timeout_ms) {
+      const MhiTransportErrorDetail error =
+          MhiTransportResult::failure(MhiTransportError::NO_TRAFFIC, "startup_no_traffic").error;
+      ESP_LOGE(TAG, "Transport %s received no traffic during startup window", active_->name());
+      this->handle_runtime_failure_(error);
+    }
+    return;
+  }
+
+  this->set_state_(MhiTransportState::DEGRADED, now_ms);
+  if (health_policy_.invalid_traffic_timeout_ms > 0U &&
+      this->elapsed_ms_(now_ms, first_traffic_seen_ms_) >= health_policy_.invalid_traffic_timeout_ms) {
+    const MhiTransportErrorDetail error =
+        MhiTransportResult::failure(MhiTransportError::INVALID_TRAFFIC, "startup_invalid_traffic").error;
+    ESP_LOGE(TAG, "Transport %s received bytes but no valid MHI frames", active_->name());
+    this->handle_runtime_failure_(error);
+  }
+}
+
+void MhiTransportManager::publish_driver_diagnostics_() {
+  if (diagnostics_ == nullptr) {
+    return;
+  }
+  diagnostics_->set_rx_driver_name(this->rx_name());
+  diagnostics_->set_tx_driver_name(this->tx_name());
+  diagnostics_->set_rx_driver_ready(this->rx_ready());
+  diagnostics_->set_tx_driver_ready(this->tx_ready());
+}
+
+void MhiTransportManager::update_transport_diagnostics_() {
+  if (active_ == nullptr || diagnostics_ == nullptr) {
+    return;
+  }
+
+  // This method is intentionally called only from loop(). The classified RX
+  // worker also calls read_rx(), queue_tx(), and flush_tx_on_bus_marker(); if
+  // those paths advance these cursors concurrently, one caller can move a
+  // cursor past the sampled transport counter. The former != loop would then
+  // iterate until uint32_t wraparound.
+  const uint32_t completed = active_->completed_tx_frames();
+  const uint32_t failures = active_->tx_failures();
   const uint32_t now_ms = millis();
 
-  MhiTxEnvelope envelope{};
-  uint32_t send_generation = 0U;
-
-  portENTER_CRITICAL(&tx_mux_);
-
-  if (!this->pending_tx_available_() || tx_in_progress_) {
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
-  }
-
-  if (tx_backoff_until_ms_ != 0U && static_cast<int32_t>(now_ms - tx_backoff_until_ms_) < 0) {
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
-  }
-  if (marker.sequence == last_consumed_bus_marker_sequence_ ||
-      marker.sequence == pending_tx_queued_after_marker_sequence_) {
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
-  }
-  if (marker_age_us > tx_marker_arm_max_age_us_) {
-    if (marker.sequence != last_stale_bus_marker_sequence_) {
-      last_stale_bus_marker_sequence_ = marker.sequence;
-      const std::size_t pending_len = pending_tx_envelope_.len;
-      portEXIT_CRITICAL(&tx_mux_);
-      ESP_LOGVV(TAG, "TX armed marker expired before attempt: sequence=%lu age=%luus max=%luus len=%u",
-                static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
-                static_cast<unsigned long>(tx_marker_arm_max_age_us_), static_cast<unsigned int>(pending_len));
-      return false;
+  // A transport restart may legitimately reset its counters. Rebase instead
+  // of treating a lower counter as a wrapped delta.
+  if (completed < last_transport_tx_completed_) {
+    last_transport_tx_completed_ = completed;
+  } else {
+    while (last_transport_tx_completed_ < completed) {
+      diagnostics_->stats().on_tx_frame(now_ms);
+      last_transport_tx_completed_++;
     }
-    portEXIT_CRITICAL(&tx_mux_);
-    return false;
   }
 
-  last_consumed_bus_marker_sequence_ = marker.sequence;
-  envelope = pending_tx_envelope_;
-  send_generation = pending_tx_generation_;
-  tx_in_progress_ = true;
-
-  portEXIT_CRITICAL(&tx_mux_);
-
-  const bool ok = tx_->send(envelope.frame.data(), envelope.len);
-#if MHI_ENABLE_SPLIT_TX_DRIVER
-  const bool tx_disabled = tx_ == &null_tx_;
-#else
-  const bool tx_disabled = false;
-#endif
-
-  if (diagnostics_ != nullptr && !tx_disabled) {
-    if (ok) {
-      diagnostics_->stats().on_tx_frame(millis());
-    } else {
+  if (failures < last_transport_tx_failures_) {
+    last_transport_tx_failures_ = failures;
+  } else {
+    while (last_transport_tx_failures_ < failures) {
       diagnostics_->stats().on_tx_failure();
+      last_transport_tx_failures_++;
     }
   }
-  MhiTxCompletion completion{};
-  if (envelope.is_command()) {
-    completion.generation = envelope.generation;
-    completion.kind = envelope.kind;
-    completion.command_mask = envelope.command_mask;
-    completion.intent = envelope.intent;
-    completion.success = ok;
-    completion.completed_at_ms = millis();
-  }
+}
 
-  portENTER_CRITICAL(&tx_mux_);
-  tx_in_progress_ = false;
-  bool completion_stored = true;
-  if (envelope.is_command()) {
-    completion_stored = tx_completions_.push(completion);
-  }
-  if (ok) {
-    if (pending_tx_generation_ == send_generation) {
-      this->clear_pending_tx_();
-    }
-    tx_backoff_until_ms_ = 0U;
-    portEXIT_CRITICAL(&tx_mux_);
-    if (!completion_stored && diagnostics_ != nullptr) {
-      diagnostics_->stats().on_tx_failure();
-    }
-    return true;
-  }
-
-  if (pending_tx_generation_ == send_generation) {
-    tx_backoff_until_ms_ = millis() + tx_failure_backoff_ms_;
-  }
-  portEXIT_CRITICAL(&tx_mux_);
-  if (!completion_stored && diagnostics_ != nullptr) {
-    diagnostics_->stats().on_tx_failure();
-  }
-
-  ESP_LOGD(TAG, "TX frame missed armed bus marker sequence=%lu age=%luus len=%u backoff=%lums",
-           static_cast<unsigned long>(marker.sequence), static_cast<unsigned long>(marker_age_us),
-           static_cast<unsigned int>(envelope.len), static_cast<unsigned long>(tx_failure_backoff_ms_));
-  return false;
+void MhiTransportManager::reset_transport_diagnostic_cursors_() {
+  last_transport_tx_completed_ = active_ == nullptr ? 0U : active_->completed_tx_frames();
+  last_transport_tx_failures_ = active_ == nullptr ? 0U : active_->tx_failures();
 }
 
 }  // namespace mhi_ac_ctrl

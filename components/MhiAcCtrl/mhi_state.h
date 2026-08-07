@@ -67,6 +67,12 @@ struct MhiOpDataState {
   bool has_energy_used{false};
   float energy_used_kwh{0.0f};
 
+  bool has_estimated_power{false};
+  float estimated_power_w{0.0f};
+
+  bool has_estimated_energy{false};
+  float estimated_energy_kwh{0.0f};
+
   bool has_indoor_unit_thi_r1{false};
   float indoor_unit_thi_r1_c{0.0f};
 

@@ -9,7 +9,8 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 10000U;
+constexpr uint32_t kMhiCommandConfirmationTimeoutMs = 1500U;
+constexpr uint32_t kMhiCommandFinalConfirmationGraceMs = 500U;
 constexpr uint32_t kMhiExtendedLouverConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiThreeDAutoConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiExtendedLouverSettleDelayMs = 3000U;
@@ -150,18 +151,21 @@ class MhiCommandConfirmation {
     return now_ms - this->staged_ms_;
   }
 
-  MhiCommandExpiration expire(uint32_t now_ms) {
+  MhiCommandExpiration inspect_expiration(uint32_t now_ms,
+                                          uint32_t normal_timeout_ms = kMhiCommandConfirmationTimeoutMs,
+                                          uint32_t additional_delay_ms = 0U) const {
     MhiCommandExpiration expiration{};
     if (this->pending_mask_ == 0U || this->staged_ms_ == 0U || now_ms < this->staged_ms_) {
       return expiration;
     }
 
-    uint32_t timeout_ms = kMhiCommandConfirmationTimeoutMs;
+    uint32_t timeout_ms = normal_timeout_ms;
     if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U) {
       timeout_ms = kMhiThreeDAutoConfirmationTimeoutMs;
     } else if ((this->pending_mask_ & MHI_COMMAND_HORIZONTAL_VANE) != 0U) {
       timeout_ms = kMhiExtendedLouverConfirmationTimeoutMs;
     }
+    timeout_ms += additional_delay_ms;
 
     if ((now_ms - this->staged_ms_) < timeout_ms) {
       return expiration;
@@ -169,7 +173,15 @@ class MhiCommandConfirmation {
 
     expiration.mask = this->pending_mask_;
     expiration.intent = this->pending_intent_;
-    this->reset();
+    return expiration;
+  }
+
+  MhiCommandExpiration expire(uint32_t now_ms, uint32_t normal_timeout_ms = kMhiCommandConfirmationTimeoutMs,
+                              uint32_t additional_delay_ms = 0U) {
+    MhiCommandExpiration expiration = this->inspect_expiration(now_ms, normal_timeout_ms, additional_delay_ms);
+    if (expiration.expired()) {
+      this->reset();
+    }
     return expiration;
   }
 

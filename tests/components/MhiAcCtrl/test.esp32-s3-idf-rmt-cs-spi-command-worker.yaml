@@ -26,8 +26,42 @@ MhiAcCtrl:
   rmt_spi_frame_gap_us: 1000
   command_worker: true
   command_worker_start_delay_ms: 0
+  opdata_freshness_timeout: 120s
+  power_estimation:
+    nominal_voltage: 230.0
+    power_factor: 0.95
+    standby_power: 5.0
+    max_sample_interval: 5min
 
 climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: MHI Climate
+
+
+switch:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    active_mode:
+      name: MHI Active Mode
+
+
+binary_sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    opdata_fresh:
+      name: MHI Opdata Fresh
+
+sensor:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    opdata_oldest_age:
+      name: MHI Opdata Oldest Age
+    opdata_stale_count:
+      name: MHI Opdata Stale Count
+    opdata_timeout_events:
+      name: MHI Opdata Timeout Events
+    estimated_power:
+      name: MHI Estimated Power
+    estimated_energy:
+      name: MHI Estimated Energy

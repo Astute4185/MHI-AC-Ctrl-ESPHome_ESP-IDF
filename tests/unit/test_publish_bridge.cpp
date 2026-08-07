@@ -589,3 +589,35 @@ void publish_bridge_four_speed_maps_code_zero_to_quiet() {
 }
 
 }  // namespace mhi_unit_tests
+
+namespace mhi_unit_tests {
+
+void publish_bridge_publishes_estimated_power_and_energy() {
+  MhiStateStore state{};
+
+  auto& opdata = state.opdata();
+  opdata.valid = true;
+  opdata.has_estimated_power = true;
+  opdata.estimated_power_w = 512.5f;
+  opdata.has_estimated_energy = true;
+  opdata.estimated_energy_kwh = 1.234f;
+
+  esphome::sensor::Sensor estimated_power{};
+  esphome::sensor::Sensor estimated_energy{};
+
+  MhiPublishTargets targets{};
+  targets.estimated_power_sensor = &estimated_power;
+  targets.estimated_energy_sensor = &estimated_energy;
+
+  MhiPublishBridge bridge{};
+  bridge.set_targets(targets);
+  bridge.publish(state);
+  bridge.publish(state);
+
+  EXPECT_EQ(estimated_power.publish_count, 1U);
+  EXPECT_EQ(estimated_energy.publish_count, 1U);
+  expect_near(estimated_power.state, 512.5f);
+  expect_near(estimated_energy.state, 1.234f, 0.0001f);
+}
+
+}  // namespace mhi_unit_tests

@@ -1,10 +1,13 @@
-#include "mhi_rmt_spi_rx_driver.h"
+#include "esphome/core/defines.h"
+
+#ifdef MHI_USE_TRANSPORT_RMT_SPI
 
 #include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "mhi_rmt_spi_rx_driver.h"
 
 #if MHI_RMT_SPI_RX_SUPPORTED
 #include <driver/gpio.h>
@@ -104,7 +107,7 @@ bool MhiRmtSpiRxDriver::setup(const MhiTransportPins& pins) {
   this->connect_internal_cs_(false);
   ready_ = true;
 
-  ESP_LOGW(TAG,
+  ESP_LOGI(TAG,
            "RMT/SPI RX enabled: host=SPI2 SCK=%d MOSI=%d MISO=unclaimed mode=3 LSB-first DMA=%u bytes "
            "transaction_queue=%u frame_queue=%u frame_gap=%luus",
            pins_.sck, pins_.mosi, static_cast<unsigned int>(kDmaCaptureBytes),
@@ -141,7 +144,7 @@ void MhiRmtSpiRxDriver::loop() {
     max_buffered_frames = completed_frames_.high_water_mark();
     portEXIT_CRITICAL(&mux_);
 
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "runtime: boundaries=%lu completed=%lu frame20=%lu frame33=%lu invalid_len=%lu "
              "result_errors=%lu queue_errors=%lu rmt_rearm_errors=%lu buffered_frames=%u max_buffered=%u "
              "overwritten=%lu dropped=%lu",
@@ -488,3 +491,5 @@ void IRAM_ATTR MhiRmtSpiRxDriver::on_frame_boundary_from_isr_() {
 
 }  // namespace mhi_ac_ctrl
 }  // namespace esphome
+
+#endif  // MHI_USE_TRANSPORT_RMT_SPI

@@ -84,4 +84,80 @@ void duplex_tx_mailbox_rejects_invalid_frames_without_losing_pending_data() {
   EXPECT_TRUE(mailbox.pending());
 }
 
+void duplex_tx_mailbox_preserves_pending_command_from_background_replacement() {
+  MhiDuplexTxMailbox mailbox{};
+  MhiFrameBuffer command_frame = make_mosi_status_frame_33(4U, false, false);
+  MhiFrameBuffer background_frame = make_mosi_status_frame_33(5U, false, false);
+  command_frame.data[DB4] = 0x31U;
+  background_frame.data[DB4] = 0x42U;
+
+  const MhiTxEnvelope command = make_envelope(command_frame, 9U, MhiTxKind::COMMAND, MHI_COMMAND_MODE);
+  const MhiTxEnvelope background = make_envelope(background_frame, 0U);
+
+  EXPECT_TRUE(mailbox.stage(command));
+  EXPECT_FALSE(mailbox.stage(background));
+  EXPECT_TRUE(mailbox.pending());
+  EXPECT_EQ(mailbox.generation(), 9U);
+  EXPECT_EQ(mailbox.overwritten_frames(), 0U);
+  EXPECT_EQ(mailbox.rejected_background_frames(), 1U);
+
+  std::array<uint8_t, kMhiMaxFrameBytes> destination{};
+  MhiTxEnvelope taken{};
+  EXPECT_TRUE(mailbox.take(destination.data(), destination.size(), taken));
+  EXPECT_TRUE(taken.is_command());
+  EXPECT_EQ(taken.generation, 9U);
+  EXPECT_EQ(destination[DB4], 0x31U);
+}
+
+void duplex_tx_mailbox_command_replaces_pending_background() {
+  MhiDuplexTxMailbox mailbox{};
+  MhiFrameBuffer background_frame = make_mosi_status_frame_33(4U, false, false);
+  MhiFrameBuffer command_frame = make_mosi_status_frame_33(5U, false, false);
+  background_frame.data[DB4] = 0x51U;
+  command_frame.data[DB4] = 0x62U;
+
+  const MhiTxEnvelope background = make_envelope(background_frame, 0U);
+  const MhiTxEnvelope command = make_envelope(command_frame, 10U, MhiTxKind::COMMAND, MHI_COMMAND_MODE);
+
+  EXPECT_TRUE(mailbox.stage(background));
+  EXPECT_TRUE(mailbox.stage(command));
+  EXPECT_EQ(mailbox.overwritten_frames(), 1U);
+  EXPECT_EQ(mailbox.rejected_background_frames(), 0U);
+
+  std::array<uint8_t, kMhiMaxFrameBytes> destination{};
+  MhiTxEnvelope taken{};
+  EXPECT_TRUE(mailbox.take(destination.data(), destination.size(), taken));
+  EXPECT_TRUE(taken.is_command());
+  EXPECT_EQ(taken.generation, 10U);
+  EXPECT_EQ(destination[DB4], 0x62U);
+}
+
+void duplex_tx_mailbox_replaces_only_expected_pending_command() {
+  MhiDuplexTxMailbox mailbox{};
+  MhiFrameBuffer first_frame = make_mosi_status_frame_33(4U, false, false);
+  MhiFrameBuffer replacement_frame = make_mosi_status_frame_33(5U, false, false);
+  first_frame.data[DB4] = 0x71U;
+  replacement_frame.data[DB4] = 0x82U;
+
+  const MhiTxEnvelope first = make_envelope(first_frame, 20U, MhiTxKind::COMMAND, MHI_COMMAND_FAN);
+  const MhiTxEnvelope replacement =
+      make_envelope(replacement_frame, 21U, MhiTxKind::COMMAND, MHI_COMMAND_FAN | MHI_COMMAND_TARGET_TEMP);
+
+  EXPECT_TRUE(mailbox.stage(first));
+  EXPECT_FALSE(mailbox.replace_command(19U, replacement));
+  EXPECT_EQ(mailbox.generation(), 20U);
+  EXPECT_TRUE(mailbox.replace_command(20U, replacement));
+  EXPECT_EQ(mailbox.generation(), 21U);
+  EXPECT_EQ(mailbox.replaced_commands(), 1U);
+  EXPECT_EQ(mailbox.overwritten_frames(), 0U);
+
+  std::array<uint8_t, kMhiMaxFrameBytes> destination{};
+  MhiTxEnvelope taken{};
+  EXPECT_TRUE(mailbox.take(destination.data(), destination.size(), taken));
+  EXPECT_EQ(taken.generation, 21U);
+  EXPECT_EQ(destination[DB4], 0x82U);
+
+  EXPECT_FALSE(mailbox.replace_command(21U, first));
+}
+
 }  // namespace mhi_unit_tests
