@@ -100,6 +100,9 @@ struct MhiOpDataState {
   bool has_defrost{false};
   bool defrost{false};
 
+  bool has_silent_mode{false};
+  bool silent_mode{false};
+
   uint32_t last_update_ms{0};
 };
 

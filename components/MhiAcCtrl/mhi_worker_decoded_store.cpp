@@ -121,6 +121,8 @@ uint32_t MhiWorkerDecodedStore::merge_opdata_fields_(MhiDecodedOpData& destinati
   overwritten += merge_field(destination.has_protection_state_number, destination.protection_state_number,
                              source.has_protection_state_number, source.protection_state_number);
   overwritten += merge_field(destination.has_defrost, destination.defrost, source.has_defrost, source.defrost);
+  overwritten +=
+      merge_field(destination.has_silent_mode, destination.silent_mode, source.has_silent_mode, source.silent_mode);
   overwritten += merge_field(destination.has_last_error, destination.last_error_code, source.has_last_error,
                              source.last_error_code);
 

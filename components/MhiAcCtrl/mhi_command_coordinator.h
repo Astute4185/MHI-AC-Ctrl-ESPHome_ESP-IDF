@@ -10,6 +10,9 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 constexpr uint8_t kMhiMaxCommandAttempts = 3U;
+constexpr uint32_t kMhiSilentModeFirstPollDelayMs = 500U;
+constexpr uint32_t kMhiSilentModeFinalPollDelayMs = 1500U;
+constexpr uint32_t kMhiSilentModeConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 struct MhiCommandTimeoutResult {
@@ -65,6 +68,7 @@ class MhiCommandCoordinator {
   bool on_tx_completion(const MhiTxCompletion& completion, MhiCommandState& command);
 
   uint32_t observe_status(const MhiStatusState& status);
+  uint32_t observe_opdata(const MhiOpDataState& opdata);
   uint32_t settle_pending_mask(uint32_t mask);
   uint32_t supersede_pending(const MhiCommandState& patch);
   MhiCommandTimeoutResult expire(uint32_t now_ms, MhiCommandState& command);

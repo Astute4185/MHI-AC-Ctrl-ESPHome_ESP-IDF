@@ -43,6 +43,11 @@ uint32_t merge_command_patch(MhiCommandState& destination, const MhiCommandState
     destination.three_d_auto = patch.three_d_auto;
     merged_mask |= MHI_COMMAND_THREE_D_AUTO;
   }
+  if (patch.silent_mode_set && (allowed_mask & MHI_COMMAND_SILENT_MODE) != 0U) {
+    destination.silent_mode_set = true;
+    destination.silent_mode = patch.silent_mode;
+    merged_mask |= MHI_COMMAND_SILENT_MODE;
+  }
   if (patch.room_temp_override_set && (allowed_mask & MHI_COMMAND_ROOM_TEMP_OVERRIDE) != 0U) {
     destination.room_temp_override_set = true;
     destination.room_temp_override_raw = patch.room_temp_override_raw;

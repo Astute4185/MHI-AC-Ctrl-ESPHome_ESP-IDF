@@ -19,6 +19,8 @@ It covers the current material transport boundaries:
 - ESP32-S3 `rmt_cs_spi`;
 - ESP32-S3 split `rmt_spi_rx` with `fast_gpio_tx`.
 
+All four representative fixtures instantiate `outdoor_unit_silent_mode`. This keeps the new switch schema, generated C++ platform, opdata-backed state path, and Silent Mode command integration under compile coverage across each material TX-capable transport boundary. Compile success does not establish that a particular air-conditioner model implements the `0xDD` Silent Mode response group.
+
 ## Extended portability gate
 
 Run the complete optional matrix with:

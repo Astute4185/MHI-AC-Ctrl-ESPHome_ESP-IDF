@@ -96,6 +96,21 @@ class MhiCommandConfirmation {
     return confirmed;
   }
 
+  uint32_t observe_opdata(const MhiOpDataState& opdata) {
+    if (!opdata.valid || this->pending_mask_ == 0U || !opdata.has_silent_mode) {
+      return 0U;
+    }
+
+    uint32_t confirmed = 0U;
+    if ((this->pending_mask_ & MHI_COMMAND_SILENT_MODE) != 0U &&
+        opdata.silent_mode == this->pending_intent_.silent_mode) {
+      confirmed |= MHI_COMMAND_SILENT_MODE;
+    }
+
+    this->clear_pending_mask_(confirmed);
+    return confirmed;
+  }
+
   uint32_t settle_pending_mask(uint32_t mask) {
     const uint32_t settled = this->pending_mask_ & mask;
     this->clear_pending_mask_(settled);
@@ -137,6 +152,10 @@ class MhiCommandConfirmation {
     if ((this->pending_mask_ & MHI_COMMAND_THREE_D_AUTO) != 0U && patch.three_d_auto_set &&
         patch.three_d_auto != this->pending_intent_.three_d_auto) {
       superseded |= MHI_COMMAND_THREE_D_AUTO;
+    }
+    if ((this->pending_mask_ & MHI_COMMAND_SILENT_MODE) != 0U && patch.silent_mode_set &&
+        patch.silent_mode != this->pending_intent_.silent_mode) {
+      superseded |= MHI_COMMAND_SILENT_MODE;
     }
 
     this->clear_pending_mask_(superseded);
@@ -237,6 +256,10 @@ class MhiCommandConfirmation {
         command.three_d_auto == this->pending_intent_.three_d_auto) {
       duplicate |= MHI_COMMAND_THREE_D_AUTO;
     }
+    if ((this->pending_mask_ & MHI_COMMAND_SILENT_MODE) != 0U && command.silent_mode_set &&
+        command.silent_mode == this->pending_intent_.silent_mode) {
+      duplicate |= MHI_COMMAND_SILENT_MODE;
+    }
 
     return duplicate;
   }
@@ -276,7 +299,8 @@ class MhiCommandConfirmation {
     uint32_t mask =
         encoded_command_mask &
         static_cast<uint32_t>(MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN | MHI_COMMAND_TARGET_TEMP |
-                              MHI_COMMAND_VERTICAL_VANE | MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO);
+                              MHI_COMMAND_VERTICAL_VANE | MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO |
+                              MHI_COMMAND_SILENT_MODE);
 
     if ((mask & MHI_COMMAND_FAN) != 0U && !fan_command_confirmable(intent.fan)) {
       mask &= ~static_cast<uint32_t>(MHI_COMMAND_FAN);

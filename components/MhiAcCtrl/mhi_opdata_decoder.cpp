@@ -48,6 +48,13 @@ bool MhiOpDataDecoder::is_opdata_response(const MhiFrameView& mosi) {
     return false;
   }
 
+  // Outdoor-unit Silent Mode uses a dedicated response signature instead of
+  // the normal DB10 0x10/0x20 opdata markers. It can be observed on either
+  // frame phase, so DB6 is intentionally not part of this predicate.
+  if (group == 0xDDU && mosi[DB10] == 0x80U && mosi[DB12] == 0x00U) {
+    return true;
+  }
+
   // DB6[7] is not enough to identify opdata; normal status/command feedback can
   // also carry it. Real opdata responses need a response marker in DB10.
   //
@@ -257,6 +264,13 @@ bool MhiOpDataDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedOpData& o
         const uint16_t raw_kwh = static_cast<uint16_t>((static_cast<uint16_t>(mosi[DB12]) << 8U) | value);
         decoded.has_energy_used = true;
         decoded.energy_used_kwh = static_cast<float>(raw_kwh) * 0.25f;
+      }
+      break;
+
+    case 0xDDU:
+      if (item == 0x80U && mosi[DB12] == 0x00U) {
+        decoded.has_silent_mode = true;
+        decoded.silent_mode = (value & 0x20U) != 0U;
       }
       break;
 

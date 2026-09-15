@@ -9,7 +9,7 @@
 namespace esphome {
 namespace mhi_ac_ctrl {
 
-constexpr std::size_t kMhiOpDataRequestCount = 20U;
+constexpr std::size_t kMhiOpDataRequestCount = 21U;
 
 struct MhiOpDataFreshnessSnapshot {
   uint32_t enabled_mask{0U};
