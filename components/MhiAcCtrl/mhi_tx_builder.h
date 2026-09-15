@@ -42,6 +42,11 @@ struct MhiTxRuntime {
   uint8_t error_opdata_count{0};
   bool double_frame{false};
   uint32_t frame_counter{1};
+
+  // One-shot operation-data requests that bypass the normal round-robin
+  // cadence. A bit is cleared only after its request is actually encoded into
+  // an eligible double frame.
+  uint32_t forced_opdata_mask{0U};
 };
 
 struct MhiTxBuildConfig {

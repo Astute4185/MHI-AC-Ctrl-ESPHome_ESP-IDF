@@ -10,6 +10,9 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 constexpr uint8_t kMhiMaxCommandAttempts = 3U;
+constexpr uint32_t kMhiSilentModeFirstPollDelayMs = 500U;
+constexpr uint32_t kMhiSilentModeFinalPollDelayMs = 1500U;
+constexpr uint32_t kMhiSilentModeConfirmationTimeoutMs = 3000U;
 constexpr uint32_t kMhiExtendedLouverCommandMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 struct MhiCommandTimeoutResult {
