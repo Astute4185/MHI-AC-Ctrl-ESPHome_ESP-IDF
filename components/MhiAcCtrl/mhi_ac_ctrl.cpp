@@ -11,6 +11,7 @@ namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_ac_ctrl";
 static const char* const DIAG_TAG = "mhi.diag";
+static const char* const SILENT_SPIKE_TAG = "mhi.silent_spike";
 static constexpr uint32_t kDiagLogIntervalMs = 30000U;
 static constexpr uint32_t kLoopBudgetUs = 30000U;
 static constexpr std::size_t kMaxRxChunksPerLoop = 4U;
@@ -255,6 +256,55 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   return accepted_mask;
 }
 
+uint32_t MhiAcCtrl::request_silent_mode_spike(bool state) {
+  const uint32_t now = millis();
+  const auto& opdata = this->state_.opdata();
+  const bool baseline_known = opdata.has_silent_mode;
+  const bool baseline_state = opdata.silent_mode;
+
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  const bool interrupted = this->silent_mode_spike_.active() || this->silent_mode_spike_.awaiting_command_completion();
+  this->silent_mode_spike_.arm_request(state, baseline_known, baseline_state, now);
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+
+  ESP_LOGI(SILENT_SPIKE_TAG,
+           "request target=%s baseline=%s requested_at=%lums%s; automatic Silent Mode retries are disabled",
+           state ? "ON" : "OFF", baseline_known ? (baseline_state ? "ON" : "OFF") : "UNKNOWN",
+           static_cast<unsigned long>(now), interrupted ? " previous_spike=INTERRUPTED" : "");
+
+  MhiCommandState patch{};
+  patch.silent_mode_set = true;
+  patch.silent_mode = state;
+  const uint32_t accepted = this->request_command_patch(patch);
+  if ((accepted & MHI_COMMAND_SILENT_MODE) == 0U) {
+    if (this->command_mutex_ != nullptr) {
+      xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+    }
+    this->silent_mode_spike_.reset();
+    if (this->command_mutex_ != nullptr) {
+      xSemaphoreGive(this->command_mutex_);
+    }
+    ESP_LOGW(SILENT_SPIKE_TAG, "request rejected target=%s", state ? "ON" : "OFF");
+  }
+  return accepted;
+}
+
+void MhiAcCtrl::request_silent_mode_diagnostic_probe() {
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  this->tx_runtime_.forced_opdata_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+  ESP_LOGI(SILENT_SPIKE_TAG, "baseline 0xDD probe requested");
+  this->notify_command_worker_();
+}
+
 void MhiAcCtrl::request_power_command(bool power) {
   MhiCommandState patch{};
   patch.power_set = true;
@@ -490,6 +540,9 @@ void MhiAcCtrl::reset_command_runtime_() {
   }
   this->state_.command() = {};
   this->command_coordinator_.reset();
+  this->silent_mode_spike_.reset();
+  this->tx_runtime_.forced_opdata_mask = 0U;
+  this->silent_mode_spike_next_tx_eligible_ms_ = 0U;
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
@@ -590,6 +643,7 @@ void MhiAcCtrl::loop() {
 
   section_start_us = micros();
   this->check_command_confirmation_timeout_();
+  this->check_silent_mode_spike_timeout_();
   const uint32_t command_housekeeping_us = elapsed_us_(section_start_us);
 
   const uint32_t loop_us = elapsed_us_(loop_start_us);
@@ -1173,6 +1227,17 @@ void MhiAcCtrl::service_command_pipeline_() {
   auto& command = this->state_.command();
   const bool has_pending_command = command.has_pending_command();
 
+  // Silent Mode spike probes bypass the normal background interval but still
+  // respect command ownership. If the next builder phase is not eligible for
+  // opdata, the forced request remains pending and is retried after one bus
+  // frame period rather than hammering the transport mailbox.
+  if (!has_pending_command && !this->command_coordinator_.has_command_in_flight() &&
+      !this->command_coordinator_.has_pending_confirmation() && now >= this->silent_mode_spike_next_tx_eligible_ms_ &&
+      this->silent_mode_spike_.poll_due(now)) {
+    this->tx_runtime_.forced_opdata_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+  }
+  const bool forced_opdata_pending = this->tx_runtime_.forced_opdata_mask != 0U;
+
   // A command accepted by queue_tx() may still be waiting in the duplex
   // transport's software mailbox. Before the backend claims that generation,
   // atomically replace it with one frame representing the latest desired state.
@@ -1215,7 +1280,7 @@ void MhiAcCtrl::service_command_pipeline_() {
 
   if (!replacement_committed && !this->command_coordinator_.has_command_in_flight() &&
       !this->command_coordinator_.has_pending_confirmation() &&
-      (has_pending_command || this->background_tx_allowed_(now))) {
+      (has_pending_command || forced_opdata_pending || this->background_tx_allowed_(now))) {
     command_before_build = command;
     runtime_before_build = this->tx_runtime_;
     should_build = this->command_coordinator_.prepare_next(command, this->tx_runtime_, this->tx_config_, tx_frame,
@@ -1268,14 +1333,48 @@ void MhiAcCtrl::service_command_pipeline_() {
   }
 
   const bool queued = this->transport_.queue_tx(envelope);
+  const bool silent_probe_frame = background_frame && tx_frame.data[DB9] == 0xDDU;
+  bool spike_poll_staged = false;
+  uint32_t spike_poll_offset_ms = 0U;
+  uint32_t spike_elapsed_ms = 0U;
 
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
   this->command_coordinator_.on_stage_result(envelope, command_before_build, runtime_before_build,
                                              this->state_.command(), queued, now);
+
+  if (background_frame && !queued && silent_probe_frame &&
+      (runtime_before_build.forced_opdata_mask & MHI_OPDATA_REQ_SILENT_MODE) != 0U) {
+    this->tx_runtime_.forced_opdata_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+  }
+
+  if (queued && silent_probe_frame && this->silent_mode_spike_.active() && this->silent_mode_spike_.poll_due(now)) {
+    spike_poll_offset_ms = this->silent_mode_spike_.next_poll_offset_ms();
+    spike_elapsed_ms = now >= this->silent_mode_spike_.command_completed_ms()
+                           ? now - this->silent_mode_spike_.command_completed_ms()
+                           : 0U;
+    this->silent_mode_spike_.mark_poll_staged(now);
+    spike_poll_staged = true;
+  }
+
+  if (queued && background_frame &&
+      ((this->tx_runtime_.forced_opdata_mask & MHI_OPDATA_REQ_SILENT_MODE) != 0U || silent_probe_frame)) {
+    this->silent_mode_spike_next_tx_eligible_ms_ = now + 75U;
+  }
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
+  }
+
+  if (queued && silent_probe_frame) {
+    if (spike_poll_staged) {
+      ESP_LOGI(SILENT_SPIKE_TAG, "poll staged scheduled=+%lums actual=+%lums db6=0x%02x db9=0x%02x phase=%s",
+               static_cast<unsigned long>(spike_poll_offset_ms), static_cast<unsigned long>(spike_elapsed_ms),
+               tx_frame.data[DB6], tx_frame.data[DB9], (tx_frame.data[DB14] & 0x04U) != 0U ? "double" : "single");
+    } else {
+      ESP_LOGI(SILENT_SPIKE_TAG, "diagnostic 0xDD probe staged db6=0x%02x db9=0x%02x phase=%s", tx_frame.data[DB6],
+               tx_frame.data[DB9], (tx_frame.data[DB14] & 0x04U) != 0U ? "double" : "single");
+    }
   }
 
   if (queued) {
@@ -1302,6 +1401,8 @@ void MhiAcCtrl::drain_tx_completions_() {
       this->command_worker_completions_.fetch_add(1U, std::memory_order_relaxed);
     }
 
+    bool silent_completion = false;
+    uint32_t silent_request_to_wire_ms = 0U;
     if (this->command_mutex_ != nullptr) {
       xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
     }
@@ -1309,8 +1410,35 @@ void MhiAcCtrl::drain_tx_completions_() {
     if (handled && completion.success && this->command_coordinator_.pending_mask() != 0U) {
       clear_command_candidate = true;
     }
+    if (handled && (completion.command_mask & MHI_COMMAND_SILENT_MODE) != 0U) {
+      silent_completion = true;
+      if (completion.success) {
+        const uint32_t requested_at = this->silent_mode_spike_.requested_at_ms();
+        silent_request_to_wire_ms = requested_at != 0U && completion.completed_at_ms >= requested_at
+                                        ? completion.completed_at_ms - requested_at
+                                        : 0U;
+        this->silent_mode_spike_.command_completed(completion.intent.silent_mode, completion.completed_at_ms);
+        this->silent_mode_spike_next_tx_eligible_ms_ = completion.completed_at_ms;
+      } else {
+        this->silent_mode_spike_.command_failed();
+      }
+    }
     if (this->command_mutex_ != nullptr) {
       xSemaphoreGive(this->command_mutex_);
+    }
+
+    if (silent_completion) {
+      if (completion.success) {
+        ESP_LOGI(SILENT_SPIKE_TAG,
+                 "command wire-complete generation=%lu target=%s completed_at=%lums request_to_wire=%lums; "
+                 "starting controlled 0xDD probes",
+                 static_cast<unsigned long>(completion.generation), completion.intent.silent_mode ? "ON" : "OFF",
+                 static_cast<unsigned long>(completion.completed_at_ms),
+                 static_cast<unsigned long>(silent_request_to_wire_ms));
+      } else {
+        ESP_LOGW(SILENT_SPIKE_TAG, "command wire-failed generation=%lu target=%s",
+                 static_cast<unsigned long>(completion.generation), completion.intent.silent_mode ? "ON" : "OFF");
+      }
     }
 
     if (!completion.is_command()) {
@@ -1821,29 +1949,55 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
 
   this->opdata_freshness_.observe(freshness_mask, now_ms);
 
-  // Silent Mode is confirmed by opdata feedback rather than the normal status
-  // frame. Only a freshly decoded 0xDD response can enter this confirmation
-  // path, so cached state cannot accidentally acknowledge a new command.
   if (decoded_opdata.has_silent_mode) {
+    MhiSilentModeSpike::Observation observation = MhiSilentModeSpike::Observation::IDLE;
+    bool spike_was_active = false;
+    bool spike_target = false;
+    uint32_t command_completed_ms = 0U;
+    uint32_t last_poll_ms = 0U;
+    uint32_t polls_staged = 0U;
+    uint32_t responses_seen = 0U;
+
     if (this->command_mutex_ != nullptr) {
       xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
     }
-
-    const uint32_t confirmed_mask = this->command_coordinator_.observe_opdata(opdata);
-    const uint32_t pending_mask = this->command_coordinator_.pending_mask();
-
+    spike_was_active = this->silent_mode_spike_.active();
+    spike_target = this->silent_mode_spike_.target();
+    command_completed_ms = this->silent_mode_spike_.command_completed_ms();
+    last_poll_ms = this->silent_mode_spike_.last_poll_staged_ms();
+    observation = this->silent_mode_spike_.observe(decoded_opdata.silent_mode, now_ms);
+    polls_staged = this->silent_mode_spike_.polls_staged();
+    responses_seen = this->silent_mode_spike_.responses_seen();
+    if (observation == MhiSilentModeSpike::Observation::MATCH) {
+      this->tx_runtime_.forced_opdata_mask &= ~static_cast<uint32_t>(MHI_OPDATA_REQ_SILENT_MODE);
+      this->silent_mode_spike_next_tx_eligible_ms_ = 0U;
+    }
     if (this->command_mutex_ != nullptr) {
       xSemaphoreGive(this->command_mutex_);
     }
 
-    if (confirmed_mask != 0U) {
-      this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now_ms);
-      if (pending_mask == 0U) {
-        this->rx_runtime_.clear_command_candidate();
-        this->notify_command_worker_();
-      }
-      ESP_LOGI(DIAG_TAG, "command: confirmed mask=0x%08lx pending=0x%08lx", static_cast<unsigned long>(confirmed_mask),
-               static_cast<unsigned long>(pending_mask));
+    const uint32_t since_command_ms =
+        command_completed_ms != 0U && now_ms >= command_completed_ms ? now_ms - command_completed_ms : 0U;
+    const uint32_t since_poll_ms = last_poll_ms != 0U && now_ms >= last_poll_ms ? now_ms - last_poll_ms : 0U;
+    ESP_LOGI(SILENT_SPIKE_TAG,
+             "rx 0xDD state=%s active=%s target=%s since_command=%lums since_poll=%lums polls=%lu responses=%lu "
+             "db6=0x%02x db9=0x%02x db10=0x%02x db11=0x%02x db12=0x%02x db14=0x%02x phase=%s",
+             decoded_opdata.silent_mode ? "ON" : "OFF", spike_was_active ? "YES" : "NO",
+             spike_was_active ? (spike_target ? "ON" : "OFF") : "-", static_cast<unsigned long>(since_command_ms),
+             static_cast<unsigned long>(since_poll_ms), static_cast<unsigned long>(polls_staged),
+             static_cast<unsigned long>(responses_seen), frame.data[DB6], frame.data[DB9], frame.data[DB10],
+             frame.data[DB11], frame.data[DB12], frame.data[DB14],
+             (frame.data[DB14] & 0x04U) != 0U ? "double" : "single");
+
+    if (observation == MhiSilentModeSpike::Observation::MATCH) {
+      ESP_LOGI(SILENT_SPIKE_TAG, "MATCH target=%s after %lums polls=%lu responses=%lu; spike complete",
+               spike_target ? "ON" : "OFF", static_cast<unsigned long>(since_command_ms),
+               static_cast<unsigned long>(polls_staged), static_cast<unsigned long>(responses_seen));
+      this->notify_command_worker_();
+    } else if (observation == MhiSilentModeSpike::Observation::MISMATCH) {
+      ESP_LOGI(SILENT_SPIKE_TAG, "mismatch target=%s observed=%s after %lums; continuing probe schedule",
+               spike_target ? "ON" : "OFF", decoded_opdata.silent_mode ? "ON" : "OFF",
+               static_cast<unsigned long>(since_command_ms));
     }
   }
 
@@ -2044,6 +2198,41 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
     ESP_LOGD(DIAG_TAG, "command: timed-out generation fully superseded mask=0x%08lx",
              static_cast<unsigned long>(timeout.superseded_mask));
   }
+}
+
+void MhiAcCtrl::check_silent_mode_spike_timeout_() {
+  const uint32_t now = millis();
+  bool expired = false;
+  bool target = false;
+  uint32_t completed_at_ms = 0U;
+  uint32_t polls_staged = 0U;
+  uint32_t responses_seen = 0U;
+
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+  }
+  expired = this->silent_mode_spike_.expire_if_due(now);
+  if (expired) {
+    target = this->silent_mode_spike_.target();
+    completed_at_ms = this->silent_mode_spike_.command_completed_ms();
+    polls_staged = this->silent_mode_spike_.polls_staged();
+    responses_seen = this->silent_mode_spike_.responses_seen();
+    this->tx_runtime_.forced_opdata_mask &= ~static_cast<uint32_t>(MHI_OPDATA_REQ_SILENT_MODE);
+    this->silent_mode_spike_next_tx_eligible_ms_ = 0U;
+  }
+  if (this->command_mutex_ != nullptr) {
+    xSemaphoreGive(this->command_mutex_);
+  }
+
+  if (!expired) {
+    return;
+  }
+
+  const uint32_t elapsed_ms = completed_at_ms != 0U && now >= completed_at_ms ? now - completed_at_ms : 0U;
+  ESP_LOGW(SILENT_SPIKE_TAG,
+           "NO MATCH target=%s after %lums polls=%lu responses=%lu; no automatic command retry was sent",
+           target ? "ON" : "OFF", static_cast<unsigned long>(elapsed_ms), static_cast<unsigned long>(polls_staged),
+           static_cast<unsigned long>(responses_seen));
 }
 
 void MhiAcCtrl::suppress_duplicate_pending_commands_() {

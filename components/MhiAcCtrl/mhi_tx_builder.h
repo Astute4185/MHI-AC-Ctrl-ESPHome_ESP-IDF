@@ -40,6 +40,9 @@ struct MhiTxRuntime {
   // Persistent DB3 room-temperature override. 0xFF selects the indoor-unit sensor.
   uint8_t room_temp_override_raw{0xFF};
   uint8_t error_opdata_count{0};
+  // Diagnostic one-shot override. A requested bit is consumed only when its
+  // opdata request is actually encoded on an eligible double-frame phase.
+  uint32_t forced_opdata_mask{0U};
   bool double_frame{false};
   uint32_t frame_counter{1};
 };

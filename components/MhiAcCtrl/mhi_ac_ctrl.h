@@ -27,6 +27,7 @@
 #include "mhi_power_estimator.h"
 #include "mhi_publish_bridge.h"
 #include "mhi_rx_runtime.h"
+#include "mhi_silent_mode_spike.h"
 #include "mhi_state.h"
 #include "mhi_status_decoder.h"
 #include "mhi_transport_diagnostics_publisher.h"
@@ -386,6 +387,8 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   }
 
   uint32_t request_command_patch(const MhiCommandState& patch);
+  uint32_t request_silent_mode_spike(bool state);
+  void request_silent_mode_diagnostic_probe();
   void request_power_command(bool power);
   void request_mode_command(uint8_t mode);
   void request_fan_command(uint8_t fan);
@@ -442,6 +445,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void log_runtime_diagnostics_();
   void update_command_confirmation_(const MhiStatusState& status);
   void check_command_confirmation_timeout_();
+  void check_silent_mode_spike_timeout_();
   void suppress_duplicate_pending_commands_();
   bool background_tx_due_(uint32_t now_ms) const;
   bool command_confirmation_pending_() const;
@@ -487,6 +491,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   MhiTxRuntime tx_runtime_{};
   MhiTxBuildConfig tx_config_{};
   MhiCommandCoordinator command_coordinator_{};
+  MhiSilentModeSpike silent_mode_spike_{};
   SemaphoreHandle_t command_mutex_{nullptr};
 
   uint32_t tx_background_interval_ms_{250U};
@@ -505,6 +510,7 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   uint32_t tx_staged_replacement_rejected_{0U};
   uint32_t command_request_revision_{0U};
   uint32_t staged_replacement_revision_{0U};
+  uint32_t silent_mode_spike_next_tx_eligible_ms_{0U};
   std::atomic<bool> transport_commands_enabled_{true};
   std::atomic<bool> active_mode_enabled_{true};
   switch_::Switch* active_mode_switch_{nullptr};

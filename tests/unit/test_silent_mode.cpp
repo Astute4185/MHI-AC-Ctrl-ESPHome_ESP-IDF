@@ -1,5 +1,6 @@
 #include "mhi_test_common.h"
 #include "mhi_opdata_freshness.h"
+#include "mhi_silent_mode_spike.h"
 
 namespace mhi_unit_tests {
 
@@ -52,6 +53,49 @@ void silent_mode_regression_suite() {
 
   {
     MhiCommandState command{};
+    MhiTxRuntime runtime{};
+    runtime.forced_opdata_mask = MHI_OPDATA_REQ_SILENT_MODE;
+    MhiTxBuildConfig config{};
+    config.enabled_opdata_mask = MHI_OPDATA_REQ_MODE;
+    MhiFrameBuffer out{};
+
+    EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+    EXPECT_EQ(out.data[DB6], 0xC0U);
+    EXPECT_EQ(out.data[DB9], 0xDDU);
+    EXPECT_EQ(runtime.forced_opdata_mask, 0U);
+  }
+
+  {
+    MhiCommandState command{};
+    MhiTxRuntime runtime{};
+    runtime.double_frame = true;
+    runtime.forced_opdata_mask = MHI_OPDATA_REQ_SILENT_MODE;
+    MhiTxBuildConfig config{};
+    MhiFrameBuffer out{};
+
+    EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+    EXPECT_EQ(out.data[DB9], 0xFFU);
+    EXPECT_EQ(runtime.forced_opdata_mask, static_cast<uint32_t>(MHI_OPDATA_REQ_SILENT_MODE));
+  }
+
+  {
+    MhiCommandState command{};
+    command.power_set = true;
+    command.power = true;
+    MhiTxRuntime runtime{};
+    runtime.forced_opdata_mask = MHI_OPDATA_REQ_SILENT_MODE;
+    MhiTxBuildConfig config{};
+    MhiFrameBuffer out{};
+    MhiTxBuildResult result{};
+
+    EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+    EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_POWER));
+    EXPECT_EQ(out.data[DB9], 0xFFU);
+    EXPECT_EQ(runtime.forced_opdata_mask, static_cast<uint32_t>(MHI_OPDATA_REQ_SILENT_MODE));
+  }
+
+  {
+    MhiCommandState command{};
     command.silent_mode_set = true;
     command.silent_mode = true;
     command.power_set = true;
@@ -92,36 +136,52 @@ void silent_mode_regression_suite() {
   }
 
   {
+    // The diagnostic spike deliberately removes Silent Mode from the generic
+    // confirmation/retry lifecycle. One wire write is followed by explicit
+    // 0xDD probes instead of retransmitting 0x21 every 1.5 seconds.
     MhiCommandConfirmation confirmation{};
     MhiCommandIntent intent{};
     intent.mask = MHI_COMMAND_SILENT_MODE;
     intent.silent_mode = true;
     confirmation.stage(intent, MHI_COMMAND_SILENT_MODE, 100U);
-
-    MhiOpDataState opdata{};
-    opdata.valid = true;
-    opdata.has_silent_mode = true;
-    opdata.silent_mode = false;
-    EXPECT_EQ(confirmation.observe_opdata(opdata), 0U);
-    EXPECT_EQ(confirmation.pending_mask(), static_cast<uint32_t>(MHI_COMMAND_SILENT_MODE));
-
-    opdata.silent_mode = true;
-    EXPECT_EQ(confirmation.observe_opdata(opdata), static_cast<uint32_t>(MHI_COMMAND_SILENT_MODE));
     EXPECT_FALSE(confirmation.has_pending());
+    EXPECT_EQ(confirmation.pending_mask(), 0U);
   }
 
   {
-    MhiCommandConfirmation confirmation{};
-    MhiCommandIntent intent{};
-    intent.mask = MHI_COMMAND_SILENT_MODE;
-    intent.silent_mode = true;
-    confirmation.stage(intent, MHI_COMMAND_SILENT_MODE, 100U);
+    MhiSilentModeSpike spike{};
+    spike.arm_request(true, true, false, 100U);
+    EXPECT_TRUE(spike.awaiting_command_completion());
+    spike.command_completed(true, 200U);
+    EXPECT_TRUE(spike.active());
+    EXPECT_FALSE(spike.poll_due(299U));
+    EXPECT_TRUE(spike.poll_due(300U));
+    EXPECT_EQ(spike.next_poll_offset_ms(), 100U);
+    spike.mark_poll_staged(300U);
+    EXPECT_EQ(spike.polls_staged(), 1U);
+    EXPECT_FALSE(spike.poll_due(449U));
+    EXPECT_TRUE(spike.poll_due(450U));
+    EXPECT_EQ(static_cast<uint8_t>(spike.observe(false, 460U)),
+              static_cast<uint8_t>(MhiSilentModeSpike::Observation::MISMATCH));
+    EXPECT_TRUE(spike.active());
+    EXPECT_EQ(static_cast<uint8_t>(spike.observe(true, 470U)),
+              static_cast<uint8_t>(MhiSilentModeSpike::Observation::MATCH));
+    EXPECT_FALSE(spike.active());
+    EXPECT_TRUE(spike.matched());
+  }
 
-    MhiCommandState replacement{};
-    replacement.silent_mode_set = true;
-    replacement.silent_mode = false;
-    EXPECT_EQ(confirmation.supersede(replacement), static_cast<uint32_t>(MHI_COMMAND_SILENT_MODE));
-    EXPECT_FALSE(confirmation.has_pending());
+  {
+    MhiSilentModeSpike spike{};
+    spike.arm_request(false, true, true, 100U);
+    spike.command_completed(false, 200U);
+    for (const uint32_t offset : MhiSilentModeSpike::kPollOffsetsMs) {
+      EXPECT_TRUE(spike.poll_due(200U + offset));
+      spike.mark_poll_staged(200U + offset);
+    }
+    EXPECT_FALSE(spike.expire_if_due(12199U));
+    EXPECT_TRUE(spike.expire_if_due(12200U));
+    EXPECT_TRUE(spike.expired());
+    EXPECT_FALSE(spike.active());
   }
 
   {

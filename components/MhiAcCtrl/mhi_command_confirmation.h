@@ -299,8 +299,7 @@ class MhiCommandConfirmation {
     uint32_t mask =
         encoded_command_mask &
         static_cast<uint32_t>(MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN | MHI_COMMAND_TARGET_TEMP |
-                              MHI_COMMAND_VERTICAL_VANE | MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO |
-                              MHI_COMMAND_SILENT_MODE);
+                              MHI_COMMAND_VERTICAL_VANE | MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO);
 
     if ((mask & MHI_COMMAND_FAN) != 0U && !fan_command_confirmable(intent.fan)) {
       mask &= ~static_cast<uint32_t>(MHI_COMMAND_FAN);

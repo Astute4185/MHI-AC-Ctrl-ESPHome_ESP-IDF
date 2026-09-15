@@ -112,6 +112,7 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
       runtime.double_frame && command.silent_mode_set && runtime.error_opdata_count == 0U;
   const uint32_t frame_counter_before_opdata = runtime.frame_counter;
   const uint8_t opdata_index_before = runtime.opdata_index;
+  const uint32_t forced_opdata_before = runtime.forced_opdata_mask;
 
   if (!dedicated_silent_command) {
     apply_opdata_request(out, runtime, config.enabled_opdata_mask);
@@ -128,6 +129,7 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
       (result.encoded_command_mask & MHI_COMMAND_ERROR_OPDATA_REQUEST) == 0U) {
     runtime.frame_counter = frame_counter_before_opdata;
     runtime.opdata_index = opdata_index_before;
+    runtime.forced_opdata_mask = forced_opdata_before;
     out.data[DB6] = runtime.double_frame ? 0x80U : 0x00U;
     out.data[DB9] = 0xFFU;
   }
@@ -160,6 +162,20 @@ void MhiTxBuilder::initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_
 }
 
 void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, uint32_t enabled_opdata_mask) {
+  // The Silent Mode diagnostic spike needs deterministic follow-up probes.
+  // Consume a forced request only on the same double-frame phase used by the
+  // normal opdata scheduler; otherwise leave it pending for the next frame.
+  if (runtime.double_frame && runtime.error_opdata_count == 0U && runtime.forced_opdata_mask != 0U) {
+    for (const auto& request : kMhiOpdataRequests) {
+      if ((runtime.forced_opdata_mask & request.mask) != 0U) {
+        out.data[DB6] = request.db6;
+        out.data[DB9] = request.db9;
+        runtime.forced_opdata_mask &= ~request.mask;
+        return;
+      }
+    }
+  }
+
   const uint32_t normalized_mask = normalize_opdata_mask(enabled_opdata_mask);
   const uint8_t enabled_count = get_enabled_opdata_count(normalized_mask);
 
