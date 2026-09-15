@@ -65,6 +65,7 @@ class MhiCommandCoordinator {
   bool on_tx_completion(const MhiTxCompletion& completion, MhiCommandState& command);
 
   uint32_t observe_status(const MhiStatusState& status);
+  uint32_t observe_opdata(const MhiOpDataState& opdata);
   uint32_t settle_pending_mask(uint32_t mask);
   uint32_t supersede_pending(const MhiCommandState& patch);
   MhiCommandTimeoutResult expire(uint32_t now_ms, MhiCommandState& command);

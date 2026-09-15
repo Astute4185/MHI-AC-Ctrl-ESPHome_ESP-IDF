@@ -210,6 +210,15 @@ uint32_t MhiCommandCoordinator::observe_status(const MhiStatusState& status) {
   return confirmed;
 }
 
+uint32_t MhiCommandCoordinator::observe_opdata(const MhiOpDataState& opdata) {
+  const uint32_t confirmed = confirmation_.observe_opdata(opdata);
+  if (!confirmation_.has_pending()) {
+    final_confirmation_grace_active_ = false;
+    this->reset_attempts_();
+  }
+  return confirmed;
+}
+
 uint32_t MhiCommandCoordinator::settle_pending_mask(uint32_t mask) {
   const uint32_t settled = confirmation_.settle_pending_mask(mask);
   if (!confirmation_.has_pending()) {
@@ -403,6 +412,10 @@ void MhiCommandCoordinator::restore_command_mask_(MhiCommandState& destination, 
     destination.three_d_auto_set = source.three_d_auto_set;
     destination.three_d_auto = source.three_d_auto;
   }
+  if ((mask & MHI_COMMAND_SILENT_MODE) != 0U && !destination.silent_mode_set) {
+    destination.silent_mode_set = source.silent_mode_set;
+    destination.silent_mode = source.silent_mode;
+  }
   if ((mask & MHI_COMMAND_ROOM_TEMP_OVERRIDE) != 0U && !destination.room_temp_override_set) {
     destination.room_temp_override_set = source.room_temp_override_set;
     destination.room_temp_override_raw = source.room_temp_override_raw;
@@ -449,6 +462,11 @@ uint32_t MhiCommandCoordinator::restore_intent_mask_(MhiCommandState& destinatio
     destination.three_d_auto_set = true;
     destination.three_d_auto = intent.three_d_auto;
     restored |= MHI_COMMAND_THREE_D_AUTO;
+  }
+  if ((mask & MHI_COMMAND_SILENT_MODE) != 0U && !destination.silent_mode_set) {
+    destination.silent_mode_set = true;
+    destination.silent_mode = intent.silent_mode;
+    restored |= MHI_COMMAND_SILENT_MODE;
   }
   return restored;
 }

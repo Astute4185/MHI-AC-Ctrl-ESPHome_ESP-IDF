@@ -1812,7 +1812,41 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     accepted = true;
   }
 
+  if (decoded_opdata.has_silent_mode) {
+    opdata.has_silent_mode = true;
+    opdata.silent_mode = decoded_opdata.silent_mode;
+    freshness_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+    accepted = true;
+  }
+
   this->opdata_freshness_.observe(freshness_mask, now_ms);
+
+  // Silent Mode is confirmed by opdata feedback rather than the normal status
+  // frame. Only a freshly decoded 0xDD response can enter this confirmation
+  // path, so cached state cannot accidentally acknowledge a new command.
+  if (decoded_opdata.has_silent_mode) {
+    if (this->command_mutex_ != nullptr) {
+      xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+    }
+
+    const uint32_t confirmed_mask = this->command_coordinator_.observe_opdata(opdata);
+    const uint32_t pending_mask = this->command_coordinator_.pending_mask();
+
+    if (this->command_mutex_ != nullptr) {
+      xSemaphoreGive(this->command_mutex_);
+    }
+
+    if (confirmed_mask != 0U) {
+      this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now_ms);
+      if (pending_mask == 0U) {
+        this->rx_runtime_.clear_command_candidate();
+        this->notify_command_worker_();
+      }
+      ESP_LOGI(DIAG_TAG, "command: confirmed mask=0x%08lx pending=0x%08lx", static_cast<unsigned long>(confirmed_mask),
+               static_cast<unsigned long>(pending_mask));
+    }
+  }
+
   return accepted;
 }
 

@@ -15,6 +15,7 @@ enum MhiCommandMask : uint32_t {
   MHI_COMMAND_THREE_D_AUTO = (1UL << 6),
   MHI_COMMAND_ROOM_TEMP_OVERRIDE = (1UL << 7),
   MHI_COMMAND_ERROR_OPDATA_REQUEST = (1UL << 8),
+  MHI_COMMAND_SILENT_MODE = (1UL << 9),
 };
 
 struct MhiCommandIntent {
@@ -27,6 +28,7 @@ struct MhiCommandIntent {
   uint8_t vertical_vane{0};
   uint8_t horizontal_vane{0};
   bool three_d_auto{false};
+  bool silent_mode{false};
 
   // Extended-louver commands are a composite DB16/DB17 state on 33-byte frames.
   // For 3D-only commands this captures the horizontal vane/swing state that must
@@ -62,6 +64,10 @@ struct MhiCommandState {
   bool three_d_auto_set{false};
   bool three_d_auto{false};
 
+  // DB6 / DB9 / DB10: outdoor-unit Silent Mode.
+  bool silent_mode_set{false};
+  bool silent_mode{false};
+
   // DB3: room temperature override.
   // 0xFF means no override / use internal AC sensor.
   bool room_temp_override_set{false};
@@ -78,6 +84,7 @@ struct MhiCommandState {
     vertical_vane_set = false;
     horizontal_vane_set = false;
     three_d_auto_set = false;
+    silent_mode_set = false;
     room_temp_override_set = false;
     error_opdata_request = false;
   }
@@ -103,6 +110,9 @@ struct MhiCommandState {
     }
     if ((mask & MHI_COMMAND_THREE_D_AUTO) != 0U) {
       three_d_auto_set = false;
+    }
+    if ((mask & MHI_COMMAND_SILENT_MODE) != 0U) {
+      silent_mode_set = false;
     }
     if ((mask & MHI_COMMAND_ROOM_TEMP_OVERRIDE) != 0U) {
       room_temp_override_set = false;
@@ -139,6 +149,9 @@ struct MhiCommandState {
     }
     if (three_d_auto_set) {
       mask |= MHI_COMMAND_THREE_D_AUTO;
+    }
+    if (silent_mode_set) {
+      mask |= MHI_COMMAND_SILENT_MODE;
     }
     if (room_temp_override_set) {
       mask |= MHI_COMMAND_ROOM_TEMP_OVERRIDE;

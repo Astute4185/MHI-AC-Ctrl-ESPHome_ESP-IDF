@@ -70,6 +70,9 @@ struct MhiDecodedOpData {
   bool has_defrost{false};
   bool defrost{false};
 
+  bool has_silent_mode{false};
+  bool silent_mode{false};
+
   bool has_last_error{false};
   uint8_t last_error_code{0};
 };

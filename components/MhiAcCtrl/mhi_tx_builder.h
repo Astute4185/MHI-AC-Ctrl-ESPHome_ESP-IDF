@@ -30,6 +30,7 @@ enum MhiOpdataRequestMask : uint32_t {
   MHI_OPDATA_REQ_TOTAL_COMP_RUN = (1UL << 17),
   MHI_OPDATA_REQ_OU_EEV1 = (1UL << 18),
   MHI_OPDATA_REQ_KWH = (1UL << 19),
+  MHI_OPDATA_REQ_SILENT_MODE = (1UL << 20),
 };
 
 constexpr uint32_t kMhiDefaultOpdataMask = MHI_OPDATA_REQ_MODE;
