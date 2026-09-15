@@ -136,3 +136,5 @@ switch:
     mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: MHI 3D Auto
+    outdoor_unit_silent_mode:
+      name: MHI Outdoor Unit Silent Mode

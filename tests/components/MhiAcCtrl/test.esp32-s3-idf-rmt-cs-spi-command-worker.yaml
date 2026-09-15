@@ -44,6 +44,8 @@ switch:
     mhi_ac_ctrl_id: mhi_ac
     active_mode:
       name: MHI Active Mode
+    outdoor_unit_silent_mode:
+      name: MHI Outdoor Unit Silent Mode
 
 
 binary_sensor:

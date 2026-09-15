@@ -22,6 +22,7 @@ The primary runtime targets are the original **ESP32** and **ESP32-S3**, both us
 - The command coordinator now confirms commands from returned MOSI state, suppresses duplicates, retries bounded failures, and supersedes stale horizontal/3D confirmation generations with the latest composite intent.
 - Vertical vane, horizontal vane, and 3D Auto mapping completed an 80-case hardware matrix with all requested combinations confirmed.
 - Four-speed and three-speed fan profiles are supported. Four-speed is the default and exposes Quiet as a distinct protocol state.
+- Outdoor Unit Silent Mode is available as an opt-in switch using the discovered `0xDD` operation-data feedback and `0x21` command path. It is model-dependent and still requires wider hardware validation.
 - ESP32-C3 has compile coverage through the legacy FastGPIO path, but runtime operation is not yet validated.
 
 The remaining work is primarily wider hardware compatibility testing, ESP32-C3 runtime validation, model-specific protocol discovery, documentation, and normal maintenance. No further major backend rewrite is currently planned.
@@ -348,7 +349,11 @@ switch:
     mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: 3D Auto
+    outdoor_unit_silent_mode:
+      name: Outdoor Unit Silent Mode
 ```
+
+`outdoor_unit_silent_mode` is an opt-in, model-dependent protocol feature. Configuring the switch adds the Silent Mode `0xC0/0xDD` request to the operation-data cycle. The entity does not assume `OFF` at startup: it publishes only after a valid Silent Mode response has been observed. Writes use the dedicated `DB6=0x80`, `DB9=0x21`, `DB10=0x00|0x01` command form and are confirmed from returned `0xDD/0x80` operation-data feedback rather than optimistic publication. Indoor fan **Quiet** and outdoor-unit **Silent Mode** are separate protocol functions.
 
 3D Auto is supported on the 33-byte frame path. Hardware capture and the complete louver matrix confirmed that 3D Auto is `DB17` bit `0x04` and that horizontal vane plus 3D Auto form one composite `DB16`/`DB17` command domain.
 
@@ -544,6 +549,7 @@ Implemented command safety behaviour:
 - swing confirmation checks the semantic swing bit and ignores retained fixed-position bits;
 - horizontal confirmation validates the requested horizontal state and its preserved 3D companion state;
 - 3D Auto confirmation checks `DB17` bit `0x04` independently;
+- Outdoor Unit Silent Mode confirms from decoded `0xDD/0x80` operation-data feedback rather than normal status bytes;
 - newer horizontal or 3D intent supersedes a stale pending confirmation and coalesces the latest composite state.
 
 This prevents repeated Home Assistant input from generating redundant commands and prevents an obsolete horizontal/3D confirmation generation from leaking into a later request.
@@ -652,6 +658,7 @@ The planned architecture and primary feature roadmap are substantially complete:
 - command confirmation, retry, duplicate suppression, and latest-intent coalescing are implemented;
 - four-speed and three-speed fan profiles are supported;
 - vertical vane, horizontal vane, and 3D Auto mappings are hardware-validated;
+- Outdoor Unit Silent Mode protocol support is implemented as an opt-in model-dependent feature and still requires wider hardware validation;
 - host unit tests, sanitizers, lint checks, and representative cross-chip compile tests are integrated into CI.
 
 Remaining work is incremental:
@@ -684,6 +691,7 @@ This project builds on prior MHI reverse-engineering and ESPHome integration wor
 - Bus capture and trace reference: [absalom-muc/MHI-AC-Trace](https://github.com/absalom-muc/MHI-AC-Trace)
 - FastGPIO inspiration/reference work: [RobertJansen1/MHI-AC-Ctrl-ESPHome esp32_errors branch](https://github.com/RobertJansen1/MHI-AC-Ctrl-ESPHome/tree/esp32_errors)
 - RMT-derived chip-select and ESP32 SPI slave approach : [hberntsen/mhi-ac-ctrl-esp32](https://github.com/hberntsen/mhi-ac-ctrl-esp32)
+- Outdoor Unit Silent Mode protocol discovery and implementation reference: [hberntsen/mhi-ac-ctrl-esp32 commit 538b341](https://github.com/hberntsen/mhi-ac-ctrl-esp32/commit/538b3412b4e013d6f732f47736f8446a211ec737)
 - Original reverse-engineering lineage and MHI protocol work from the wider `MHI-AC-Ctrl` community
 
 ## License

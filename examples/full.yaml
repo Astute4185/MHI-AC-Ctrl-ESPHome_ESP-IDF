@@ -181,3 +181,6 @@ switch:
     mhi_ac_ctrl_id: mhi_ac
     vanes_3d_auto:
       name: "3D Auto"
+    # Model-dependent. State remains unknown until valid Silent Mode feedback is received.
+    outdoor_unit_silent_mode:
+      name: "Outdoor Unit Silent Mode"
