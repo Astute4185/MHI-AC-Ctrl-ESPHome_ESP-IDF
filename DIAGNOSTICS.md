@@ -116,7 +116,7 @@ A TX frame count does not prove command success. Returned AC state is authoritat
 Commands move through three distinct stages:
 
 ```text
-staged intent -> actual bus transmission -> semantic MOSI confirmation
+staged intent -> actual bus transmission -> semantic returned-state confirmation
 ```
 
 Monitor:
@@ -137,7 +137,7 @@ last_staged_timeout_mask
 
 | Counter | Meaning | Interpretation |
 |---|---|---|
-| `command_confirmations` | Command fields confirmed from returned MOSI state | Should increase after successful commands |
+| `command_confirmations` | Command fields confirmed from authoritative returned status or opdata | Should increase after successful commands |
 | `confirmation_timeouts` | Confirmation attempt exceeded its field-specific window | Ideally zero; recoverable when a retry subsequently confirms |
 | `retries` | Timed-out fields queued for another attempt | Should correspond to recoverable confirmation timeouts |
 | `retry_exhaustions` | All permitted attempts completed without confirmation | Hard command failure; expected zero |
@@ -155,7 +155,24 @@ physical state and Home Assistant state match
 
 ### Extended-louver timing
 
-Horizontal vane and 3D Auto confirmation use three-second windows. Other command fields use the normal ten-second confirmation window.
+Horizontal vane and 3D Auto confirmation use three-second windows. Other command fields, including Outdoor Unit Silent Mode, use the normal ten-second confirmation window.
+
+### Outdoor Unit Silent Mode confirmation
+
+Silent Mode is the exception to the normal status-backed confirmation path. The command is transmitted with `DB6=0x80`, `DB9=0x21`, and `DB10=0x00|0x01`, then confirmed from a valid operation-data response with `DB9=0xDD`, `DB10=0x80`, and `DB12=0x00`. `DB11[5]` is the reported state.
+
+When validating this feature, confirm all of the following:
+
+```text
+0xC0/0xDD polls receive valid responses
+ON and OFF writes are transmitted
+returned DB11[5] matches the requested state
+command_confirmations increases
+pending_confirmation_mask returns to 0
+retry_exhaustions remains 0
+```
+
+If the AC never returns the `0xDD` response family, treat Silent Mode as unsupported or unverified for that model rather than assuming `OFF`.
 
 ### Latest-intent supersession
 
@@ -182,6 +199,7 @@ Exercise at least:
 - all vertical vane positions and swing;
 - all horizontal vane positions and swing on 33-byte units;
 - 3D Auto on and off;
+- Outdoor Unit Silent Mode on and off on units that return the `0xDD` feedback group;
 - commands while the unit is off;
 - rapid replacement of pending commands;
 - horizontal/3D changes issued close together.

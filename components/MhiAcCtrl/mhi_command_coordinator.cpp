@@ -22,13 +22,27 @@ void MhiCommandCoordinator::reset() {
 bool MhiCommandCoordinator::prepare_next(MhiCommandState& command, MhiTxRuntime& runtime,
                                          const MhiTxBuildConfig& config, MhiFrameBuffer& frame,
                                          MhiTxBuildResult& result, MhiTxEnvelope& envelope) {
-  if (command_in_flight_ || confirmation_.has_pending()) {
+  if (command_in_flight_) {
+    return false;
+  }
+
+  const bool confirmation_pending = confirmation_.has_pending();
+  const bool forced_opdata_pending = runtime.forced_opdata_mask != 0U;
+  if (confirmation_pending && !forced_opdata_pending) {
     return false;
   }
 
   this->apply_coalesced_extended_patch_(command);
 
-  if (!MhiTxBuilder::build_next_frame(command, runtime, config, frame, result) || frame.len == 0U) {
+  if (confirmation_pending) {
+    // Forced opdata probes are allowed while semantic confirmation is pending.
+    // Build them from an empty command state so a newer user command remains
+    // queued until the current confirmation lifecycle has completed.
+    MhiCommandState no_command{};
+    if (!MhiTxBuilder::build_next_frame(no_command, runtime, config, frame, result) || frame.len == 0U) {
+      return false;
+    }
+  } else if (!MhiTxBuilder::build_next_frame(command, runtime, config, frame, result) || frame.len == 0U) {
     return false;
   }
 
@@ -210,6 +224,15 @@ uint32_t MhiCommandCoordinator::observe_status(const MhiStatusState& status) {
   return confirmed;
 }
 
+uint32_t MhiCommandCoordinator::observe_opdata(const MhiOpDataState& opdata) {
+  const uint32_t confirmed = confirmation_.observe_opdata(opdata);
+  if (!confirmation_.has_pending()) {
+    final_confirmation_grace_active_ = false;
+    this->reset_attempts_();
+  }
+  return confirmed;
+}
+
 uint32_t MhiCommandCoordinator::settle_pending_mask(uint32_t mask) {
   const uint32_t settled = confirmation_.settle_pending_mask(mask);
   if (!confirmation_.has_pending()) {
@@ -239,6 +262,24 @@ uint32_t MhiCommandCoordinator::supersede_pending(const MhiCommandState& patch) 
 MhiCommandTimeoutResult MhiCommandCoordinator::expire(uint32_t now_ms, MhiCommandState& command) {
   MhiCommandTimeoutResult result{};
   const uint8_t attempt = confirmation_attempt_ == 0U ? 1U : confirmation_attempt_;
+
+  // Silent Mode is a single-shot command. Hardware feedback can be delayed,
+  // so it gets a dedicated 3-second confirmation window and is never restored
+  // into the command queue for automatic retransmission.
+  if ((confirmation_.pending_mask() & MHI_COMMAND_SILENT_MODE) != 0U) {
+    if (confirmation_.pending_age_ms(now_ms) < kMhiSilentModeConfirmationTimeoutMs) {
+      return result;
+    }
+
+    result.attempt = attempt;
+    result.timed_out_mask = MHI_COMMAND_SILENT_MODE;
+    result.exhausted_mask = confirmation_.settle_pending_mask(MHI_COMMAND_SILENT_MODE);
+    final_confirmation_grace_active_ = false;
+    if (!confirmation_.has_pending()) {
+      this->reset_attempts_();
+    }
+    return result;
+  }
 
   if (final_confirmation_grace_active_) {
     const MhiCommandExpiration expiration =
@@ -403,6 +444,10 @@ void MhiCommandCoordinator::restore_command_mask_(MhiCommandState& destination, 
     destination.three_d_auto_set = source.three_d_auto_set;
     destination.three_d_auto = source.three_d_auto;
   }
+  if ((mask & MHI_COMMAND_SILENT_MODE) != 0U && !destination.silent_mode_set) {
+    destination.silent_mode_set = source.silent_mode_set;
+    destination.silent_mode = source.silent_mode;
+  }
   if ((mask & MHI_COMMAND_ROOM_TEMP_OVERRIDE) != 0U && !destination.room_temp_override_set) {
     destination.room_temp_override_set = source.room_temp_override_set;
     destination.room_temp_override_raw = source.room_temp_override_raw;
@@ -449,6 +494,11 @@ uint32_t MhiCommandCoordinator::restore_intent_mask_(MhiCommandState& destinatio
     destination.three_d_auto_set = true;
     destination.three_d_auto = intent.three_d_auto;
     restored |= MHI_COMMAND_THREE_D_AUTO;
+  }
+  if ((mask & MHI_COMMAND_SILENT_MODE) != 0U && !destination.silent_mode_set) {
+    destination.silent_mode_set = true;
+    destination.silent_mode = intent.silent_mode;
+    restored |= MHI_COMMAND_SILENT_MODE;
   }
   return restored;
 }

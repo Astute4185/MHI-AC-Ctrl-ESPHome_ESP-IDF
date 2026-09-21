@@ -199,6 +199,9 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
   MhiCommandState allowed_patch = patch;
   allowed_patch.clear_pending_mask(requested_mask & ~allowed_mask);
   const uint32_t superseded_mask = this->command_coordinator_.supersede_pending(allowed_patch);
+  if ((superseded_mask & MHI_COMMAND_SILENT_MODE) != 0U) {
+    this->reset_silent_mode_confirmation_schedule_locked_();
+  }
   const uint32_t queued_mask = command.pending_command_mask();
   const uint32_t pending_mask = this->command_coordinator_.pending_mask();
   const auto pending_intent = this->command_coordinator_.pending_intent();
@@ -490,6 +493,7 @@ void MhiAcCtrl::reset_command_runtime_() {
   }
   this->state_.command() = {};
   this->command_coordinator_.reset();
+  this->reset_silent_mode_confirmation_schedule_locked_();
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
@@ -1146,6 +1150,39 @@ void MhiAcCtrl::notify_command_worker_() {
   xTaskNotifyGive(this->command_worker_task_);
 }
 
+void MhiAcCtrl::reset_silent_mode_confirmation_schedule_locked_() {
+  this->silent_mode_confirmation_started_ms_ = 0U;
+  this->silent_mode_first_poll_requested_ = false;
+  this->silent_mode_final_poll_requested_ = false;
+  this->tx_runtime_.forced_opdata_mask &= ~MHI_OPDATA_REQ_SILENT_MODE;
+}
+
+void MhiAcCtrl::service_silent_mode_confirmation_schedule_locked_(uint32_t now_ms) {
+  if ((this->command_coordinator_.pending_mask() & MHI_COMMAND_SILENT_MODE) == 0U) {
+    this->reset_silent_mode_confirmation_schedule_locked_();
+    return;
+  }
+
+  if (this->silent_mode_confirmation_started_ms_ == 0U || now_ms < this->silent_mode_confirmation_started_ms_) {
+    return;
+  }
+
+  const uint32_t age_ms = now_ms - this->silent_mode_confirmation_started_ms_;
+
+  if (!this->silent_mode_first_poll_requested_ && age_ms >= kMhiSilentModeFirstPollDelayMs) {
+    this->tx_runtime_.forced_opdata_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+    this->silent_mode_first_poll_requested_ = true;
+    ESP_LOGI(DIAG_TAG, "silent_mode: requesting 0xDD confirmation poll at +%lums", static_cast<unsigned long>(age_ms));
+  }
+
+  if (!this->silent_mode_final_poll_requested_ && age_ms >= kMhiSilentModeFinalPollDelayMs) {
+    this->tx_runtime_.forced_opdata_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+    this->silent_mode_final_poll_requested_ = true;
+    ESP_LOGI(DIAG_TAG, "silent_mode: requesting final 0xDD confirmation poll at +%lums",
+             static_cast<unsigned long>(age_ms));
+  }
+}
+
 void MhiAcCtrl::service_command_pipeline_() {
   if (!this->transport_commands_enabled_.load(std::memory_order_acquire)) {
     return;
@@ -1169,6 +1206,7 @@ void MhiAcCtrl::service_command_pipeline_() {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
 
+  this->service_silent_mode_confirmation_schedule_locked_(now);
   this->suppress_duplicate_pending_commands_();
   auto& command = this->state_.command();
   const bool has_pending_command = command.has_pending_command();
@@ -1213,9 +1251,11 @@ void MhiAcCtrl::service_command_pipeline_() {
     }
   }
 
+  const bool forced_opdata_pending = this->tx_runtime_.forced_opdata_mask != 0U;
+  const bool confirmation_pending = this->command_coordinator_.has_pending_confirmation();
   if (!replacement_committed && !this->command_coordinator_.has_command_in_flight() &&
-      !this->command_coordinator_.has_pending_confirmation() &&
-      (has_pending_command || this->background_tx_allowed_(now))) {
+      (forced_opdata_pending ||
+       (!confirmation_pending && (has_pending_command || this->background_tx_allowed_(now))))) {
     command_before_build = command;
     runtime_before_build = this->tx_runtime_;
     should_build = this->command_coordinator_.prepare_next(command, this->tx_runtime_, this->tx_config_, tx_frame,
@@ -1296,6 +1336,7 @@ void MhiAcCtrl::drain_tx_completions_() {
   MhiTxCompletion completion{};
   bool command_state_changed = false;
   bool clear_command_candidate = false;
+  bool silent_confirmation_started = false;
 
   while (this->transport_.take_tx_completion(completion)) {
     if (completion.is_command()) {
@@ -1308,6 +1349,12 @@ void MhiAcCtrl::drain_tx_completions_() {
     const bool handled = this->command_coordinator_.on_tx_completion(completion, this->state_.command());
     if (handled && completion.success && this->command_coordinator_.pending_mask() != 0U) {
       clear_command_candidate = true;
+    }
+    if (handled && completion.success && (completion.command_mask & MHI_COMMAND_SILENT_MODE) != 0U &&
+        (this->command_coordinator_.pending_mask() & MHI_COMMAND_SILENT_MODE) != 0U) {
+      this->reset_silent_mode_confirmation_schedule_locked_();
+      this->silent_mode_confirmation_started_ms_ = completion.completed_at_ms;
+      silent_confirmation_started = true;
     }
     if (this->command_mutex_ != nullptr) {
       xSemaphoreGive(this->command_mutex_);
@@ -1324,6 +1371,12 @@ void MhiAcCtrl::drain_tx_completions_() {
       this->diagnostics_.stats().on_tx_command_failure(completion.command_mask, completion.completed_at_ms);
       command_state_changed = handled;
     }
+  }
+
+  if (silent_confirmation_started) {
+    ESP_LOGI(DIAG_TAG, "silent_mode: command wire complete; waiting for unsolicited 0xDD, then probes at +%lums/+%lums",
+             static_cast<unsigned long>(kMhiSilentModeFirstPollDelayMs),
+             static_cast<unsigned long>(kMhiSilentModeFinalPollDelayMs));
   }
 
   if (clear_command_candidate) {
@@ -1812,7 +1865,44 @@ bool MhiAcCtrl::apply_opdata_update_(const MhiDecodedOpData& decoded_opdata, con
     accepted = true;
   }
 
+  if (decoded_opdata.has_silent_mode) {
+    opdata.has_silent_mode = true;
+    opdata.silent_mode = decoded_opdata.silent_mode;
+    freshness_mask |= MHI_OPDATA_REQ_SILENT_MODE;
+    accepted = true;
+  }
+
   this->opdata_freshness_.observe(freshness_mask, now_ms);
+
+  // Silent Mode is confirmed by opdata feedback rather than the normal status
+  // frame. Only a freshly decoded 0xDD response can enter this confirmation
+  // path, so cached state cannot accidentally acknowledge a new command.
+  if (decoded_opdata.has_silent_mode) {
+    if (this->command_mutex_ != nullptr) {
+      xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
+    }
+
+    const uint32_t confirmed_mask = this->command_coordinator_.observe_opdata(opdata);
+    const uint32_t pending_mask = this->command_coordinator_.pending_mask();
+    if ((confirmed_mask & MHI_COMMAND_SILENT_MODE) != 0U || (pending_mask & MHI_COMMAND_SILENT_MODE) == 0U) {
+      this->reset_silent_mode_confirmation_schedule_locked_();
+    }
+
+    if (this->command_mutex_ != nullptr) {
+      xSemaphoreGive(this->command_mutex_);
+    }
+
+    if (confirmed_mask != 0U) {
+      this->diagnostics_.stats().on_command_confirmed(confirmed_mask, now_ms);
+      if (pending_mask == 0U) {
+        this->rx_runtime_.clear_command_candidate();
+        this->notify_command_worker_();
+      }
+      ESP_LOGI(DIAG_TAG, "command: confirmed mask=0x%08lx pending=0x%08lx", static_cast<unsigned long>(confirmed_mask),
+               static_cast<unsigned long>(pending_mask));
+    }
+  }
+
   return accepted;
 }
 
@@ -1960,6 +2050,9 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
   }
   const uint32_t staged_timeout_mask = this->command_coordinator_.staged_timeout_mask(now, kStagedCommandWarningMs);
   const MhiCommandTimeoutResult timeout = this->command_coordinator_.expire(now, this->state_.command());
+  if ((timeout.exhausted_mask & MHI_COMMAND_SILENT_MODE) != 0U) {
+    this->reset_silent_mode_confirmation_schedule_locked_();
+  }
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }
@@ -1976,6 +2069,13 @@ void MhiAcCtrl::check_command_confirmation_timeout_() {
 
   if (timeout.timed_out_mask != 0U) {
     this->diagnostics_.stats().on_command_confirmation_timeout(timeout.timed_out_mask, now);
+  }
+
+  if ((timeout.exhausted_mask & MHI_COMMAND_SILENT_MODE) != 0U) {
+    this->rx_runtime_.clear_command_candidate();
+    ESP_LOGW(DIAG_TAG, "silent_mode: unconfirmed after %lums; stopping without command retransmission",
+             static_cast<unsigned long>(kMhiSilentModeConfirmationTimeoutMs));
+    return;
   }
 
   if (timeout.grace_mask != 0U) {

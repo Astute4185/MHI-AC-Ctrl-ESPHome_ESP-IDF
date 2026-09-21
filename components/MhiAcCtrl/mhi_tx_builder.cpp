@@ -35,14 +35,15 @@ constexpr MhiOpdataRequest kMhiOpdataRequests[] = {
     {0x40, 0x1E, MHI_OPDATA_REQ_TOTAL_COMP_RUN},
     {0x40, 0x13, MHI_OPDATA_REQ_OU_EEV1},
     {0xC0, 0x94, MHI_OPDATA_REQ_KWH},
+    {0xC0, 0xDD, MHI_OPDATA_REQ_SILENT_MODE},
 };
 
 constexpr uint32_t kNoFramesPerOpDataCycle = 400;
 constexpr uint8_t kMinEffectiveOpdataCount = 5;
 
-constexpr uint32_t kMhiSemanticCommandMask = MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN |
-                                             MHI_COMMAND_TARGET_TEMP | MHI_COMMAND_VERTICAL_VANE |
-                                             MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
+constexpr uint32_t kMhiSemanticCommandMask =
+    MHI_COMMAND_POWER | MHI_COMMAND_MODE | MHI_COMMAND_FAN | MHI_COMMAND_TARGET_TEMP | MHI_COMMAND_VERTICAL_VANE |
+    MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO | MHI_COMMAND_SILENT_MODE;
 
 uint32_t normalize_opdata_mask(uint32_t mask) {
   return mask == 0U ? kMhiDefaultOpdataMask : mask;
@@ -107,10 +108,15 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
 
   out.data[DB14] = static_cast<uint8_t>(runtime.double_frame ? 0x04U : 0x00U);
 
+  const bool dedicated_silent_command =
+      runtime.double_frame && command.silent_mode_set && runtime.error_opdata_count == 0U;
   const uint32_t frame_counter_before_opdata = runtime.frame_counter;
   const uint8_t opdata_index_before = runtime.opdata_index;
+  const uint32_t forced_opdata_mask_before = runtime.forced_opdata_mask;
 
-  apply_opdata_request(out, runtime, config.enabled_opdata_mask);
+  if (!dedicated_silent_command) {
+    apply_opdata_request(out, runtime, config.enabled_opdata_mask);
+  }
   const bool routine_opdata_request_encoded = out.data[DB9] != 0xFFU;
 
   apply_commands(out, command, runtime, config, result);
@@ -123,6 +129,7 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
       (result.encoded_command_mask & MHI_COMMAND_ERROR_OPDATA_REQUEST) == 0U) {
     runtime.frame_counter = frame_counter_before_opdata;
     runtime.opdata_index = opdata_index_before;
+    runtime.forced_opdata_mask = forced_opdata_mask_before;
     out.data[DB6] = runtime.double_frame ? 0x80U : 0x00U;
     out.data[DB9] = 0xFFU;
   }
@@ -155,6 +162,14 @@ void MhiTxBuilder::initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_
 }
 
 void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, uint32_t enabled_opdata_mask) {
+  if (runtime.forced_opdata_mask != 0U && runtime.double_frame && runtime.error_opdata_count == 0U) {
+    const auto& request = get_enabled_opdata(runtime.forced_opdata_mask, 0U);
+    out.data[DB6] = request.db6;
+    out.data[DB9] = request.db9;
+    runtime.forced_opdata_mask &= ~request.mask;
+    return;
+  }
+
   const uint32_t normalized_mask = normalize_opdata_mask(enabled_opdata_mask);
   const uint8_t enabled_count = get_enabled_opdata_count(normalized_mask);
 
@@ -186,6 +201,24 @@ void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runti
 
 void MhiTxBuilder::apply_commands(MhiFrameBuffer& out, MhiCommandState& command, MhiTxRuntime& runtime,
                                   const MhiTxBuildConfig& config, MhiTxBuildResult& result) {
+  if (runtime.double_frame && command.silent_mode_set && runtime.error_opdata_count == 0U) {
+    // Silent Mode is a dedicated command bank. Do not mix it with routine
+    // opdata or climate/louver writes until hardware proves such coalescing is
+    // safe across models.
+    out.data[DB0] = 0x00U;
+    out.data[DB1] = 0x00U;
+    out.data[DB2] = 0x00U;
+    out.data[DB3] = runtime.room_temp_override_raw;
+    out.data[DB6] = 0x80U;
+    out.data[DB9] = 0x21U;
+    out.data[DB10] = command.silent_mode ? 0x01U : 0x00U;
+    result.intent.silent_mode = command.silent_mode;
+    command.silent_mode_set = false;
+    result.encoded_command_mask |= MHI_COMMAND_SILENT_MODE;
+    result.intent.mask |= MHI_COMMAND_SILENT_MODE;
+    return;
+  }
+
   if (runtime.double_frame) {
     out.data[DB0] = 0x00U;
     out.data[DB1] = 0x00U;

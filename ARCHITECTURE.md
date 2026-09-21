@@ -55,7 +55,7 @@ MhiCommandCoordinator ───────► MhiTxBuilder
 semantic confirmation ◄──── MhiTransportManager
       ▲                            │
       │                            ▼
-MhiStatusState ◄──── decode/apply pipeline ◄──── validated MOSI frames
+MhiStatusState / MhiOpDataState ◄──── decode/apply pipeline ◄──── validated MOSI frames
       │
       ▼
 MhiPublishBridge
@@ -302,7 +302,7 @@ This reduces unnecessary transmissions and avoids retries caused by repeatedly s
 
 ## Semantic confirmation
 
-Confirmation compares returned MOSI state with the semantic intent encoded in the command.
+Confirmation compares authoritative returned MOSI state or decoded operation-data feedback with the semantic intent encoded in the command.
 
 Examples include:
 
@@ -312,7 +312,8 @@ Examples include:
 - target temperature;
 - vertical-vane fixed position or swing;
 - horizontal-vane fixed position or swing;
-- 3D Auto state.
+- 3D Auto state;
+- Outdoor Unit Silent Mode from its `0xDD/0x80` opdata response.
 
 The implementation does not require unrelated bytes to match.
 
@@ -340,6 +341,12 @@ confirmed extended-louver state
 Horizontal confirmation verifies its requested horizontal state and, when present in the encoded context, the preserved 3D companion state.
 
 3D Auto confirmation checks DB17 bit `0x04` independently. Horizontal position is preserved context, not part of the semantic 3D request.
+
+### Operation-data-backed confirmation
+
+Outdoor Unit Silent Mode is not confirmed from the normal status decoder. Its authoritative feedback arrives through the operation-data path. The command coordinator therefore observes decoded opdata as well as status state while confirmation is pending. A Silent Mode request is settled only when a valid `DB9=0xDD`, `DB10=0x80`, `DB12=0x00` response reports the requested `DB11[5]` state.
+
+The Silent Mode write uses a dedicated `DB6=0x80`, `DB9=0x21`, `DB10=0x00|0x01` frame and is kept separate from routine opdata scheduling so background requests cannot overwrite the command fields.
 
 ### Latest-intent supersession
 

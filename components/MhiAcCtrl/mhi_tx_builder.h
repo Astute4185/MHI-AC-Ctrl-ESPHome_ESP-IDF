@@ -30,6 +30,7 @@ enum MhiOpdataRequestMask : uint32_t {
   MHI_OPDATA_REQ_TOTAL_COMP_RUN = (1UL << 17),
   MHI_OPDATA_REQ_OU_EEV1 = (1UL << 18),
   MHI_OPDATA_REQ_KWH = (1UL << 19),
+  MHI_OPDATA_REQ_SILENT_MODE = (1UL << 20),
 };
 
 constexpr uint32_t kMhiDefaultOpdataMask = MHI_OPDATA_REQ_MODE;
@@ -41,6 +42,11 @@ struct MhiTxRuntime {
   uint8_t error_opdata_count{0};
   bool double_frame{false};
   uint32_t frame_counter{1};
+
+  // One-shot operation-data requests that bypass the normal round-robin
+  // cadence. A bit is cleared only after its request is actually encoded into
+  // an eligible double frame.
+  uint32_t forced_opdata_mask{0U};
 };
 
 struct MhiTxBuildConfig {

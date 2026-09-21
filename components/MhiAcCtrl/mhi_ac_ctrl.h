@@ -425,6 +425,8 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   void command_worker_task_loop_();
   void notify_command_worker_();
   void service_command_pipeline_();
+  void service_silent_mode_confirmation_schedule_locked_(uint32_t now_ms);
+  void reset_silent_mode_confirmation_schedule_locked_();
   bool worker_handles_rx_() const;
   void drain_tx_completions_();
   bool decode_frame_(const MhiFrameBuffer& frame);
@@ -505,6 +507,13 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   uint32_t tx_staged_replacement_rejected_{0U};
   uint32_t command_request_revision_{0U};
   uint32_t staged_replacement_revision_{0U};
+
+  // Silent Mode uses a one-shot write followed by passive feedback and, only
+  // when needed, two explicit 0xDD probes.
+  uint32_t silent_mode_confirmation_started_ms_{0U};
+  bool silent_mode_first_poll_requested_{false};
+  bool silent_mode_final_poll_requested_{false};
+
   std::atomic<bool> transport_commands_enabled_{true};
   std::atomic<bool> active_mode_enabled_{true};
   switch_::Switch* active_mode_switch_{nullptr};

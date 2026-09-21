@@ -7,12 +7,15 @@ from .. import CONF_MHI_AC_CTRL_ID, MhiAcCtrl, mhi_ns
 
 Mhi3dAutoSwitch = mhi_ns.class_("Mhi3dAutoSwitch", switch.Switch, cg.Component)
 MhiActiveModeSwitch = mhi_ns.class_("MhiActiveModeSwitch", switch.Switch, cg.Component)
+MhiOutdoorUnitSilentModeSwitch = mhi_ns.class_("MhiOutdoorUnitSilentModeSwitch", switch.Switch, cg.Component)
 
 CONF_VANES_3D_AUTO = "vanes_3d_auto"
 CONF_ACTIVE_MODE = "active_mode"
+CONF_OUTDOOR_UNIT_SILENT_MODE = "outdoor_unit_silent_mode"
 
 ICON_3D = "mdi:video-3d"
 ICON_ACTIVE_MODE = "mdi:transmit"
+ICON_SILENT_MODE = "mdi:volume-off"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -26,6 +29,11 @@ CONFIG_SCHEMA = cv.Schema(
             Mhi3dAutoSwitch,
             device_class=DEVICE_CLASS_SWITCH,
             icon=ICON_3D,
+        ),
+        cv.Optional(CONF_OUTDOOR_UNIT_SILENT_MODE): switch.switch_schema(
+            MhiOutdoorUnitSilentModeSwitch,
+            device_class=DEVICE_CLASS_SWITCH,
+            icon=ICON_SILENT_MODE,
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -45,3 +53,8 @@ async def to_code(config):
         await cg.register_component(var, config[CONF_VANES_3D_AUTO])
         await cg.register_parented(var, parent)
         cg.add(parent.set_vanes_3d_auto_switch(var))
+
+    if CONF_OUTDOOR_UNIT_SILENT_MODE in config:
+        var = await switch.new_switch(config[CONF_OUTDOOR_UNIT_SILENT_MODE])
+        await cg.register_component(var, config[CONF_OUTDOOR_UNIT_SILENT_MODE])
+        await cg.register_parented(var, parent)
