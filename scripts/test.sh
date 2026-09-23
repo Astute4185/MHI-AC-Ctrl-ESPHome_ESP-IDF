@@ -36,6 +36,7 @@ TEST_SOURCES=(
   tests/unit/test_command_coordinator_extended_supersession.cpp
   tests/unit/test_worker_decoded_store.cpp
   tests/unit/test_frame_catalog.cpp
+  tests/unit/test_protocol_capture.cpp
   tests/unit/test_fan_profile.cpp
   tests/unit/test_status_decoder.cpp
   tests/unit/test_opdata_decoder.cpp
@@ -58,6 +59,8 @@ COMPONENT_SOURCES=(
   components/MhiAcCtrl/mhi_command_coordinator.cpp
   components/MhiAcCtrl/mhi_frame_sync.cpp
   components/MhiAcCtrl/mhi_frame_catalog.cpp
+  components/MhiAcCtrl/mhi_protocol_capture.cpp
+  components/MhiAcCtrl/mhi_protocol_capture_core.cpp
   components/MhiAcCtrl/mhi_frame_classifier.cpp
   components/MhiAcCtrl/mhi_opdata_decoder.cpp
   components/MhiAcCtrl/mhi_opdata_freshness.cpp
@@ -113,3 +116,6 @@ python3 tests/unit/test_transport_compile_selection.py
 python3 tests/unit/test_log_severity_policy.py
 python3 tests/unit/test_esphome_component_dependencies.py
 python3 tests/unit/test_repository_hygiene.py
+
+python3 tests/unit/test_analyze_frame_capture.py
+python3 tests/unit/test_protocol_capture_integration.py

@@ -3,6 +3,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "mhi_opdata_decoder.h"
+#include "mhi_protocol_capture.h"
 #include "mhi_status_decoder.h"
 
 namespace esphome {
@@ -63,6 +64,9 @@ bool MhiRxRuntime::ingest_frame_(const MhiFrameBuffer& frame, bool store_command
   const MhiCatalogIngestResult result =
       frame_catalog_.ingest_mosi_frame(frame.view(), sequence, millis(), store_command_candidate);
   unlock_catalog_();
+
+  mhi_protocol_capture_frame(frame, static_cast<uint8_t>(result.kind), mhi_frame_kind_to_string(result.kind),
+                             result.opdata_key, sequence);
 
   if (!result.stored) {
     ESP_LOGVV(RX_DIAG_TAG, "catalog: dropped kind=%s key=0x%04x len=%u", mhi_frame_kind_to_string(result.kind),

@@ -60,6 +60,10 @@ void format_frame_hex(const MhiFrameBuffer& frame, char* out, std::size_t out_le
 
 void log_full_frame(const MhiFrameBuffer& frame, const char* kind_name, uint16_t opdata_key, uint32_t sequence,
                     const char* reason) {
+  (void)kind_name;
+  (void)opdata_key;
+  (void)sequence;
+  (void)reason;
   char frame_hex[128]{};
   format_frame_hex(frame, frame_hex, sizeof(frame_hex));
   ESP_LOGI(TAG, "%s kind=%s key=0x%04x seq=%lu len=%u bytes=%s", reason, kind_name,

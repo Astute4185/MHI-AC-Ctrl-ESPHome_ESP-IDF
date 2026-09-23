@@ -23,6 +23,7 @@
 #include "mhi_fan_profile.h"
 #include "mhi_opdata_decoder.h"
 #include "mhi_publish_bridge.h"
+#include "mhi_protocol_capture_core.h"
 #include "mhi_rmt_cs_spi_mode.h"
 #include "mhi_status_decoder.h"
 #include "mhi_tx_builder.h"
@@ -233,6 +234,19 @@ void frame_catalog_keeps_opdata_slots_separate_by_key();
 void frame_catalog_keeps_command_candidate_side_slot_latest_only();
 void frame_catalog_reports_unknown_frames();
 void frame_catalog_reuses_consumed_opdata_slots();
+void protocol_capture_first_frame_is_baseline();
+void protocol_capture_unchanged_frame_is_suppressed();
+void protocol_capture_reports_payload_change_and_xor();
+void protocol_capture_tracks_reverse_transition_from_latest_state();
+void protocol_capture_ignores_checksum_only_change();
+void protocol_capture_keeps_opdata_keys_separate();
+void protocol_capture_keeps_frame_kinds_separate();
+void protocol_capture_length_change_rebaselines_identity();
+void protocol_capture_rejects_invalid_frame_length();
+void protocol_capture_33_byte_tracks_db26_and_ignores_checksums();
+void protocol_capture_caps_reported_changes_but_counts_all();
+void protocol_capture_reset_forces_new_baseline();
+void protocol_capture_recycles_oldest_slot_when_full();
 void status_decoder_decodes_core_fields();
 void status_decoder_decodes_33_byte_vane_feedback();
 void status_decoder_ignores_unknown_horizontal_vane_feedback();
