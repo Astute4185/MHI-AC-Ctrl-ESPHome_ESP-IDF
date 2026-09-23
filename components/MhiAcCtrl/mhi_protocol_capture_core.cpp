@@ -11,8 +11,7 @@ void MhiProtocolCaptureEngine::reset() {
   }
 }
 
-MhiProtocolCaptureEngine::Slot* MhiProtocolCaptureEngine::find_or_allocate_slot_(uint8_t kind_id,
-                                                                                 uint16_t opdata_key) {
+MhiProtocolCaptureEngine::Slot* MhiProtocolCaptureEngine::find_or_allocate_slot_(uint8_t kind_id, uint16_t opdata_key) {
   Slot* first_free = nullptr;
   Slot* oldest = nullptr;
 
@@ -50,7 +49,7 @@ void MhiProtocolCaptureEngine::copy_frame_(Slot& slot, const MhiFrameBuffer& fra
 }
 
 MhiCaptureObservation MhiProtocolCaptureEngine::observe(const MhiFrameBuffer& frame, uint8_t kind_id,
-                                                         uint16_t opdata_key, uint32_t sequence) {
+                                                        uint16_t opdata_key, uint32_t sequence) {
   MhiCaptureObservation observation{};
   if (!frame.view().valid()) {
     return observation;

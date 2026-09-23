@@ -30,8 +30,7 @@ void format_field_name(std::size_t raw_index, std::size_t frame_len, char* out, 
     return;
   }
   if (frame_len == kMhiFrame33Bytes && raw_index >= DB15 && raw_index <= DB26) {
-    std::snprintf(out, out_len, "DB%u",
-                  static_cast<unsigned int>(15U + (raw_index - static_cast<std::size_t>(DB15))));
+    std::snprintf(out, out_len, "DB%u", static_cast<unsigned int>(15U + (raw_index - static_cast<std::size_t>(DB15))));
     return;
   }
   if (frame_len == kMhiFrame33Bytes && raw_index == CBL2) {
@@ -59,8 +58,8 @@ void format_frame_hex(const MhiFrameBuffer& frame, char* out, std::size_t out_le
   out[used] = '\0';
 }
 
-void log_full_frame(const MhiFrameBuffer& frame, const char* kind_name, uint16_t opdata_key,
-                    uint32_t sequence, const char* reason) {
+void log_full_frame(const MhiFrameBuffer& frame, const char* kind_name, uint16_t opdata_key, uint32_t sequence,
+                    const char* reason) {
   char frame_hex[128]{};
   format_frame_hex(frame, frame_hex, sizeof(frame_hex));
   ESP_LOGI(TAG, "%s kind=%s key=0x%04x seq=%lu len=%u bytes=%s", reason, kind_name,
@@ -70,7 +69,9 @@ void log_full_frame(const MhiFrameBuffer& frame, const char* kind_name, uint16_t
 
 }  // namespace
 
-void mhi_protocol_capture_reset() { capture_engine.reset(); }
+void mhi_protocol_capture_reset() {
+  capture_engine.reset();
+}
 
 void mhi_protocol_capture_frame(const MhiFrameBuffer& frame, uint8_t kind_id, const char* kind_name,
                                 uint16_t opdata_key, uint32_t sequence) {
@@ -95,10 +96,10 @@ void mhi_protocol_capture_frame(const MhiFrameBuffer& frame, uint8_t kind_id, co
     const MhiCaptureChange& change = observation.changes[i];
     char field[12]{};
     format_field_name(change.raw_index, frame.len, field, sizeof(field));
-    const int written = std::snprintf(
-        changes + used, sizeof(changes) - used, "%s%s:0x%02x->0x%02x/xor=0x%02x",
-        i == 0U ? "" : ",", field, static_cast<unsigned int>(change.before),
-        static_cast<unsigned int>(change.after), static_cast<unsigned int>(change.xor_mask));
+    const int written =
+        std::snprintf(changes + used, sizeof(changes) - used, "%s%s:0x%02x->0x%02x/xor=0x%02x", i == 0U ? "" : ",",
+                      field, static_cast<unsigned int>(change.before), static_cast<unsigned int>(change.after),
+                      static_cast<unsigned int>(change.xor_mask));
     if (written <= 0 || static_cast<std::size_t>(written) >= sizeof(changes) - used) {
       break;
     }
@@ -110,8 +111,8 @@ void mhi_protocol_capture_frame(const MhiFrameBuffer& frame, uint8_t kind_id, co
                   static_cast<unsigned int>(observation.total_changes - observation.reported_changes));
   }
 
-  ESP_LOGI(TAG, "change kind=%s key=0x%04x seq=%lu changed=%s", kind_name,
-           static_cast<unsigned int>(opdata_key), static_cast<unsigned long>(sequence), changes);
+  ESP_LOGI(TAG, "change kind=%s key=0x%04x seq=%lu changed=%s", kind_name, static_cast<unsigned int>(opdata_key),
+           static_cast<unsigned long>(sequence), changes);
   log_full_frame(frame, kind_name, opdata_key, sequence, "frame");
 }
 

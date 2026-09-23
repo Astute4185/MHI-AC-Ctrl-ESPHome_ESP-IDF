@@ -32,13 +32,14 @@ struct MhiCaptureObservation {
   uint8_t reported_changes{0U};
   MhiCaptureChange changes[kMhiCaptureMaxReportedChanges]{};
 
-  bool truncated() const { return total_changes > reported_changes; }
+  bool truncated() const {
+    return total_changes > reported_changes;
+  }
 };
 
 class MhiProtocolCaptureEngine {
  public:
-  MhiCaptureObservation observe(const MhiFrameBuffer& frame, uint8_t kind_id, uint16_t opdata_key,
-                                uint32_t sequence);
+  MhiCaptureObservation observe(const MhiFrameBuffer& frame, uint8_t kind_id, uint16_t opdata_key, uint32_t sequence);
   void reset();
 
  private:
