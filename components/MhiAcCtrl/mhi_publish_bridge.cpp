@@ -98,6 +98,11 @@ void MhiPublishBridge::publish_status(const MhiStatusState& status) {
     targets_.vanes_3d_auto_switch->publish_state(status.three_d_auto);
   }
 
+  if (status.has_self_clean && targets_.self_clean_switch != nullptr &&
+      (first_publish || !last_status_.has_self_clean || last_status_.self_clean != status.self_clean)) {
+    targets_.self_clean_switch->publish_state(status.self_clean);
+  }
+
   if (targets_.fan_speed_select != nullptr && (first_publish || last_status_.fan != status.fan)) {
     const char* fan_option = map_fan_option(status.fan);
     if (fan_option != nullptr) {

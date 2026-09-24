@@ -46,6 +46,7 @@ struct MhiPublishTargets {
   binary_sensor::BinarySensor* vanes_3d_auto_enabled_binary_sensor{nullptr};
 
   switch_::Switch* vanes_3d_auto_switch{nullptr};
+  switch_::Switch* self_clean_switch{nullptr};
 
   text_sensor::TextSensor* error_code_text_sensor{nullptr};
   text_sensor::TextSensor* protection_state_text_sensor{nullptr};

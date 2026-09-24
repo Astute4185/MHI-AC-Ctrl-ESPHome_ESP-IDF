@@ -308,6 +308,11 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->refresh_publish_targets_();
   }
 
+  void set_self_clean_switch(switch_::Switch* sw) {
+    this->publish_targets_.self_clean_switch = sw;
+    this->refresh_publish_targets_();
+  }
+
   void set_error_code_text_sensor(text_sensor::TextSensor* sensor) {
     this->publish_targets_.error_code_text_sensor = sensor;
     this->refresh_publish_targets_();

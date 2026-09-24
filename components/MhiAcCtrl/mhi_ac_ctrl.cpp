@@ -1645,6 +1645,20 @@ bool MhiAcCtrl::apply_status_update_(const MhiDecodedStatus& decoded_status, con
     }
   }
 
+  if (decoded_status.has_self_clean_candidates) {
+    status.has_self_clean_candidates = true;
+    status.self_clean_db7_candidate = decoded_status.self_clean_db7_candidate;
+    status.self_clean_db13_candidate = decoded_status.self_clean_db13_candidate;
+
+    // Only advance the public state while the provisional candidates agree.
+    // A mismatch is retained in the raw candidate fields for diagnostics and
+    // deliberately leaves the last confirmed Self Clean state untouched.
+    if (decoded_status.has_self_clean) {
+      status.has_self_clean = true;
+      status.self_clean = decoded_status.self_clean;
+    }
+  }
+
   if (accept_extended_feedback && decoded_status.has_extended_louver_raw) {
     status.has_extended_louver_raw = true;
     status.extended_louver_db16 = decoded_status.extended_louver_db16;

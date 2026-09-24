@@ -104,6 +104,20 @@ bool MhiStatusDecoder::decode_mosi(const MhiFrameView& mosi, MhiDecodedStatus& o
     // position cannot be normalised to the public 1..7/swing model.
     decoded.has_3d_auto = true;
     decoded.three_d_auto = (mosi[DB17] & 0x04U) != 0U;
+
+    // Provisional Self Clean feedback observed in recurring extended status:
+    //   DB7[1]  and DB13[2]
+    // Do not choose a canonical bit yet. Publishable feedback is exposed only
+    // when both candidates agree; the raw candidates remain available for
+    // diagnostics and follow-up hardware validation.
+    decoded.has_self_clean_candidates = true;
+    decoded.self_clean_db7_candidate = (mosi[DB7] & 0x02U) != 0U;
+    decoded.self_clean_db13_candidate = (mosi[DB13] & 0x04U) != 0U;
+
+    if (decoded.self_clean_db7_candidate == decoded.self_clean_db13_candidate) {
+      decoded.has_self_clean = true;
+      decoded.self_clean = decoded.self_clean_db7_candidate;
+    }
   }
 
   out = decoded;

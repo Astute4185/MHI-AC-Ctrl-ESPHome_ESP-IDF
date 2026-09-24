@@ -37,6 +37,19 @@ struct MhiDecodedStatus {
   bool has_3d_auto{false};
   bool three_d_auto{false};
 
+  // Self Clean feedback is currently provisional. Two independent bits were
+  // observed moving together in recurring 33-byte status frames. Keep both
+  // candidates visible until hardware captures establish a canonical field.
+  bool has_self_clean_candidates{false};
+  bool self_clean_db7_candidate{false};
+  bool self_clean_db13_candidate{false};
+
+  // Agreement-gated public feedback. This is present only when the two
+  // observed candidate bits agree, so a disagreement cannot overwrite the
+  // last confirmed state.
+  bool has_self_clean{false};
+  bool self_clean{false};
+
   bool has_extended_louver_raw{false};
   uint8_t extended_louver_db16{0};
   uint8_t extended_louver_db17{0};

@@ -46,6 +46,8 @@ switch:
       name: MHI Active Mode
     outdoor_unit_silent_mode:
       name: MHI Outdoor Unit Silent Mode
+    self_clean:
+      name: MHI Self Clean
 
 
 binary_sensor:
