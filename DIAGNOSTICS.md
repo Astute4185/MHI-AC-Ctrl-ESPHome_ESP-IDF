@@ -174,6 +174,34 @@ retry_exhaustions remains 0
 
 If the AC never returns the `0xDD` response family, treat Silent Mode as unsupported or unverified for that model rather than assuming `OFF`.
 
+### Self Clean feedback validation
+
+Self Clean is currently feedback-only and is decoded from recurring 33-byte status. The two provisional candidate fields are `DB7[1]` and `DB13[2]`. A public state is accepted only when both candidates agree; a mismatch must not overwrite the last confirmed Self Clean state.
+
+Run a fixed-condition hardware test without changing power, HVAC mode, fan, target temperature, or preset during each observation window:
+
+```text
+Clean OFF
+Clean ON
+Clean OFF
+Clean ON
+Clean OFF
+```
+
+For every transition capture the recurring 33-byte status and confirm:
+
+```text
+OFF: DB7[1] = 0 and DB13[2] = 0
+ON:  DB7[1] = 1 and DB13[2] = 1
+DB13 0x05 -> 0x04 does not clear Self Clean while bit 2 remains set
+Home Assistant changes only from observed status feedback
+no Self Clean MISO setter is inferred from the feedback bytes
+```
+
+If `DB7[1]` and `DB13[2]` diverge, preserve the capture as protocol evidence rather than changing the agreement rule. The next protocol step is to capture the controller/MISO frames for dedicated Self Clean ON and OFF actions and identify the setter without guessing.
+
+The legacy MHI-AC-Trace issue #2 capture shows the normal mode byte changing to Fan during Self Clean; do not classify that `DB0` mode change as Self Clean feedback.
+
 ### Latest-intent supersession
 
 Horizontal vane and 3D Auto share DB16/DB17. When newer intent changes the composite desired state, the old confirmation generation is superseded and a combined command can be transmitted immediately.
@@ -200,6 +228,7 @@ Exercise at least:
 - all horizontal vane positions and swing on 33-byte units;
 - 3D Auto on and off;
 - Outdoor Unit Silent Mode on and off on units that return the `0xDD` feedback group;
+- Self Clean OFF/ON/OFF/ON/OFF feedback on 33-byte units, without treating switch writes as supported commands;
 - commands while the unit is off;
 - rapid replacement of pending commands;
 - horizontal/3D changes issued close together.
@@ -507,6 +536,7 @@ staged_timeouts remains zero
 pending_confirmation_mask returns to zero
 opdata continues to publish
 Home Assistant matches confirmed AC feedback
+Self Clean feedback, when enabled, follows observed 33-byte status and never optimistic writes
 queue, overwrite, drop, SPI, and RMT counters remain bounded and understood
 ```
 

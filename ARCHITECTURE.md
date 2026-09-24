@@ -342,6 +342,14 @@ Horizontal confirmation verifies its requested horizontal state and, when presen
 
 3D Auto confirmation checks DB17 bit `0x04` independently. Horizontal position is preserved context, not part of the semantic 3D request.
 
+### Feedback-only Self Clean state
+
+Self Clean is currently decoded from recurring 33-byte extended status but is not a commandable field. Hardware captures identify two provisional candidates: `DB7[1]` and `DB13[2]`. The decoder preserves both raw candidate values and exposes a publishable Self Clean state only when the candidates agree. If they disagree, the state store retains the raw observation but does not replace the last confirmed public state.
+
+This is deliberately not command confirmation: no Self Clean setter has been identified, no command intent is staged, and no optimistic state is published. The switch entity is therefore a feedback surface only. Once a setter is captured, its command lifecycle should be integrated through the normal command-coordinator path rather than bypassing semantic confirmation.
+
+Legacy 20-byte captures showing `DB0` changing while Self Clean runs are treated as the existing HVAC mode changing to Fan, not as an independent Self Clean flag.
+
 ### Operation-data-backed confirmation
 
 Outdoor Unit Silent Mode is not confirmed from the normal status decoder. Its authoritative feedback arrives through the operation-data path. The command coordinator therefore observes decoded opdata as well as status state while confirmation is pending. A Silent Mode request is settled only when a valid `DB9=0xDD`, `DB10=0x80`, `DB12=0x00` response reports the requested `DB11[5]` state.
@@ -618,6 +626,7 @@ The major architectural work is complete:
 - semantic confirmation, retries, duplicate suppression and supersession are implemented;
 - frame traffic uses bounded semantic storage;
 - horizontal vane and 3D Auto composite handling is hardware-validated;
+- Self Clean feedback decoding is implemented on 33-byte status with agreement-gated provisional candidates;
 - FIFO-backed `rmt_cs_spi` supports the original ESP32 and ESP32-S3.
 
 Remaining work is primarily wider hardware validation, protocol discovery, documentation maintenance, and incremental hardening rather than another architectural migration.
@@ -631,6 +640,7 @@ Remaining work is primarily wider hardware validation, protocol discovery, docum
 - [`notes/FINDINGS_LOUVERS_3D_AUTO.md`](notes/FINDINGS_LOUVERS_3D_AUTO.md) — extended-louver protocol findings
 - [`notes/FINDINGS_SPI_TRANSPORTS.md`](notes/FINDINGS_SPI_TRANSPORTS.md) — current SPI transport findings
 - [`notes/FINDINGS_FAN_PROFILES.md`](notes/FINDINGS_FAN_PROFILES.md) — fan-profile findings
+- [`docs/notes/FINDINGS_SELF_CLEAN.md`](docs/notes/FINDINGS_SELF_CLEAN.md) — Self Clean feedback evidence and remaining protocol work
 - [`notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md`](notes/history/FINDINGS_FASTGPIO_EXTERNAL_CLOCK.md) — historical worker and transport experiments
 
 ## Runtime Active Mode

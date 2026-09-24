@@ -23,11 +23,12 @@ The primary runtime targets are the original **ESP32** and **ESP32-S3**, both us
 - Vertical vane, horizontal vane, and 3D Auto mapping completed an 80-case hardware matrix with all requested combinations confirmed.
 - Four-speed and three-speed fan profiles are supported. Four-speed is the default and exposes Quiet as a distinct protocol state.
 - Outdoor Unit Silent Mode is available as an opt-in switch using the discovered `0xDD` operation-data feedback and `0x21` command path. It is model-dependent and still requires wider hardware validation.
+- Self Clean is available as an opt-in **feedback-only** switch on the 33-byte status path. Current hardware evidence identifies `DB7[1]` and `DB13[2]` as corroborating candidate state bits; the setter is not yet known.
 - ESP32-C3 has compile coverage through the legacy FastGPIO path, but runtime operation is not yet validated.
 
 The remaining work is primarily wider hardware compatibility testing, ESP32-C3 runtime validation, model-specific protocol discovery, documentation, and normal maintenance. No further major backend rewrite is currently planned.
 
-Implemented functionality includes 20-byte and 33-byte frames, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, command confirmation, duplicate suppression, latest-intent command coalescing, common status sensors, opdata sensors, room-temperature publication control, external temperature input, and detailed runtime diagnostics.
+Implemented functionality includes 20-byte and 33-byte frames, climate control, configurable fan profiles, vertical and horizontal vanes, 3D Auto, Self Clean feedback, command confirmation, duplicate suppression, latest-intent command coalescing, common status sensors, opdata sensors, room-temperature publication control, external temperature input, and detailed runtime diagnostics.
 
 
 ### Runtime Active Mode
@@ -351,9 +352,15 @@ switch:
       name: 3D Auto
     outdoor_unit_silent_mode:
       name: Outdoor Unit Silent Mode
+    self_clean:
+      name: Self Clean
 ```
 
 `outdoor_unit_silent_mode` is an opt-in, model-dependent protocol feature. Configuring the switch adds the Silent Mode `0xC0/0xDD` request to the operation-data cycle. The entity does not assume `OFF` at startup: it publishes only after a valid Silent Mode response has been observed. Writes use the dedicated `DB6=0x80`, `DB9=0x21`, `DB10=0x00|0x01` command form and are confirmed from returned `0xDD/0x80` operation-data feedback rather than optimistic publication. Indoor fan **Quiet** and outdoor-unit **Silent Mode** are separate protocol functions.
+
+`self_clean` is currently a **feedback-only** 33-byte-status feature. Recurring extended-status captures show `DB7[1]` and `DB13[2]` moving with Self Clean. Neither field is yet treated as canonical: the component publishes a new Self Clean state only when both candidates agree, and a disagreement leaves the last confirmed state unchanged. The observed `DB13` transition `0x05 -> 0x04` remains Self Clean active because bit 2 stays set while bit 0 clears. Writes are intentionally ignored until the actual MISO setter command is captured; there is no optimistic command state.
+
+The older [MHI-AC-Trace Self Clean capture](https://github.com/absalom-muc/MHI-AC-Trace/issues/2) changes legacy `DB0` from the normal Cool encoding to Fan while Self Clean is active. `DB0` remains the existing HVAC mode field and is **not** used as an additional Self Clean flag. See [`docs/notes/FINDINGS_SELF_CLEAN.md`](docs/notes/FINDINGS_SELF_CLEAN.md) for the evidence and remaining validation work.
 
 3D Auto is supported on the 33-byte frame path. Hardware capture and the complete louver matrix confirmed that 3D Auto is `DB17` bit `0x04` and that horizontal vane plus 3D Auto form one composite `DB16`/`DB17` command domain.
 
@@ -659,6 +666,7 @@ The planned architecture and primary feature roadmap are substantially complete:
 - four-speed and three-speed fan profiles are supported;
 - vertical vane, horizontal vane, and 3D Auto mappings are hardware-validated;
 - Outdoor Unit Silent Mode protocol support is implemented as an opt-in model-dependent feature and still requires wider hardware validation;
+- Self Clean feedback is implemented for 33-byte recurring status as an opt-in feedback-only switch; the setter and canonical feedback field remain hardware-validation TODOs;
 - host unit tests, sanitizers, lint checks, and representative cross-chip compile tests are integrated into CI.
 
 Remaining work is incremental:
@@ -692,6 +700,7 @@ This project builds on prior MHI reverse-engineering and ESPHome integration wor
 - FastGPIO inspiration/reference work: [RobertJansen1/MHI-AC-Ctrl-ESPHome esp32_errors branch](https://github.com/RobertJansen1/MHI-AC-Ctrl-ESPHome/tree/esp32_errors)
 - RMT-derived chip-select and ESP32 SPI slave approach : [hberntsen/mhi-ac-ctrl-esp32](https://github.com/hberntsen/mhi-ac-ctrl-esp32)
 - Outdoor Unit Silent Mode protocol discovery and implementation reference: [hberntsen/mhi-ac-ctrl-esp32 commit 538b341](https://github.com/hberntsen/mhi-ac-ctrl-esp32/commit/538b3412b4e013d6f732f47736f8446a211ec737)
+- Self Clean legacy capture reference: [absalom-muc/MHI-AC-Trace issue #2](https://github.com/absalom-muc/MHI-AC-Trace/issues/2)
 - Original reverse-engineering lineage and MHI protocol work from the wider `MHI-AC-Ctrl` community
 
 ## License
