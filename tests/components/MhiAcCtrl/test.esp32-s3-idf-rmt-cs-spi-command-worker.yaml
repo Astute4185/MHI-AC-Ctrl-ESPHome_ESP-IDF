@@ -35,6 +35,7 @@ MhiAcCtrl:
   opdata_freshness_timeout: 120s
   external_temperature_sensor: external_room_temp
   external_temperature_fallback_on_homeassistant_disconnect: true
+  external_temperature_disconnect_grace_period: 15s
   power_estimation:
     nominal_voltage: 230.0
     power_factor: 0.95

@@ -67,6 +67,7 @@ CONF_EXTERNAL_TEMPERATURE_SENSOR = "external_temperature_sensor"
 CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT = (
     "external_temperature_fallback_on_homeassistant_disconnect"
 )
+CONF_EXTERNAL_TEMPERATURE_DISCONNECT_GRACE_PERIOD = "external_temperature_disconnect_grace_period"
 
 DEPENDENCIES = ["climate"]
 AUTO_LOAD = ["binary_sensor", "select", "sensor", "switch", "text_sensor"]
@@ -116,6 +117,9 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(MhiAcCtrl),
             cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
             cv.Optional(CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT, default=False): cv.boolean,
+            cv.Optional(
+                CONF_EXTERNAL_TEMPERATURE_DISCONNECT_GRACE_PERIOD, default="60s"
+            ): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_FRAME_SIZE, default=20): cv.one_of(20, 33, int=True),
             cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
             cv.Optional(CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL, default="15s"): cv.positive_time_period_milliseconds,
@@ -219,6 +223,11 @@ async def to_code(config):
     cg.add(
         var.set_external_temperature_fallback_on_homeassistant_disconnect(
             config[CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT]
+        )
+    )
+    cg.add(
+        var.set_external_temperature_disconnect_grace_period_ms(
+            config[CONF_EXTERNAL_TEMPERATURE_DISCONNECT_GRACE_PERIOD]
         )
     )
     if CONF_VANES_UD in config:

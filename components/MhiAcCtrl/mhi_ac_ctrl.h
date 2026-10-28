@@ -145,6 +145,10 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->external_temperature_fallback_on_homeassistant_disconnect_ = enabled;
   }
 
+  void set_external_temperature_disconnect_grace_period_ms(uint32_t grace_period_ms) {
+    this->external_temperature_disconnect_grace_period_ms_ = grace_period_ms;
+  }
+
   void set_external_room_temperature(float value);
 
   // Compatibility aliases for old config names.
@@ -470,6 +474,9 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   bool external_room_temperature_sensor_active_{false};
   bool external_temperature_fallback_on_homeassistant_disconnect_{false};
   bool homeassistant_api_connected_{false};
+  bool homeassistant_disconnect_grace_active_{false};
+  uint32_t external_temperature_disconnect_grace_period_ms_{60000U};
+  uint32_t homeassistant_disconnect_start_ms_{0U};
   uint32_t last_homeassistant_connection_check_ms_{0U};
   uint32_t room_temp_api_timeout_start_ms_{0U};
   float last_external_room_temperature_c_{NAN};

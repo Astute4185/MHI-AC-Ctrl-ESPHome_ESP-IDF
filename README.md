@@ -195,6 +195,7 @@ room_temperature_immediate_delta
 opdata_freshness_timeout
 external_temperature_sensor
 external_temperature_fallback_on_homeassistant_disconnect
+external_temperature_disconnect_grace_period
 fan_profile
 power_estimation
 ```
@@ -503,6 +504,7 @@ MhiAcCtrl:
   id: mhi_ac
   external_temperature_sensor: external_room_temp
   external_temperature_fallback_on_homeassistant_disconnect: true
+  external_temperature_disconnect_grace_period: 60s
 
 sensor:
   - platform: homeassistant
@@ -510,7 +512,9 @@ sensor:
     entity_id: sensor.room_temperature
 ```
 
-This option is deliberately disabled by default because `external_temperature_sensor` can also refer to a local ESPHome sensor that does not depend on Home Assistant. When enabled, the component identifies the Home Assistant native-API client and clears an active sensor override when that client disconnects. After Home Assistant reconnects, the next valid imported state restores the external override. Other API clients, including ESPHome log viewers, do not keep the external override alive.
+This option is deliberately disabled by default because `external_temperature_sensor` can also refer to a local ESPHome sensor that does not depend on Home Assistant. When enabled, the component identifies the Home Assistant native-API client. A disconnect starts `external_temperature_disconnect_grace_period`, which defaults to `60s`. If Home Assistant reconnects during that grace period, the current external override is retained. If it remains disconnected until the grace period expires, the component clears the override and returns to the indoor-unit sensor. After fallback, Home Assistant reconnecting does not reuse the cached value; the next valid imported state restores the external override. Other API clients, including ESPHome log viewers, do not keep the external override alive.
+
+An explicit invalid or unavailable (`NaN`) sensor state still falls back immediately and does not wait for the disconnect grace period. The grace period applies specifically to loss of the Home Assistant API connection.
 
 The component does not treat an unchanged temperature as stale. A stable room can legitimately publish the same value for a long period, so a generic value-age timeout would create false fallbacks. `room_temp_timeout` remains the timeout for values supplied through the manual `climate.mhi.set_external_room_temperature` action.
 
