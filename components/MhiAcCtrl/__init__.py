@@ -64,6 +64,9 @@ DEFAULT_COMMAND_FINAL_CONFIRMATION_GRACE_MS = 1000
 CONF_VANES_POSITION = "position"
 CONF_TEMPERATURE = "temperature"
 CONF_EXTERNAL_TEMPERATURE_SENSOR = "external_temperature_sensor"
+CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT = (
+    "external_temperature_fallback_on_homeassistant_disconnect"
+)
 
 DEPENDENCIES = ["climate"]
 AUTO_LOAD = ["binary_sensor", "select", "sensor", "switch", "text_sensor"]
@@ -95,11 +98,24 @@ def _validate_transport_configuration(config):
     return config
 
 
+def _validate_external_temperature_configuration(config):
+    if (
+        config[CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT]
+        and CONF_EXTERNAL_TEMPERATURE_SENSOR not in config
+    ):
+        raise cv.Invalid(
+            f"{CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT} requires "
+            f"{CONF_EXTERNAL_TEMPERATURE_SENSOR}"
+        )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(MhiAcCtrl),
             cv.Optional(CONF_EXTERNAL_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
+            cv.Optional(CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT, default=False): cv.boolean,
             cv.Optional(CONF_FRAME_SIZE, default=20): cv.one_of(20, 33, int=True),
             cv.Optional(CONF_ROOM_TEMP_TIMEOUT, default=60): cv.int_range(min=0, max=3600),
             cv.Optional(CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL, default="15s"): cv.positive_time_period_milliseconds,
@@ -140,6 +156,7 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_transport_configuration,
+    _validate_external_temperature_configuration,
 )
 
 
@@ -199,6 +216,11 @@ async def to_code(config):
     if CONF_EXTERNAL_TEMPERATURE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_EXTERNAL_TEMPERATURE_SENSOR])
         cg.add(var.set_external_room_temperature_sensor(sens))
+    cg.add(
+        var.set_external_temperature_fallback_on_homeassistant_disconnect(
+            config[CONF_EXTERNAL_TEMPERATURE_FALLBACK_ON_HOMEASSISTANT_DISCONNECT]
+        )
+    )
     if CONF_VANES_UD in config:
         cg.add(var.set_vanes(config[CONF_VANES_UD]))
     if CONF_VANES_LR in config:

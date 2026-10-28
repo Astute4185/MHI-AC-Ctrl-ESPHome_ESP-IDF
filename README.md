@@ -194,6 +194,7 @@ room_temperature_publish_interval
 room_temperature_immediate_delta
 opdata_freshness_timeout
 external_temperature_sensor
+external_temperature_fallback_on_homeassistant_disconnect
 fan_profile
 power_estimation
 ```
@@ -492,6 +493,26 @@ MhiAcCtrl:
   id: mhi_ac
   external_temperature_sensor: external_room_temp
 ```
+
+Invalid or unavailable (`NaN`) external sensor states clear the override and return the AC to its indoor-unit temperature sensor. A later valid external temperature automatically restores the override.
+
+For a sensor imported from Home Assistant, the component can also fail safe when the Home Assistant native-API connection disappears:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  external_temperature_sensor: external_room_temp
+  external_temperature_fallback_on_homeassistant_disconnect: true
+
+sensor:
+  - platform: homeassistant
+    id: external_room_temp
+    entity_id: sensor.room_temperature
+```
+
+This option is deliberately disabled by default because `external_temperature_sensor` can also refer to a local ESPHome sensor that does not depend on Home Assistant. When enabled, the component identifies the Home Assistant native-API client and clears an active sensor override when that client disconnects. After Home Assistant reconnects, the next valid imported state restores the external override. Other API clients, including ESPHome log viewers, do not keep the external override alive.
+
+The component does not treat an unchanged temperature as stale. A stable room can legitimately publish the same value for a long period, so a generic value-age timeout would create false fallbacks. `room_temp_timeout` remains the timeout for values supplied through the manual `climate.mhi.set_external_room_temperature` action.
 
 Manual action support also exists:
 

@@ -56,6 +56,9 @@ MhiAcCtrl:
   rx_driver: rmt_cs_spi
   command_worker: true
   external_temperature_sensor: room_temperature_sensor
+  # Fall back to the indoor-unit sensor if Home Assistant itself disconnects.
+  external_temperature_fallback_on_homeassistant_disconnect: true
+  # Applies to manual climate.mhi.set_external_room_temperature actions.
   room_temp_timeout: 60
 
 climate:
