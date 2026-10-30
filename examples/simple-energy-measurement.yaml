@@ -61,6 +61,11 @@ MhiAcCtrl:
     compressor_frequency: 10s
   power_estimation:
     nominal_voltage: 230.0
+    # Optional measured voltage imported from Home Assistant.
+    voltage_sensor: mains_voltage
+    voltage_timeout: 5min
+    power_factor_sensor: mains_power_factor
+    power_factor_timeout: 5min
     power_factor: 1.0
     standby_power: 0.0
     max_sample_interval: 5min
@@ -71,6 +76,14 @@ climate:
     name: "${friendly_name}"
 
 sensor:
+  - platform: homeassistant
+    id: mains_voltage
+    entity_id: sensor.your_mains_voltage  # Replace with your HA voltage entity
+    internal: true
+  - platform: homeassistant
+    id: mains_power_factor
+    entity_id: sensor.your_mains_power_factor  # Must report 0.0-1.0, not percent
+    internal: true
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     current_power:

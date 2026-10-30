@@ -72,7 +72,11 @@ def _poll_interval_at_least_one_second(value):
 
 CONF_POWER_ESTIMATION = "power_estimation"
 CONF_NOMINAL_VOLTAGE = "nominal_voltage"
+CONF_VOLTAGE_SENSOR = "voltage_sensor"
+CONF_VOLTAGE_TIMEOUT = "voltage_timeout"
 CONF_POWER_FACTOR = "power_factor"
+CONF_POWER_FACTOR_SENSOR = "power_factor_sensor"
+CONF_POWER_FACTOR_TIMEOUT = "power_factor_timeout"
 CONF_STANDBY_POWER = "standby_power"
 CONF_MAX_SAMPLE_INTERVAL = "max_sample_interval"
 CONF_VANES_UD = "initial_vertical_vanes_position"
@@ -148,7 +152,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_POWER_ESTIMATION): cv.Schema(
                 {
                     cv.Optional(CONF_NOMINAL_VOLTAGE, default=230.0): cv.float_range(min=1.0, max=500.0),
+                    cv.Optional(CONF_VOLTAGE_SENSOR): cv.use_id(sensor.Sensor),
+                    cv.Optional(CONF_VOLTAGE_TIMEOUT, default="5min"): cv.positive_time_period_milliseconds,
                     cv.Optional(CONF_POWER_FACTOR, default=1.0): cv.float_range(min=0.1, max=1.0),
+                    cv.Optional(CONF_POWER_FACTOR_SENSOR): cv.use_id(sensor.Sensor),
+                    cv.Optional(CONF_POWER_FACTOR_TIMEOUT, default="5min"): cv.positive_time_period_milliseconds,
                     cv.Optional(CONF_STANDBY_POWER, default=0.0): cv.float_range(min=0.0, max=500.0),
                     cv.Optional(CONF_MAX_SAMPLE_INTERVAL, default="5min"): cv.positive_time_period_milliseconds,
                 }
@@ -213,6 +221,14 @@ async def to_code(config):
                 estimation[CONF_MAX_SAMPLE_INTERVAL],
             )
         )
+        if CONF_VOLTAGE_SENSOR in estimation:
+            voltage_sensor = await cg.get_variable(estimation[CONF_VOLTAGE_SENSOR])
+            cg.add(var.set_external_voltage_sensor(voltage_sensor))
+            cg.add(var.set_external_voltage_timeout_ms(estimation[CONF_VOLTAGE_TIMEOUT]))
+        if CONF_POWER_FACTOR_SENSOR in estimation:
+            power_factor_sensor = await cg.get_variable(estimation[CONF_POWER_FACTOR_SENSOR])
+            cg.add(var.set_external_power_factor_sensor(power_factor_sensor))
+            cg.add(var.set_external_power_factor_timeout_ms(estimation[CONF_POWER_FACTOR_TIMEOUT]))
     effective_tx_driver = resolve_tx_driver(config[CONF_RX_DRIVER], config.get(CONF_TX_DRIVER))
     transport_tuning = resolve_transport_tuning(config)
     transport_inputs = MhiTransportBuildInputs(
