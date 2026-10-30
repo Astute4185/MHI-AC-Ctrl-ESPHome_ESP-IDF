@@ -160,6 +160,17 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->initial_horizontal_vanes_position_ = position;
   }
 
+  void set_opdata_poll_interval_ms(uint32_t request_mask, uint32_t interval_ms) {
+    for (std::size_t i = 0; i < kMhiOpdataRequestCount; ++i) {
+      if (request_mask == (1UL << i)) {
+        this->tx_config_.opdata_poll_intervals_ms[i] = interval_ms;
+        // Explicit polling enables the request even without an attached sensor.
+        this->add_opdata_mask(request_mask);
+        return;
+      }
+    }
+  }
+
   void add_opdata_mask(uint32_t mask) {
     this->opdata_mask_ |= mask;
     this->tx_config_.enabled_opdata_mask = this->opdata_mask_;

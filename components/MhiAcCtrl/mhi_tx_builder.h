@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -34,6 +35,7 @@ enum MhiOpdataRequestMask : uint32_t {
 };
 
 constexpr uint32_t kMhiDefaultOpdataMask = MHI_OPDATA_REQ_MODE;
+constexpr std::size_t kMhiOpdataRequestCount = 21U;
 
 struct MhiTxRuntime {
   uint8_t opdata_index{0};
@@ -47,11 +49,23 @@ struct MhiTxRuntime {
   // cadence. A bit is cleared only after its request is actually encoded into
   // an eligible double frame.
   uint32_t forced_opdata_mask{0U};
+
+  // Timed requests are tracked by request-bit index (0..20). This state is
+  // copied/rolled back together with the rest of the TX runtime on failure.
+  std::array<uint32_t, kMhiOpdataRequestCount> timed_opdata_last_ms{};
+  uint32_t timed_opdata_sent_mask{0U};
+  uint8_t timed_opdata_next_index{0U};
 };
 
 struct MhiTxBuildConfig {
   std::size_t frame_size{kMhiFrame20Bytes};
   uint32_t enabled_opdata_mask{kMhiDefaultOpdataMask};
+
+  // Zero retains legacy round-robin selection for a request. Nonzero moves
+  // that request into the optional timed polling lane. No overrides means
+  // the original round-robin scheduler is used unchanged.
+  std::array<uint32_t, kMhiOpdataRequestCount> opdata_poll_intervals_ms{};
+  uint32_t now_ms{0U};
 
   // Last accepted 33-byte extended-louver feedback. DB16/DB17 carry a
   // composite horizontal-vane / horizontal-swing / 3D-auto state; 3D-only
@@ -89,7 +103,7 @@ class MhiTxBuilder {
  private:
   static void initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_size);
 
-  static void apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, uint32_t enabled_opdata_mask);
+  static void apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, const MhiTxBuildConfig& config);
 
   static void apply_commands(MhiFrameBuffer& out, MhiCommandState& command, MhiTxRuntime& runtime,
                              const MhiTxBuildConfig& config, MhiTxBuildResult& result);

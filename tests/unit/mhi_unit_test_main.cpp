@@ -99,6 +99,11 @@ int main() {
   tx_builder_applies_pending_commands_once();
   tx_builder_uses_configured_sensor_parity_opdata_mask();
   tx_builder_uses_configured_sensor_parity_slice2_opdata_mask();
+  tx_builder_legacy_round_robin_unchanged_without_overrides();
+  tx_builder_timed_opdata_uses_idle_slots_and_keeps_round_robin();
+  tx_builder_all_opdata_timed_does_not_insert_default_mode();
+  tx_builder_timed_opdata_deferred_for_command_and_error_opdata();
+  tx_builder_timed_opdata_handles_millis_wraparound();
   tx_builder_reports_encoded_command_mask();
   tx_builder_defers_opdata_when_encoding_semantic_command();
   tx_builder_defers_opdata_when_encoding_extended_command();
