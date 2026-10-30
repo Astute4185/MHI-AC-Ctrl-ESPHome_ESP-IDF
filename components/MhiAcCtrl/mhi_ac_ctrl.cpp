@@ -1258,6 +1258,7 @@ void MhiAcCtrl::service_command_pipeline_() {
        (!confirmation_pending && (has_pending_command || this->background_tx_allowed_(now))))) {
     command_before_build = command;
     runtime_before_build = this->tx_runtime_;
+    this->tx_config_.now_ms = now;
     should_build = this->command_coordinator_.prepare_next(command, this->tx_runtime_, this->tx_config_, tx_frame,
                                                            build_result, envelope);
   }
@@ -1314,6 +1315,13 @@ void MhiAcCtrl::service_command_pipeline_() {
   }
   this->command_coordinator_.on_stage_result(envelope, command_before_build, runtime_before_build,
                                              this->state_.command(), queued, now);
+  if (!queued) {
+    // A failed queue operation did not issue the timed request. Do not advance
+    // its deadline; keep legacy round-robin accounting unchanged.
+    this->tx_runtime_.timed_opdata_last_ms = runtime_before_build.timed_opdata_last_ms;
+    this->tx_runtime_.timed_opdata_sent_mask = runtime_before_build.timed_opdata_sent_mask;
+    this->tx_runtime_.timed_opdata_next_index = runtime_before_build.timed_opdata_next_index;
+  }
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }

@@ -110,12 +110,10 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
 
   const bool dedicated_silent_command =
       runtime.double_frame && command.silent_mode_set && runtime.error_opdata_count == 0U;
-  const uint32_t frame_counter_before_opdata = runtime.frame_counter;
-  const uint8_t opdata_index_before = runtime.opdata_index;
-  const uint32_t forced_opdata_mask_before = runtime.forced_opdata_mask;
+  const MhiTxRuntime runtime_before_opdata = runtime;
 
   if (!dedicated_silent_command) {
-    apply_opdata_request(out, runtime, config.enabled_opdata_mask);
+    apply_opdata_request(out, runtime, config);
   }
   const bool routine_opdata_request_encoded = out.data[DB9] != 0xFFU;
 
@@ -127,9 +125,12 @@ bool MhiTxBuilder::build_next_frame(MhiCommandState& command, MhiTxRuntime& runt
   // Error-opdata is an explicit command and retains its DB6/DB9 payload.
   if (routine_opdata_request_encoded && (result.encoded_command_mask & kMhiSemanticCommandMask) != 0U &&
       (result.encoded_command_mask & MHI_COMMAND_ERROR_OPDATA_REQUEST) == 0U) {
-    runtime.frame_counter = frame_counter_before_opdata;
-    runtime.opdata_index = opdata_index_before;
-    runtime.forced_opdata_mask = forced_opdata_mask_before;
+    runtime.frame_counter = runtime_before_opdata.frame_counter;
+    runtime.opdata_index = runtime_before_opdata.opdata_index;
+    runtime.forced_opdata_mask = runtime_before_opdata.forced_opdata_mask;
+    runtime.timed_opdata_last_ms = runtime_before_opdata.timed_opdata_last_ms;
+    runtime.timed_opdata_sent_mask = runtime_before_opdata.timed_opdata_sent_mask;
+    runtime.timed_opdata_next_index = runtime_before_opdata.timed_opdata_next_index;
     out.data[DB6] = runtime.double_frame ? 0x80U : 0x00U;
     out.data[DB9] = 0xFFU;
   }
@@ -161,7 +162,7 @@ void MhiTxBuilder::initialise_base_frame(MhiFrameBuffer& out, std::size_t frame_
   }
 }
 
-void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, uint32_t enabled_opdata_mask) {
+void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runtime, const MhiTxBuildConfig& config) {
   if (runtime.forced_opdata_mask != 0U && runtime.double_frame && runtime.error_opdata_count == 0U) {
     const auto& request = get_enabled_opdata(runtime.forced_opdata_mask, 0U);
     out.data[DB6] = request.db6;
@@ -170,30 +171,87 @@ void MhiTxBuilder::apply_opdata_request(MhiFrameBuffer& out, MhiTxRuntime& runti
     return;
   }
 
-  const uint32_t normalized_mask = normalize_opdata_mask(enabled_opdata_mask);
-  const uint8_t enabled_count = get_enabled_opdata_count(normalized_mask);
+  const uint32_t enabled_mask = normalize_opdata_mask(config.enabled_opdata_mask);
+  uint32_t timed_mask = 0U;
+  for (std::size_t i = 0; i < kMhiOpdataRequestCount; ++i) {
+    const uint32_t bit = 1UL << i;
+    if ((enabled_mask & bit) != 0U && config.opdata_poll_intervals_ms[i] != 0U) {
+      timed_mask |= bit;
+    }
+  }
 
+  // Keep the original path byte-for-byte when there are no overrides,
+  // including the first non-command half-frame's DB6 value.
+  if (timed_mask == 0U) {
+    const uint8_t enabled_count = get_enabled_opdata_count(enabled_mask);
+    const uint8_t effective_cycle_count =
+        enabled_count < kMinEffectiveOpdataCount ? kMinEffectiveOpdataCount : enabled_count;
+    if (runtime.frame_counter > (kNoFramesPerOpDataCycle / effective_cycle_count) && runtime.double_frame) {
+      runtime.frame_counter = 1U;
+    }
+    if (runtime.frame_counter++ <= 2U) {
+      if (runtime.double_frame && runtime.error_opdata_count == 0U) {
+        const uint8_t request_index =
+            enabled_count == 0U ? 0U : static_cast<uint8_t>(runtime.opdata_index % enabled_count);
+        const auto& request = get_enabled_opdata(enabled_mask, request_index);
+        out.data[DB6] = request.db6;
+        out.data[DB9] = request.db9;
+        runtime.opdata_index = static_cast<uint8_t>((request_index + 1U) % (enabled_count == 0U ? 1U : enabled_count));
+      }
+    } else {
+      out.data[DB6] = 0x80U;
+      out.data[DB9] = 0xFFU;
+    }
+    return;
+  }
+
+  // The default lane is the original round-robin scheduler. Explicitly timed
+  // fields are removed from that lane, but its cadence/cursor remain intact.
+  const uint32_t round_robin_mask = enabled_mask & ~timed_mask;
+  const uint8_t enabled_count = get_enabled_opdata_count(round_robin_mask);
   const uint8_t effective_cycle_count =
-      enabled_count == 0U ? kMinEffectiveOpdataCount
-                          : (enabled_count < kMinEffectiveOpdataCount ? kMinEffectiveOpdataCount : enabled_count);
+      enabled_count < kMinEffectiveOpdataCount ? kMinEffectiveOpdataCount : enabled_count;
 
   if ((runtime.frame_counter > (kNoFramesPerOpDataCycle / effective_cycle_count)) && runtime.double_frame) {
     runtime.frame_counter = 1U;
   }
 
-  if (runtime.frame_counter++ <= 2U) {
-    if (runtime.double_frame && runtime.error_opdata_count == 0U) {
-      const uint8_t request_index =
-          enabled_count == 0U ? 0U : static_cast<uint8_t>(runtime.opdata_index % enabled_count);
+  const bool round_robin_slot = runtime.frame_counter++ <= 2U;
+  if (round_robin_slot && runtime.double_frame && runtime.error_opdata_count == 0U && enabled_count != 0U) {
+    const uint8_t request_index = static_cast<uint8_t>(runtime.opdata_index % enabled_count);
+    const auto& request = get_enabled_opdata(round_robin_mask, request_index);
+    out.data[DB6] = request.db6;
+    out.data[DB9] = request.db9;
+    runtime.opdata_index = static_cast<uint8_t>((request_index + 1U) % enabled_count);
+    return;
+  }
 
-      const auto& request = get_enabled_opdata(normalized_mask, request_index);
-
+  // Timed requests use otherwise idle command-capable half-frames; a legacy
+  // round-robin slot is never stolen. Intervals are best-effort TX request
+  // intervals (not proof of a corresponding response).
+  if (runtime.double_frame && runtime.error_opdata_count == 0U) {
+    for (std::size_t offset = 0; offset < kMhiOpdataRequestCount; ++offset) {
+      const std::size_t i = (runtime.timed_opdata_next_index + offset) % kMhiOpdataRequestCount;
+      const uint32_t bit = 1UL << i;
+      if ((timed_mask & bit) == 0U) {
+        continue;
+      }
+      const uint32_t interval_ms = config.opdata_poll_intervals_ms[i];
+      if ((runtime.timed_opdata_sent_mask & bit) != 0U &&
+          static_cast<uint32_t>(config.now_ms - runtime.timed_opdata_last_ms[i]) < interval_ms) {
+        continue;
+      }
+      const auto& request = get_enabled_opdata(bit, 0U);
       out.data[DB6] = request.db6;
       out.data[DB9] = request.db9;
-
-      runtime.opdata_index = static_cast<uint8_t>((request_index + 1U) % (enabled_count == 0U ? 1U : enabled_count));
+      runtime.timed_opdata_last_ms[i] = config.now_ms;
+      runtime.timed_opdata_sent_mask |= bit;
+      runtime.timed_opdata_next_index = static_cast<uint8_t>((i + 1U) % kMhiOpdataRequestCount);
+      return;
     }
-  } else {
+  }
+
+  if (!round_robin_slot) {
     out.data[DB6] = 0x80U;
     out.data[DB9] = 0xFFU;
   }

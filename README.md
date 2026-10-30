@@ -193,6 +193,7 @@ room_temp_timeout
 room_temperature_publish_interval
 room_temperature_immediate_delta
 opdata_freshness_timeout
+opdata_poll_intervals
 external_temperature_sensor
 fan_profile
 power_estimation
@@ -482,6 +483,48 @@ total and may reset after restart; Home Assistant can handle resets for
 `total_increasing` sensors. Native `energy_used` remains separate and should be
 preferred when the unit provides it. These values are estimates, not
 revenue-grade measurements.
+
+### Optional per-OPDATA polling intervals
+
+By default, all enabled OPDATA fields continue using the original round-robin
+scheduler. You can move individual fields onto a faster, time-based schedule:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  opdata_poll_intervals:
+    current_power: 5s          # CT (amps); also feeds estimated power/energy
+    compressor_frequency: 10s  # COMP (Hz)
+```
+
+Only named fields change behaviour. All other enabled OPDATA fields continue in
+round-robin order; fields with an explicit interval are removed from that
+rotation. Explicit intervals also enable those OPDATA requests, even without a
+corresponding sensor. Leaving `opdata_poll_intervals` out preserves the existing
+wire behaviour and round-robin cadence.
+
+Timed requests occupy otherwise idle eligible background TX frames. Legacy
+round-robin slots, user commands, error OPDATA and one-shot confirmation polls
+have precedence. These are **minimum intervals between requests**, not a
+promise of an AC response at that rate: transport congestion, command
+confirmation or unavailable AC data can delay readings. No extra TX frames are
+created and the default `tx_background_interval_ms: 250` need not change.
+
+Valid keys correspond to the available OPDATA fields: `mode`,
+`target_temperature`, `return_air_temperature`, `indoor_unit_thi_r1`,
+`indoor_unit_thi_r2`, `indoor_unit_thi_r3`, `indoor_unit_fan_speed`,
+`indoor_unit_total_run_time`, `outdoor_temperature`, `outdoor_unit_tho_r1`,
+`compressor_frequency`, `outdoor_unit_discharge_pipe`, `current_power`,
+`outdoor_unit_discharge_pipe_super_heat`, `protection_state_number`,
+`outdoor_unit_fan_speed`, `defrost`, `compressor_total_run_time`,
+`outdoor_unit_expansion_valve`, `energy_used`, and `silent_mode`. Each configured
+interval must be between `1s` and `24h`. Avoid configuring many very short intervals:
+there is only one OPDATA request slot per eligible TX frame.
+
+Polling CT more often improves how promptly the estimator sees compressor load
+changes, but does not improve the CT sensor's own measurement resolution.
+`power_estimation.max_sample_interval` is an energy-integration stale-data guard,
+not the CT polling rate.
 
 ## External room temperature
 

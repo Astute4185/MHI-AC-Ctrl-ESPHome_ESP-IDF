@@ -351,3 +351,165 @@ void tx_builder_defers_opdata_when_encoding_extended_command() {
 }
 
 }  // namespace mhi_unit_tests
+
+namespace mhi_unit_tests {
+
+void tx_builder_legacy_round_robin_unchanged_without_overrides() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_MODE | MHI_OPDATA_REQ_CT;
+  MhiFrameBuffer out{};
+
+  for (uint32_t frame_index = 0U; frame_index <= 160U; ++frame_index) {
+    config.now_ms = frame_index * 250U;
+    EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+    if (frame_index == 0U || frame_index == 80U || frame_index == 160U) {
+      EXPECT_EQ(out.data[DB9], frame_index == 80U ? 0x90U : 0x02U);
+    }
+    if (frame_index == 1U) {
+      EXPECT_EQ(out.data[DB6], 0U);  // Original non-command half-frame.
+    }
+    EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+  }
+}
+
+void tx_builder_timed_opdata_uses_idle_slots_and_keeps_round_robin() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_MODE | MHI_OPDATA_REQ_CT | MHI_OPDATA_REQ_COMP;
+  config.opdata_poll_intervals_ms[12] = 5000U;
+  config.opdata_poll_intervals_ms[10] = 10000U;
+  MhiFrameBuffer out{};
+  uint32_t ct_count = 0U;
+  uint32_t comp_count = 0U;
+  uint32_t mode_count = 0U;
+  uint32_t last_ct_ms = 0U;
+  uint32_t last_comp_ms = 0U;
+
+  for (uint32_t frame_index = 0U; frame_index < 170U; ++frame_index) {
+    config.now_ms = frame_index * 250U;
+    EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+    EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+    if (out.data[DB9] == 0x02U && out.data[DB6] == 0xC0U) {
+      mode_count++;
+    } else if (out.data[DB9] == 0x90U && out.data[DB6] == 0x40U) {
+      if (ct_count != 0U) {
+        EXPECT_TRUE(config.now_ms - last_ct_ms >= 5000U);
+        EXPECT_TRUE(config.now_ms - last_ct_ms <= 5500U);
+      }
+      last_ct_ms = config.now_ms;
+      ct_count++;
+    } else if (out.data[DB9] == 0x11U && out.data[DB6] == 0x40U) {
+      if (comp_count != 0U) {
+        EXPECT_TRUE(config.now_ms - last_comp_ms >= 10000U);
+        EXPECT_TRUE(config.now_ms - last_comp_ms <= 10500U);
+      }
+      last_comp_ms = config.now_ms;
+      comp_count++;
+    }
+  }
+  EXPECT_EQ(mode_count, 3U);
+  EXPECT_TRUE(ct_count >= 7U);
+  EXPECT_TRUE(comp_count >= 4U);
+}
+
+void tx_builder_all_opdata_timed_does_not_insert_default_mode() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_CT;
+  config.opdata_poll_intervals_ms[12] = 5000U;
+  MhiFrameBuffer out{};
+  uint32_t ct_count = 0U;
+  for (uint32_t i = 0U; i < 90U; ++i) {
+    config.now_ms = i * 250U;
+    EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+    EXPECT_TRUE(out.data[DB9] != 0x02U);
+    if (out.data[DB9] == 0x90U) {
+      EXPECT_EQ(out.data[DB6], 0x40U);
+      ct_count++;
+    }
+  }
+  EXPECT_TRUE(ct_count >= 4U);
+}
+
+void tx_builder_timed_opdata_deferred_for_command_and_error_opdata() {
+  MhiCommandState command{};
+  command.power_set = true;
+  command.power = true;
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_CT;
+  config.opdata_poll_intervals_ms[12] = 5000U;
+  MhiFrameBuffer out{};
+  MhiTxBuildResult result{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB9], 0xFFU);
+  EXPECT_EQ(runtime.timed_opdata_sent_mask, 0U);
+  EXPECT_EQ(result.encoded_command_mask, static_cast<uint32_t>(MHI_COMMAND_POWER));
+
+  config.now_ms = 250U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  config.now_ms = 500U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB9], 0x90U);
+  EXPECT_EQ(runtime.timed_opdata_last_ms[12], 500U);
+
+  // A force poll bypasses the timed request and does not consume its deadline.
+  runtime.forced_opdata_mask = MHI_OPDATA_REQ_SILENT_MODE;
+  config.now_ms = 5750U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  config.now_ms = 6000U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB9], 0xDDU);
+  EXPECT_EQ(runtime.timed_opdata_last_ms[12], 500U);
+  config.now_ms = 6250U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  config.now_ms = 6500U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out, result));
+  EXPECT_EQ(out.data[DB9], 0x90U);
+  EXPECT_EQ(runtime.timed_opdata_last_ms[12], 6500U);
+
+  // An outstanding error-OPDATA sequence must not consume the timed slot.
+  MhiTxRuntime error_runtime{};
+  error_runtime.error_opdata_count = 1U;
+  config.now_ms = 7000U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, error_runtime, config, out, result));
+  EXPECT_EQ(out.data[DB9], 0xFFU);
+  EXPECT_EQ(error_runtime.timed_opdata_sent_mask, 0U);
+  EXPECT_EQ(error_runtime.error_opdata_count, 0U);
+  config.now_ms = 7250U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, error_runtime, config, out, result));
+  config.now_ms = 7500U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, error_runtime, config, out, result));
+  EXPECT_EQ(out.data[DB9], 0x90U);
+}
+
+void tx_builder_timed_opdata_handles_millis_wraparound() {
+  MhiCommandState command{};
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  config.enabled_opdata_mask = MHI_OPDATA_REQ_CT;
+  config.opdata_poll_intervals_ms[12] = 5000U;
+  config.now_ms = 0xFFFFFF00U;
+  MhiFrameBuffer out{};
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_EQ(out.data[DB9], 0x90U);
+  config.now_ms = 0x00000100U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_EQ(out.data[DB9], 0xFFU);
+  config.now_ms = 0x00001100U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_EQ(out.data[DB9], 0xFFU);  // Only 4608ms after the original poll.
+  config.now_ms = 0x00001390U;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_EQ(out.data[DB9], 0x90U);
+}
+
+}  // namespace mhi_unit_tests

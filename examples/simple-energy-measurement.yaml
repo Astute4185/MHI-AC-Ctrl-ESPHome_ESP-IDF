@@ -55,6 +55,10 @@ MhiAcCtrl:
   # rmt_cs_spi owns both RX and TX; do not configure tx_driver.
   rx_driver: rmt_cs_spi
   command_worker: true
+  # Optional: keep all other enabled OPDATA fields on legacy round-robin.
+  opdata_poll_intervals:
+    current_power: 5s
+    compressor_frequency: 10s
   power_estimation:
     nominal_voltage: 230.0
     power_factor: 1.0
