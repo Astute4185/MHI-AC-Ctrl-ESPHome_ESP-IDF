@@ -137,6 +137,22 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
     this->publish_bridge_.set_room_temperature_immediate_delta(delta_c);
   }
 
+  void set_external_voltage_sensor(sensor::Sensor* sensor) {
+    this->external_voltage_sensor_ = sensor;
+  }
+
+  void set_external_voltage_timeout_ms(uint32_t timeout_ms) {
+    this->power_estimator_.set_external_voltage_timeout_ms(timeout_ms);
+  }
+
+  void set_external_power_factor_sensor(sensor::Sensor* sensor) {
+    this->external_power_factor_sensor_ = sensor;
+  }
+
+  void set_external_power_factor_timeout_ms(uint32_t timeout_ms) {
+    this->power_estimator_.set_external_power_factor_timeout_ms(timeout_ms);
+  }
+
   void set_external_room_temperature_sensor(sensor::Sensor* sensor) {
     this->external_room_temperature_sensor_ = sensor;
   }
@@ -480,6 +496,8 @@ class MhiAcCtrl : public Component, public IMhiTransportTransitionListener {
   MhiFanProfile fan_profile_{MhiFanProfile::FOUR_SPEED};
 
   sensor::Sensor* external_room_temperature_sensor_{nullptr};
+  sensor::Sensor* external_voltage_sensor_{nullptr};
+  sensor::Sensor* external_power_factor_sensor_{nullptr};
 
   uint32_t opdata_mask_{kMhiDefaultOpdataMask};
   uint32_t opdata_freshness_timeout_ms_{120000U};

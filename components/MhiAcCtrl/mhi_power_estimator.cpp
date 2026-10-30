@@ -22,7 +22,67 @@ void MhiPowerEstimator::configure(float nominal_voltage_v, float power_factor, f
   }
 }
 
+void MhiPowerEstimator::set_external_voltage_timeout_ms(uint32_t timeout_ms) {
+  if (timeout_ms > 0U) {
+    external_voltage_timeout_ms_ = timeout_ms;
+  }
+}
+
+bool MhiPowerEstimator::update_external_voltage(float voltage_v, uint32_t now_ms) {
+  // Domestic mains voltage only. Reject NaN, infinity, zero and implausible readings.
+  if (!std::isfinite(voltage_v) || voltage_v < 80.0f || voltage_v > 300.0f) {
+    external_voltage_valid_ = false;
+    return false;
+  }
+  external_voltage_v_ = voltage_v;
+  last_external_voltage_ms_ = now_ms;
+  external_voltage_valid_ = true;
+  return true;
+}
+
+bool MhiPowerEstimator::external_voltage_active(uint32_t now_ms) const {
+  return external_voltage_valid_ && (now_ms - last_external_voltage_ms_ < external_voltage_timeout_ms_);
+}
+
+float MhiPowerEstimator::effective_voltage_v(uint32_t now_ms) const {
+  return external_voltage_active(now_ms) ? external_voltage_v_ : nominal_voltage_v_;
+}
+
+void MhiPowerEstimator::set_external_power_factor_timeout_ms(uint32_t timeout_ms) {
+  if (timeout_ms > 0U) {
+    external_power_factor_timeout_ms_ = timeout_ms;
+  }
+}
+
+bool MhiPowerEstimator::update_external_power_factor(float power_factor, uint32_t now_ms) {
+  // Power factor is a dimensionless ratio, not a percentage.
+  if (!std::isfinite(power_factor) || power_factor <= 0.0f || power_factor > 1.0f) {
+    external_power_factor_valid_ = false;
+    return false;
+  }
+  external_power_factor_ = power_factor;
+  last_external_power_factor_ms_ = now_ms;
+  external_power_factor_valid_ = true;
+  return true;
+}
+
+bool MhiPowerEstimator::external_power_factor_active(uint32_t now_ms) const {
+  return external_power_factor_valid_ && (now_ms - last_external_power_factor_ms_ < external_power_factor_timeout_ms_);
+}
+
+float MhiPowerEstimator::effective_power_factor(uint32_t now_ms) const {
+  return external_power_factor_active(now_ms) ? external_power_factor_ : power_factor_;
+}
+
 void MhiPowerEstimator::begin() {
+  external_voltage_valid_ = false;
+  last_external_voltage_ms_ = 0U;
+  last_used_voltage_v_ = nominal_voltage_v_;
+  last_used_external_voltage_ = false;
+  external_power_factor_valid_ = false;
+  last_external_power_factor_ms_ = 0U;
+  last_used_power_factor_ = power_factor_;
+  last_used_external_power_factor_ = false;
   has_previous_sample_ = false;
   power_valid_ = false;
   energy_valid_ = false;
@@ -45,7 +105,12 @@ bool MhiPowerEstimator::observe_current(float current_a, bool power_state_valid,
     return false;
   }
 
-  const float new_power_w = calculate_power_w_(current_a, power_state_valid, power_on);
+  last_used_external_voltage_ = external_voltage_active(now_ms);
+  last_used_voltage_v_ = effective_voltage_v(now_ms);
+  last_used_external_power_factor_ = external_power_factor_active(now_ms);
+  last_used_power_factor_ = effective_power_factor(now_ms);
+  const float new_power_w =
+      calculate_power_w_(current_a, last_used_voltage_v_, last_used_power_factor_, power_state_valid, power_on);
 
   if (has_previous_sample_) {
     const uint32_t elapsed_ms = now_ms - last_sample_ms_;
@@ -78,11 +143,16 @@ MhiPowerEstimateSnapshot MhiPowerEstimator::snapshot() const {
   snapshot.integrated_intervals = integrated_intervals_;
   snapshot.skipped_intervals = skipped_intervals_;
   snapshot.last_sample_ms = last_sample_ms_;
+  snapshot.voltage_v = last_used_voltage_v_;
+  snapshot.used_external_voltage = last_used_external_voltage_;
+  snapshot.power_factor = last_used_power_factor_;
+  snapshot.used_external_power_factor = last_used_external_power_factor_;
   return snapshot;
 }
 
-float MhiPowerEstimator::calculate_power_w_(float current_a, bool power_state_valid, bool power_on) const {
-  const float measured_power_w = current_a * nominal_voltage_v_ * power_factor_;
+float MhiPowerEstimator::calculate_power_w_(float current_a, float voltage_v, float power_factor,
+                                            bool power_state_valid, bool power_on) const {
+  const float measured_power_w = current_a * voltage_v * power_factor;
   if (power_state_valid && !power_on) {
     return std::max(measured_power_w, standby_power_w_);
   }

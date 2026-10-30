@@ -459,7 +459,11 @@ MhiAcCtrl:
   id: mhi_ac
   power_estimation:
     nominal_voltage: 230.0
-    power_factor: 0.95
+    # Optional: voltage_sensor: mains_voltage
+    # Optional: voltage_timeout: 5min
+    power_factor: 0.95  # fallback PF
+    # Optional: power_factor_sensor: mains_power_factor
+    # Optional: power_factor_timeout: 5min
     standby_power: 0.0
     max_sample_interval: 5min
 
@@ -472,8 +476,53 @@ sensor:
       name: MHI Estimated Energy
 ```
 
-`estimated_power` is calculated from decoded current, configured voltage, and
-power factor. `standby_power` is an optional floor used only when decoded status
+`estimated_power` is calculated from decoded CT/current, voltage, and power factor.
+By default the estimator uses `nominal_voltage`. Optionally reference any ESPHome
+numeric sensor as `power_estimation.voltage_sensor` (for example, a Home Assistant
+voltage sensor imported with `platform: homeassistant`). The estimator uses external
+voltage **only when a valid reading between 80 and 300 V has arrived within
+`voltage_timeout` (default: 5 minutes)**; otherwise it falls back to the configured
+nominal voltage. Invalid readings (including NaN/zero) immediately invalidate the
+external source. Updates to voltage do not trigger MHI traffic or energy samples;
+the latest valid voltage is applied when the next CT sample arrives.
+
+For a Home Assistant voltage source, add the following entry to your existing `sensor:`
+list, alongside the `platform: MhiAcCtrl` entry:
+
+```yaml
+sensor:
+  - platform: homeassistant
+    id: mains_voltage
+    entity_id: sensor.your_mains_voltage
+    internal: true
+  - platform: homeassistant
+    id: mains_power_factor
+    entity_id: sensor.your_mains_power_factor
+    internal: true
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    estimated_power:
+      name: MHI Estimated Power
+    estimated_energy:
+      name: MHI Estimated Energy
+```
+
+Then configure `voltage_sensor: mains_voltage` and
+`power_factor_sensor: mains_power_factor` under `MhiAcCtrl.power_estimation`.
+The device must receive regular source state updates. `voltage_timeout` and
+`power_factor_timeout` (both default `5min`) independently cause stale sources
+to fall back to `nominal_voltage` and configured `power_factor`. Invalid source
+values immediately trigger their respective fallback. Valid external power
+factor is a **dimensionless ratio in (0, 1]**, e.g. `0.92`, not 92 percent; if
+your meter reports percentages, scale by 0.01 before feeding ESPHome. Both
+inputs must represent the **air-conditioner's load**: voltage from the same
+supply is appropriate, but power factor measured for a shared circuit is not
+necessarily the air-conditioner's power factor. Either sensor can be omitted.
+An external input update does not trigger MHI traffic or an energy sample;
+values are applied on the next CT sample. These changes cannot overcome the
+MHI CT measurement's coarse resolution.
+
+`standby_power` is an optional floor used only when decoded status
 confirms that the AC is off. No standby consumption is assumed by default.
 
 `estimated_energy` integrates consecutive fresh current samples and skips
