@@ -67,6 +67,7 @@ int main() {
   fan_profile_encodes_quiet_only_for_four_speed();
 
   status_decoder_decodes_core_fields();
+  status_decoder_preserves_half_degree_setpoint();
   status_decoder_preserves_protocol_fan_code_zero();
   status_decoder_decodes_33_byte_vane_feedback();
   status_decoder_ignores_unknown_horizontal_vane_feedback();
@@ -110,6 +111,8 @@ int main() {
   power_estimator_rejects_invalid_power_factor_and_recovers();
   power_estimator_external_power_factor_handles_timer_rollover();
   power_estimator_integrates_voltage_and_power_factor_changes();
+  setpoint_resolution_quantizes_commands();
+  tx_builder_encodes_half_degree_setpoint();
   tx_builder_emits_valid_default_20_byte_frame();
   tx_builder_applies_pending_commands_once();
   tx_builder_uses_configured_sensor_parity_opdata_mask();

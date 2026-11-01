@@ -47,7 +47,7 @@ class MhiClimate : public climate::Climate, public Component, public Parented<Mh
 
   float minimum_temperature_{18.0f};
   float maximum_temperature_{30.0f};
-  float temperature_step_{0.5f};
+  float temperature_step_{1.0f};
 
   // Used when switching swing off, so we return to a tangible vane position.
   uint8_t last_vertical_vane_position_{4};

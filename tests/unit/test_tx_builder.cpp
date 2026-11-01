@@ -1,4 +1,5 @@
 #include "mhi_test_common.h"
+#include "mhi_setpoint.h"
 
 namespace mhi_unit_tests {
 
@@ -15,6 +16,36 @@ void tx_builder_emits_valid_default_20_byte_frame() {
   EXPECT_EQ(out.data[SB1], kMhiMisoSignature1);
   EXPECT_EQ(out.data[SB2], kMhiMisoSignature2);
   EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+}
+
+void setpoint_resolution_quantizes_commands() {
+  expect_near(mhi_quantize_setpoint(22.5f, 1.0f), 23.0f);
+  expect_near(mhi_quantize_setpoint(23.5f, 1.0f), 24.0f);
+  expect_near(mhi_quantize_setpoint(22.5f, 0.5f), 22.5f);
+  expect_near(mhi_quantize_setpoint(23.5f, 0.5f), 23.5f);
+  expect_near(mhi_quantize_setpoint(22.1f, 0.5f), 22.0f);
+}
+
+void tx_builder_encodes_half_degree_setpoint() {
+  MhiCommandState command{};
+  command.target_temp_set = true;
+  command.target_temp_c = mhi_quantize_setpoint(22.5f, 0.5f);
+
+  MhiTxRuntime runtime{};
+  MhiTxBuildConfig config{};
+  MhiFrameBuffer out{};
+
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime, config, out));
+  EXPECT_EQ(out.data[DB2], 0xADU);
+  EXPECT_TRUE(mhi_checksum_valid_20(out.data));
+
+  MhiTxRuntime runtime33{};
+  command.target_temp_set = true;
+  command.target_temp_c = mhi_quantize_setpoint(23.5f, 0.5f);
+  config.frame_size = kMhiFrame33Bytes;
+  EXPECT_TRUE(MhiTxBuilder::build_next_frame(command, runtime33, config, out));
+  EXPECT_EQ(out.data[DB2], 0xAFU);
+  EXPECT_TRUE(mhi_checksum_valid_33(out.data));
 }
 
 void tx_builder_applies_pending_commands_once() {

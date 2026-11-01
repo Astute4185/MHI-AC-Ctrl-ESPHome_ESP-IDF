@@ -1,5 +1,7 @@
 #include "mhi_climate.h"
 
+#include "../mhi_setpoint.h"
+
 #include <cmath>
 
 #include "esphome/core/log.h"
@@ -44,6 +46,10 @@ void MhiClimate::dump_config() {
   ESP_LOGCONFIG(TAG, "  Max temperature: %.1f°C", this->maximum_temperature_);
   ESP_LOGCONFIG(TAG, "  Temperature step: %.1f°C", this->temperature_step_);
   ESP_LOGCONFIG(TAG, "  Temperature offset enabled: %s", this->temperature_offset_enabled_ ? "YES" : "NO");
+  if (this->temperature_offset_enabled_ && this->temperature_step_ == 0.5f) {
+    ESP_LOGW(TAG,
+             "temperature_offset rounds fractional setpoints to whole degrees; disable it for native 0.5°C setpoints");
+  }
 }
 
 void MhiClimate::control(const climate::ClimateCall& call) {
@@ -57,12 +63,11 @@ void MhiClimate::control(const climate::ClimateCall& call) {
   if (call.get_target_temperature().has_value()) {
     const float requested_target = *call.get_target_temperature();
 
-    float ac_target = requested_target;
+    // Honour the configured setpoint resolution for both HA UI and API calls.
+    float ac_target = mhi_quantize_setpoint(requested_target, this->temperature_step_);
 
-    // Preserve the old concept:
-    // if offset mode is enabled, round the AC setpoint upward and keep the user-facing
-    // requested target locally. The actual DB3 room-temp-offset behaviour should be
-    // wired later in the state/command layer, not inside the climate entity.
+    // Preserve legacy offset behaviour. The external room-temperature compensation
+    // is not currently implemented, so this mode cannot provide 0.5°C resolution.
     if (this->temperature_offset_enabled_) {
       ac_target = std::ceil(requested_target);
 

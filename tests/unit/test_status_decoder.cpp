@@ -20,6 +20,18 @@ void status_decoder_decodes_core_fields() {
 
 
 
+void status_decoder_preserves_half_degree_setpoint() {
+  MhiFrameBuffer frame = make_mosi_status_frame();
+  frame.data[DB2] = 0x2DU;  // 22.5°C reported by the AC.
+  const uint16_t checksum = mhi_calc_checksum(frame.data);
+  frame.data[CBH] = static_cast<uint8_t>(checksum >> 8U);
+  frame.data[CBL] = static_cast<uint8_t>(checksum & 0xFFU);
+
+  MhiDecodedStatus decoded{};
+  EXPECT_TRUE(MhiStatusDecoder::decode_mosi(frame.view(), decoded));
+  expect_near(decoded.target_temp_c, 22.5f);
+}
+
 void status_decoder_preserves_protocol_fan_code_zero() {
   MhiFrameBuffer frame = make_mosi_status_frame();
   frame.data[DB1] = static_cast<uint8_t>(frame.data[DB1] & 0xF8U);
