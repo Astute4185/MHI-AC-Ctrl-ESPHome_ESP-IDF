@@ -45,11 +45,6 @@ void MhiClimate::dump_config() {
   ESP_LOGCONFIG(TAG, "  Min temperature: %.1f°C", this->minimum_temperature_);
   ESP_LOGCONFIG(TAG, "  Max temperature: %.1f°C", this->maximum_temperature_);
   ESP_LOGCONFIG(TAG, "  Temperature step: %.1f°C", this->temperature_step_);
-  ESP_LOGCONFIG(TAG, "  Temperature offset enabled: %s", this->temperature_offset_enabled_ ? "YES" : "NO");
-  if (this->temperature_offset_enabled_ && this->temperature_step_ == 0.5f) {
-    ESP_LOGW(TAG,
-             "temperature_offset rounds fractional setpoints to whole degrees; disable it for native 0.5°C setpoints");
-  }
 }
 
 void MhiClimate::control(const climate::ClimateCall& call) {
@@ -64,27 +59,12 @@ void MhiClimate::control(const climate::ClimateCall& call) {
     const float requested_target = *call.get_target_temperature();
 
     // Honour the configured setpoint resolution for both HA UI and API calls.
-    float ac_target = mhi_quantize_setpoint(requested_target, this->temperature_step_);
-
-    // Preserve legacy offset behaviour. The external room-temperature compensation
-    // is not currently implemented, so this mode cannot provide 0.5°C resolution.
-    if (this->temperature_offset_enabled_) {
-      ac_target = std::ceil(requested_target);
-
-      if (ac_target < kAcMinimumSetpointC) {
-        ac_target = kAcMinimumSetpointC;
-      }
-
-      this->temperature_offset_ = ac_target - requested_target;
-    } else {
-      this->temperature_offset_ = 0.0f;
-    }
+    const float ac_target = mhi_quantize_setpoint(requested_target, this->temperature_step_);
 
     patch.target_temp_set = true;
     patch.target_temp_c = ac_target;
 
-    ESP_LOGD(TAG, "Requested target %.1f°C, AC setpoint %.1f°C, offset %.1f°C", requested_target, ac_target,
-             this->temperature_offset_);
+    ESP_LOGD(TAG, "Requested target %.1f°C, AC setpoint %.1f°C", requested_target, ac_target);
   }
 
   if (call.get_mode().has_value()) {

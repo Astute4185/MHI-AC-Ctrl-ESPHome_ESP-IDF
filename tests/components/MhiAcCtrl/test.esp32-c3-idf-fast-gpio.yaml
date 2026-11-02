@@ -38,7 +38,6 @@ climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: MHI Climate
-    temperature_offset: false
     visual_min_temperature: 16
     visual_max_temperature: 31
     visual_temperature_step: 1

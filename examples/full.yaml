@@ -81,13 +81,9 @@ climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: "${friendly_name}"
-    temperature_offset: false
-    # Default 1°C; use 0.5 for models that honour native half-degree commands.
-    setpoint_step: 1.0
     visual_min_temperature: 17.0
     visual:
       temperature_step:
-        target_temperature: 1.0
         current_temperature: 0.1
 
 time:

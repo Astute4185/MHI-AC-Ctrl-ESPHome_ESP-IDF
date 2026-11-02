@@ -42,7 +42,6 @@ climate:
     mhi_ac_ctrl_id: mhi_ac
     name: MHI Climate
     setpoint_step: 0.5
-    temperature_offset: false
 
 
 switch:

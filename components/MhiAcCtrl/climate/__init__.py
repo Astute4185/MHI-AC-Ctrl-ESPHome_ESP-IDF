@@ -8,7 +8,6 @@ from .setpoint_config import resolve_setpoint_step
 
 MhiClimate = mhi_ns.class_("MhiClimate", climate.Climate, cg.Component)
 
-CONF_TEMPERATURE_OFFSET = "temperature_offset"
 CONF_SETPOINT_STEP = "setpoint_step"
 CONF_VISUAL_MIN_TEMPERATURE = "visual_min_temperature"
 CONF_VISUAL_MAX_TEMPERATURE = "visual_max_temperature"
@@ -30,7 +29,6 @@ CONFIG_SCHEMA = cv.All(
     .extend(
         {
             cv.GenerateID(CONF_MHI_AC_CTRL_ID): cv.use_id(MhiAcCtrl),
-            cv.Optional(CONF_TEMPERATURE_OFFSET, default=False): cv.boolean,
             cv.Optional(CONF_SETPOINT_STEP): cv.float_range(min=0.5, max=1.0),
             cv.Optional(CONF_VISUAL_MIN_TEMPERATURE, default=18.0): cv.temperature,
             cv.Optional(CONF_VISUAL_MAX_TEMPERATURE, default=30.0): cv.temperature,
@@ -55,7 +53,6 @@ async def to_code(config):
     cg.add(parent.set_climate_target(var))
     cg.add(parent.add_opdata_mask(MHI_OPDATA_REQ_MODE))
 
-    cg.add(var.set_temperature_offset_enabled(config[CONF_TEMPERATURE_OFFSET]))
     cg.add(var.set_minimum_temperature(config[CONF_VISUAL_MIN_TEMPERATURE]))
     cg.add(var.set_maximum_temperature(config[CONF_VISUAL_MAX_TEMPERATURE]))
     cg.add(var.set_temperature_step(resolve_setpoint_step(config)))

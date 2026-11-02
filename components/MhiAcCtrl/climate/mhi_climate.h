@@ -14,10 +14,6 @@ class MhiClimate : public climate::Climate, public Component, public Parented<Mh
   void setup() override;
   void dump_config() override;
 
-  void set_temperature_offset_enabled(bool enabled) {
-    this->temperature_offset_enabled_ = enabled;
-  }
-
   void set_minimum_temperature(float temp) {
     this->minimum_temperature_ = temp;
   }
@@ -35,15 +31,10 @@ class MhiClimate : public climate::Climate, public Component, public Parented<Mh
   void control(const climate::ClimateCall& call) override;
 
  private:
-  static constexpr float kAcMinimumSetpointC = 18.0f;
-
   uint8_t mode_to_mhi_(climate::ClimateMode mode) const;
   bool fan_to_mhi_(climate::ClimateFanMode fan, uint8_t& out) const;
 
   void apply_swing_command_(climate::ClimateSwingMode swing, MhiCommandState& patch);
-
-  bool temperature_offset_enabled_{false};
-  float temperature_offset_{0.0f};
 
   float minimum_temperature_{18.0f};
   float maximum_temperature_{30.0f};

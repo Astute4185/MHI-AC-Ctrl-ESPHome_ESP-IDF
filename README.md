@@ -263,14 +263,12 @@ climate:
     mhi_ac_ctrl_id: mhi_ac
     visual_min_temperature: 16
     visual_max_temperature: 31
-    setpoint_step: 1.0  # Default; omit unless you want to be explicit.
-    temperature_offset: false
 ```
 
-The default setpoint step is **1°C**. To opt into native 0.5°C setpoints,
-use `setpoint_step: 0.5` and leave `temperature_offset: false`. The setting
-controls both the advertised HA target-temperature step and rounding of
-commands received through the UI or API. The existing
+The default setpoint step is **1°C**; no extra configuration is required.
+To opt into native 0.5°C setpoints, add `setpoint_step: 0.5`.
+The setting controls both the advertised HA target-temperature step and
+rounding of commands received through the UI or API. The existing
 `visual_temperature_step` and standard ESPHome
 `visual.temperature_step.target_temperature` options are accepted as
 compatible alternatives; do not specify conflicting step values.
@@ -291,11 +289,6 @@ climate:
     mhi_ac_ctrl_id: mhi_ac
     name: Guest Bedroom AC
     setpoint_step: 0.5
-    temperature_offset: false
-    visual:
-      temperature_step:
-        target_temperature: 0.5
-        current_temperature: 0.1
 ```
 
 ## Selects
