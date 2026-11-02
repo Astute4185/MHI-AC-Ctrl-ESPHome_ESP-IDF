@@ -1,9 +1,8 @@
 #include "mhi_climate.h"
 
-#include "../mhi_setpoint.h"
-
 #include <cmath>
 
+#include "../mhi_setpoint.h"
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
 

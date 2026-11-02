@@ -21,8 +21,7 @@ def resolve_setpoint_step(config):
 
     if candidates and any(float(value) != float(candidates[0][1]) for _, value in candidates[1:]):
         raise ValueError(
-            "Conflicting setpoint steps: setpoint_step, visual_temperature_step and "
-            "visual.temperature_step must agree"
+            "Conflicting setpoint steps: setpoint_step, visual_temperature_step and visual.temperature_step must agree"
         )
 
     return float(candidates[0][1]) if candidates else 1.0
