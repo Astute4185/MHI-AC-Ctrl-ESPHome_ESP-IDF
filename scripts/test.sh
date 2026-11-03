@@ -107,6 +107,7 @@ check_sources_exist
   -o "${BUILD_DIR}/mhi_protocol_tests"
 "${BUILD_DIR}/mhi_protocol_tests"
 
+python3 tests/unit/test_climate_setpoint_config.py
 python3 tests/unit/test_driver_selection.py
 python3 tests/unit/test_transport_configuration.py
 python3 tests/unit/test_transport_compile_selection.py

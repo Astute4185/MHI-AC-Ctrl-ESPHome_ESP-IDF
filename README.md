@@ -263,10 +263,33 @@ climate:
     mhi_ac_ctrl_id: mhi_ac
     visual_min_temperature: 16
     visual_max_temperature: 31
-    visual_temperature_step: 1
 ```
 
-Climate state is published from confirmed decoded MHI state.
+The default setpoint step is **1°C**; no extra configuration is required.
+To opt into native 0.5°C setpoints, add `setpoint_step: 0.5`.
+The setting controls both the advertised HA target-temperature step and
+rounding of commands received through the UI or API. The existing
+`visual_temperature_step` and standard ESPHome
+`visual.temperature_step.target_temperature` options are accepted as
+compatible alternatives; do not specify conflicting step values.
+
+MHI DB2 supports 0.5°C encoding, but individual indoor units may round a
+half-degree request to a whole degree. Climate state is published from
+confirmed decoded MHI state, so the dial will revert if the AC reports a
+different setpoint. `temperature_offset: true` is a legacy setting that
+rounds upwards and **does not currently implement** the external room-
+temperature compensation necessary to emulate half-degree resolution on
+an AC that rejects it. It should not be combined with a 0.5°C setpoint step.
+
+Example opt-in:
+
+```yaml
+climate:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    name: Guest Bedroom AC
+    setpoint_step: 0.5
+```
 
 ## Selects
 
