@@ -33,9 +33,50 @@ CONF_ROOM_TEMP_TIMEOUT = "room_temp_timeout"
 CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL = "room_temperature_publish_interval"
 CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA = "room_temperature_immediate_delta"
 CONF_OPDATA_FRESHNESS_TIMEOUT = "opdata_freshness_timeout"
+CONF_OPDATA_POLL_INTERVALS = "opdata_poll_intervals"
+
+# Bit positions match MhiOpdataRequestMask in mhi_tx_builder.h.
+OPDATA_POLL_REQUESTS = {
+    "mode": 1 << 0,
+    "target_temperature": 1 << 1,
+    "return_air_temperature": 1 << 2,
+    "indoor_unit_thi_r1": 1 << 3,
+    "indoor_unit_thi_r2": 1 << 4,
+    "indoor_unit_thi_r3": 1 << 5,
+    "indoor_unit_fan_speed": 1 << 6,
+    "indoor_unit_total_run_time": 1 << 7,
+    "outdoor_temperature": 1 << 8,
+    "outdoor_unit_tho_r1": 1 << 9,
+    "compressor_frequency": 1 << 10,
+    "outdoor_unit_discharge_pipe": 1 << 11,
+    "current_power": 1 << 12,
+    "outdoor_unit_discharge_pipe_super_heat": 1 << 13,
+    "protection_state_number": 1 << 14,
+    "outdoor_unit_fan_speed": 1 << 15,
+    "defrost": 1 << 16,
+    "compressor_total_run_time": 1 << 17,
+    "outdoor_unit_expansion_valve": 1 << 18,
+    "energy_used": 1 << 19,
+    "silent_mode": 1 << 20,
+}
+
+
+def _poll_interval_at_least_one_second(value):
+    interval = cv.positive_time_period_milliseconds(value)
+    if interval.total_milliseconds < 1000:
+        raise cv.Invalid("OPDATA polling intervals must be at least 1s")
+    if interval.total_milliseconds > 86400000:
+        raise cv.Invalid("OPDATA polling intervals must be no greater than 24h")
+    return interval
+
+
 CONF_POWER_ESTIMATION = "power_estimation"
 CONF_NOMINAL_VOLTAGE = "nominal_voltage"
+CONF_VOLTAGE_SENSOR = "voltage_sensor"
+CONF_VOLTAGE_TIMEOUT = "voltage_timeout"
 CONF_POWER_FACTOR = "power_factor"
+CONF_POWER_FACTOR_SENSOR = "power_factor_sensor"
+CONF_POWER_FACTOR_TIMEOUT = "power_factor_timeout"
 CONF_STANDBY_POWER = "standby_power"
 CONF_MAX_SAMPLE_INTERVAL = "max_sample_interval"
 CONF_VANES_UD = "initial_vertical_vanes_position"
@@ -125,10 +166,17 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL, default="15s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA, default=1.0): cv.float_range(min=0.0, max=10.0),
             cv.Optional(CONF_OPDATA_FRESHNESS_TIMEOUT, default="120s"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_OPDATA_POLL_INTERVALS): cv.Schema(
+                {cv.Optional(name): _poll_interval_at_least_one_second for name in OPDATA_POLL_REQUESTS}
+            ),
             cv.Optional(CONF_POWER_ESTIMATION): cv.Schema(
                 {
                     cv.Optional(CONF_NOMINAL_VOLTAGE, default=230.0): cv.float_range(min=1.0, max=500.0),
+                    cv.Optional(CONF_VOLTAGE_SENSOR): cv.use_id(sensor.Sensor),
+                    cv.Optional(CONF_VOLTAGE_TIMEOUT, default="5min"): cv.positive_time_period_milliseconds,
                     cv.Optional(CONF_POWER_FACTOR, default=1.0): cv.float_range(min=0.1, max=1.0),
+                    cv.Optional(CONF_POWER_FACTOR_SENSOR): cv.use_id(sensor.Sensor),
+                    cv.Optional(CONF_POWER_FACTOR_TIMEOUT, default="5min"): cv.positive_time_period_milliseconds,
                     cv.Optional(CONF_STANDBY_POWER, default=0.0): cv.float_range(min=0.0, max=500.0),
                     cv.Optional(CONF_MAX_SAMPLE_INTERVAL, default="5min"): cv.positive_time_period_milliseconds,
                 }
@@ -182,6 +230,8 @@ async def to_code(config):
     cg.add(var.set_room_temperature_publish_interval_ms(config[CONF_ROOM_TEMPERATURE_PUBLISH_INTERVAL]))
     cg.add(var.set_room_temperature_immediate_delta(config[CONF_ROOM_TEMPERATURE_IMMEDIATE_DELTA]))
     cg.add(var.set_opdata_freshness_timeout_ms(config[CONF_OPDATA_FRESHNESS_TIMEOUT]))
+    for request_name, interval in config.get(CONF_OPDATA_POLL_INTERVALS, {}).items():
+        cg.add(var.set_opdata_poll_interval_ms(OPDATA_POLL_REQUESTS[request_name], interval))
     if CONF_POWER_ESTIMATION in config:
         estimation = config[CONF_POWER_ESTIMATION]
         cg.add(
@@ -192,6 +242,14 @@ async def to_code(config):
                 estimation[CONF_MAX_SAMPLE_INTERVAL],
             )
         )
+        if CONF_VOLTAGE_SENSOR in estimation:
+            voltage_sensor = await cg.get_variable(estimation[CONF_VOLTAGE_SENSOR])
+            cg.add(var.set_external_voltage_sensor(voltage_sensor))
+            cg.add(var.set_external_voltage_timeout_ms(estimation[CONF_VOLTAGE_TIMEOUT]))
+        if CONF_POWER_FACTOR_SENSOR in estimation:
+            power_factor_sensor = await cg.get_variable(estimation[CONF_POWER_FACTOR_SENSOR])
+            cg.add(var.set_external_power_factor_sensor(power_factor_sensor))
+            cg.add(var.set_external_power_factor_timeout_ms(estimation[CONF_POWER_FACTOR_TIMEOUT]))
     effective_tx_driver = resolve_tx_driver(config[CONF_RX_DRIVER], config.get(CONF_TX_DRIVER))
     transport_tuning = resolve_transport_tuning(config)
     transport_inputs = MhiTransportBuildInputs(

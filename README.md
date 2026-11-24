@@ -193,6 +193,7 @@ room_temp_timeout
 room_temperature_publish_interval
 room_temperature_immediate_delta
 opdata_freshness_timeout
+opdata_poll_intervals
 external_temperature_sensor
 external_temperature_fallback_on_homeassistant_disconnect
 external_temperature_disconnect_grace_period
@@ -264,10 +265,33 @@ climate:
     mhi_ac_ctrl_id: mhi_ac
     visual_min_temperature: 16
     visual_max_temperature: 31
-    visual_temperature_step: 1
 ```
 
-Climate state is published from confirmed decoded MHI state.
+The default setpoint step is **1°C**; no extra configuration is required.
+To opt into native 0.5°C setpoints, add `setpoint_step: 0.5`.
+The setting controls both the advertised HA target-temperature step and
+rounding of commands received through the UI or API. The existing
+`visual_temperature_step` and standard ESPHome
+`visual.temperature_step.target_temperature` options are accepted as
+compatible alternatives; do not specify conflicting step values.
+
+MHI DB2 supports 0.5°C encoding, but individual indoor units may round a
+half-degree request to a whole degree. Climate state is published from
+confirmed decoded MHI state, so the dial will revert if the AC reports a
+different setpoint. `temperature_offset: true` is a legacy setting that
+rounds upwards and **does not currently implement** the external room-
+temperature compensation necessary to emulate half-degree resolution on
+an AC that rejects it. It should not be combined with a 0.5°C setpoint step.
+
+Example opt-in:
+
+```yaml
+climate:
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    name: Guest Bedroom AC
+    setpoint_step: 0.5
+```
 
 ## Selects
 
@@ -460,7 +484,11 @@ MhiAcCtrl:
   id: mhi_ac
   power_estimation:
     nominal_voltage: 230.0
-    power_factor: 0.95
+    # Optional: voltage_sensor: mains_voltage
+    # Optional: voltage_timeout: 5min
+    power_factor: 0.95  # fallback PF
+    # Optional: power_factor_sensor: mains_power_factor
+    # Optional: power_factor_timeout: 5min
     standby_power: 0.0
     max_sample_interval: 5min
 
@@ -473,8 +501,53 @@ sensor:
       name: MHI Estimated Energy
 ```
 
-`estimated_power` is calculated from decoded current, configured voltage, and
-power factor. `standby_power` is an optional floor used only when decoded status
+`estimated_power` is calculated from decoded CT/current, voltage, and power factor.
+By default the estimator uses `nominal_voltage`. Optionally reference any ESPHome
+numeric sensor as `power_estimation.voltage_sensor` (for example, a Home Assistant
+voltage sensor imported with `platform: homeassistant`). The estimator uses external
+voltage **only when a valid reading between 80 and 300 V has arrived within
+`voltage_timeout` (default: 5 minutes)**; otherwise it falls back to the configured
+nominal voltage. Invalid readings (including NaN/zero) immediately invalidate the
+external source. Updates to voltage do not trigger MHI traffic or energy samples;
+the latest valid voltage is applied when the next CT sample arrives.
+
+For a Home Assistant voltage source, add the following entry to your existing `sensor:`
+list, alongside the `platform: MhiAcCtrl` entry:
+
+```yaml
+sensor:
+  - platform: homeassistant
+    id: mains_voltage
+    entity_id: sensor.your_mains_voltage
+    internal: true
+  - platform: homeassistant
+    id: mains_power_factor
+    entity_id: sensor.your_mains_power_factor
+    internal: true
+  - platform: MhiAcCtrl
+    mhi_ac_ctrl_id: mhi_ac
+    estimated_power:
+      name: MHI Estimated Power
+    estimated_energy:
+      name: MHI Estimated Energy
+```
+
+Then configure `voltage_sensor: mains_voltage` and
+`power_factor_sensor: mains_power_factor` under `MhiAcCtrl.power_estimation`.
+The device must receive regular source state updates. `voltage_timeout` and
+`power_factor_timeout` (both default `5min`) independently cause stale sources
+to fall back to `nominal_voltage` and configured `power_factor`. Invalid source
+values immediately trigger their respective fallback. Valid external power
+factor is a **dimensionless ratio in (0, 1]**, e.g. `0.92`, not 92 percent; if
+your meter reports percentages, scale by 0.01 before feeding ESPHome. Both
+inputs must represent the **air-conditioner's load**: voltage from the same
+supply is appropriate, but power factor measured for a shared circuit is not
+necessarily the air-conditioner's power factor. Either sensor can be omitted.
+An external input update does not trigger MHI traffic or an energy sample;
+values are applied on the next CT sample. These changes cannot overcome the
+MHI CT measurement's coarse resolution.
+
+`standby_power` is an optional floor used only when decoded status
 confirms that the AC is off. No standby consumption is assumed by default.
 
 `estimated_energy` integrates consecutive fresh current samples and skips
@@ -484,6 +557,48 @@ total and may reset after restart; Home Assistant can handle resets for
 `total_increasing` sensors. Native `energy_used` remains separate and should be
 preferred when the unit provides it. These values are estimates, not
 revenue-grade measurements.
+
+### Optional per-OPDATA polling intervals
+
+By default, all enabled OPDATA fields continue using the original round-robin
+scheduler. You can move individual fields onto a faster, time-based schedule:
+
+```yaml
+MhiAcCtrl:
+  id: mhi_ac
+  opdata_poll_intervals:
+    current_power: 5s          # CT (amps); also feeds estimated power/energy
+    compressor_frequency: 10s  # COMP (Hz)
+```
+
+Only named fields change behaviour. All other enabled OPDATA fields continue in
+round-robin order; fields with an explicit interval are removed from that
+rotation. Explicit intervals also enable those OPDATA requests, even without a
+corresponding sensor. Leaving `opdata_poll_intervals` out preserves the existing
+wire behaviour and round-robin cadence.
+
+Timed requests occupy otherwise idle eligible background TX frames. Legacy
+round-robin slots, user commands, error OPDATA and one-shot confirmation polls
+have precedence. These are **minimum intervals between requests**, not a
+promise of an AC response at that rate: transport congestion, command
+confirmation or unavailable AC data can delay readings. No extra TX frames are
+created and the default `tx_background_interval_ms: 250` need not change.
+
+Valid keys correspond to the available OPDATA fields: `mode`,
+`target_temperature`, `return_air_temperature`, `indoor_unit_thi_r1`,
+`indoor_unit_thi_r2`, `indoor_unit_thi_r3`, `indoor_unit_fan_speed`,
+`indoor_unit_total_run_time`, `outdoor_temperature`, `outdoor_unit_tho_r1`,
+`compressor_frequency`, `outdoor_unit_discharge_pipe`, `current_power`,
+`outdoor_unit_discharge_pipe_super_heat`, `protection_state_number`,
+`outdoor_unit_fan_speed`, `defrost`, `compressor_total_run_time`,
+`outdoor_unit_expansion_valve`, `energy_used`, and `silent_mode`. Each configured
+interval must be between `1s` and `24h`. Avoid configuring many very short intervals:
+there is only one OPDATA request slot per eligible TX frame.
+
+Polling CT more often improves how promptly the estimator sees compressor load
+changes, but does not improve the CT sensor's own measurement resolution.
+`power_estimation.max_sample_interval` is an energy-integration stale-data guard,
+not the CT polling rate.
 
 ## External room temperature
 

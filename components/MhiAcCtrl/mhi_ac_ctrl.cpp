@@ -521,6 +521,22 @@ void MhiAcCtrl::setup() {
   this->command_worker_classified_rx_enabled_ =
       transport_ready && this->command_worker_enabled_ && this->transport_.rx_supports_classified_worker();
 
+  if (this->external_voltage_sensor_ != nullptr) {
+    this->external_voltage_sensor_->add_on_state_callback(
+        [this](float voltage_v) { this->power_estimator_.update_external_voltage(voltage_v, millis()); });
+    if (this->external_voltage_sensor_->has_state()) {
+      this->power_estimator_.update_external_voltage(this->external_voltage_sensor_->state, millis());
+    }
+  }
+
+  if (this->external_power_factor_sensor_ != nullptr) {
+    this->external_power_factor_sensor_->add_on_state_callback(
+        [this](float power_factor) { this->power_estimator_.update_external_power_factor(power_factor, millis()); });
+    if (this->external_power_factor_sensor_->has_state()) {
+      this->power_estimator_.update_external_power_factor(this->external_power_factor_sensor_->state, millis());
+    }
+  }
+
   if (this->external_room_temperature_sensor_ != nullptr) {
     this->external_room_temperature_sensor_->add_on_state_callback(
         [this](float state) { this->handle_external_room_temperature_sensor_state_(state); });
@@ -808,9 +824,14 @@ void MhiAcCtrl::dump_config() {
                 static_cast<unsigned long>(this->opdata_freshness_timeout_ms_));
   const MhiPowerEstimateSnapshot power_estimate = this->power_estimator_.snapshot();
   ESP_LOGCONFIG(TAG, "  Power estimation: %s", power_estimate.enabled ? "ENABLED" : "DISABLED");
+  ESP_LOGCONFIG(TAG, "  External voltage sensor: %s timeout=%lums", this->external_voltage_sensor_ ? "YES" : "NO",
+                static_cast<unsigned long>(this->power_estimator_.external_voltage_timeout_ms()));
+  ESP_LOGCONFIG(TAG, "  External power factor sensor: %s timeout=%lums",
+                this->external_power_factor_sensor_ ? "YES" : "NO",
+                static_cast<unsigned long>(this->power_estimator_.external_power_factor_timeout_ms()));
   if (power_estimate.enabled) {
     ESP_LOGCONFIG(TAG,
-                  "    Voltage=%.1fV power_factor=%.3f standby=%.1fW max_sample_interval=%lums "
+                  "    Nominal_voltage=%.1fV power_factor=%.3f standby=%.1fW max_sample_interval=%lums "
                   "samples=%lu integrated=%lu skipped=%lu",
                   this->power_estimator_.nominal_voltage_v(), this->power_estimator_.power_factor(),
                   this->power_estimator_.standby_power_w(),
@@ -818,6 +839,11 @@ void MhiAcCtrl::dump_config() {
                   static_cast<unsigned long>(power_estimate.sample_count),
                   static_cast<unsigned long>(power_estimate.integrated_intervals),
                   static_cast<unsigned long>(power_estimate.skipped_intervals));
+    if (power_estimate.power_valid) {
+      ESP_LOGCONFIG(TAG, "    Last power sample: %.1fV (%s), PF=%.3f (%s)", power_estimate.voltage_v,
+                    power_estimate.used_external_voltage ? "external" : "nominal fallback", power_estimate.power_factor,
+                    power_estimate.used_external_power_factor ? "external" : "configured fallback");
+    }
   }
   ESP_LOGCONFIG(TAG,
                 "  Opdata freshness: fresh=%s observed=0x%08lx pending=0x%08lx stale=0x%08lx "
@@ -1386,6 +1412,7 @@ void MhiAcCtrl::service_command_pipeline_() {
        (!confirmation_pending && (has_pending_command || this->background_tx_allowed_(now))))) {
     command_before_build = command;
     runtime_before_build = this->tx_runtime_;
+    this->tx_config_.now_ms = now;
     should_build = this->command_coordinator_.prepare_next(command, this->tx_runtime_, this->tx_config_, tx_frame,
                                                            build_result, envelope);
   }
@@ -1442,6 +1469,13 @@ void MhiAcCtrl::service_command_pipeline_() {
   }
   this->command_coordinator_.on_stage_result(envelope, command_before_build, runtime_before_build,
                                              this->state_.command(), queued, now);
+  if (!queued) {
+    // A failed queue operation did not issue the timed request. Do not advance
+    // its deadline; keep legacy round-robin accounting unchanged.
+    this->tx_runtime_.timed_opdata_last_ms = runtime_before_build.timed_opdata_last_ms;
+    this->tx_runtime_.timed_opdata_sent_mask = runtime_before_build.timed_opdata_sent_mask;
+    this->tx_runtime_.timed_opdata_next_index = runtime_before_build.timed_opdata_next_index;
+  }
   if (this->command_mutex_ != nullptr) {
     xSemaphoreGive(this->command_mutex_);
   }

@@ -38,6 +38,10 @@ MhiAcCtrl:
   external_temperature_disconnect_grace_period: 15s
   power_estimation:
     nominal_voltage: 230.0
+    voltage_sensor: test_mains_voltage
+    voltage_timeout: 5min
+    power_factor_sensor: test_power_factor
+    power_factor_timeout: 5min
     power_factor: 0.95
     standby_power: 5.0
     max_sample_interval: 5min
@@ -46,6 +50,7 @@ climate:
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     name: MHI Climate
+    setpoint_step: 0.5
 
 
 switch:
@@ -64,9 +69,16 @@ binary_sensor:
       name: MHI Opdata Fresh
 
 sensor:
-  - platform: homeassistant
-    id: external_room_temp
-    entity_id: sensor.compile_test_room_temperature
+  - platform: template
+    id: test_mains_voltage
+    internal: true
+    lambda: return 240.0;
+    update_interval: 30s
+  - platform: template
+    id: test_power_factor
+    internal: true
+    lambda: return 0.92;
+    update_interval: 30s
   - platform: MhiAcCtrl
     mhi_ac_ctrl_id: mhi_ac
     opdata_oldest_age:
