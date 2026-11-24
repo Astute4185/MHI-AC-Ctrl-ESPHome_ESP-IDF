@@ -3,27 +3,21 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <cstring>
-
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-
-#ifdef USE_API_HOMEASSISTANT_STATES
-#include "esphome/components/api/api_server.h"
-#endif
+#include "mhi_frame_classifier.h"
 
 namespace esphome {
 namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi_ac_ctrl";
 static const char* const DIAG_TAG = "mhi.diag";
+static const char* const VANE_TAG = "mhi.vane";
 static constexpr uint32_t kDiagLogIntervalMs = 30000U;
 static constexpr uint32_t kLoopBudgetUs = 30000U;
 static constexpr std::size_t kMaxRxChunksPerLoop = 4U;
 static constexpr std::size_t kMaxRxChunksPerWorkerPoll = 8U;
 static constexpr uint32_t kCommandWorkerPollMs = 10U;
-static constexpr uint32_t kExternalTemperatureConnectionCheckMs = 1000U;
-static constexpr char kHomeAssistantClientPrefix[] = "Home Assistant";
 static constexpr uint32_t kNoPendingExtendedFeedbackMask = MHI_COMMAND_HORIZONTAL_VANE | MHI_COMMAND_THREE_D_AUTO;
 
 namespace {
@@ -35,8 +29,6 @@ bool in_range(float value, float min_value, float max_value) {
 }  // namespace
 
 void MhiAcCtrl::set_external_room_temperature(float value) {
-  this->external_room_temperature_sensor_active_ = false;
-
   if (std::isnan(value)) {
     this->room_temp_api_active_ = false;
     this->clear_external_room_temperature_();
@@ -45,28 +37,23 @@ void MhiAcCtrl::set_external_room_temperature(float value) {
 
   this->room_temp_api_active_ = true;
   this->room_temp_api_timeout_start_ms_ = millis();
-  if (!this->apply_external_room_temperature_(value)) {
-    this->room_temp_api_active_ = false;
-  }
+  this->apply_external_room_temperature_(value);
 }
 
-bool MhiAcCtrl::apply_external_room_temperature_(float value) {
+void MhiAcCtrl::apply_external_room_temperature_(float value) {
   if (std::isnan(value)) {
     this->clear_external_room_temperature_();
-    return false;
+    return;
   }
 
   if (value <= -10.0f || value >= 48.0f) {
-    ESP_LOGW(DIAG_TAG,
-             "external room temperature invalid: %.2fC is outside the supported range; using indoor-unit sensor",
-             value);
-    this->clear_external_room_temperature_();
-    return false;
+    ESP_LOGW(DIAG_TAG, "external room temperature ignored: %.2fC is outside the supported range", value);
+    return;
   }
 
   if (!std::isnan(this->last_external_room_temperature_c_) &&
       std::fabs(value - this->last_external_room_temperature_c_) < 0.01f) {
-    return true;
+    return;
   }
 
   if (this->command_mutex_ != nullptr) {
@@ -83,12 +70,6 @@ bool MhiAcCtrl::apply_external_room_temperature_(float value) {
   this->notify_command_worker_();
 
   ESP_LOGD(DIAG_TAG, "external room temperature staged: %.2fC raw=0x%02x", value, static_cast<unsigned int>(raw));
-  return true;
-}
-
-void MhiAcCtrl::handle_external_room_temperature_sensor_state_(float value) {
-  this->room_temp_api_active_ = false;
-  this->external_room_temperature_sensor_active_ = this->apply_external_room_temperature_(value);
 }
 
 void MhiAcCtrl::clear_external_room_temperature_() {
@@ -130,85 +111,6 @@ void MhiAcCtrl::check_external_room_temperature_timeout_() {
   this->room_temp_api_active_ = false;
   this->clear_external_room_temperature_();
   ESP_LOGI(DIAG_TAG, "external room temperature timed out after %ds", this->room_temp_api_timeout_s_);
-}
-
-bool MhiAcCtrl::is_homeassistant_api_connected_() const {
-#ifdef USE_API_HOMEASSISTANT_STATES
-  if (api::global_api_server == nullptr) {
-    return false;
-  }
-
-  for (const auto& client : api::global_api_server->active_clients()) {
-    if (client == nullptr || client->is_marked_for_removal() || !client->is_connection_setup()) {
-      continue;
-    }
-
-    const char* client_name = client->get_name();
-    if (client_name != nullptr &&
-        std::strncmp(client_name, kHomeAssistantClientPrefix, sizeof(kHomeAssistantClientPrefix) - 1U) == 0) {
-      return true;
-    }
-  }
-#endif
-  return false;
-}
-
-void MhiAcCtrl::check_external_temperature_homeassistant_connection_() {
-  if (!this->external_temperature_fallback_on_homeassistant_disconnect_ ||
-      this->external_room_temperature_sensor_ == nullptr) {
-    return;
-  }
-
-#ifdef USE_API_HOMEASSISTANT_STATES
-  const uint32_t now_ms = millis();
-  if (this->last_homeassistant_connection_check_ms_ != 0U &&
-      (now_ms - this->last_homeassistant_connection_check_ms_) < kExternalTemperatureConnectionCheckMs) {
-    return;
-  }
-  this->last_homeassistant_connection_check_ms_ = now_ms;
-
-  const bool connected = this->is_homeassistant_api_connected_();
-  if (connected) {
-    const bool recovered = !this->homeassistant_api_connected_;
-    const bool grace_was_active = this->homeassistant_disconnect_grace_active_;
-    this->homeassistant_api_connected_ = true;
-    this->homeassistant_disconnect_grace_active_ = false;
-    this->homeassistant_disconnect_start_ms_ = 0U;
-
-    if (recovered && grace_was_active) {
-      ESP_LOGI(DIAG_TAG, "Home Assistant reconnected during external-temperature grace period; override retained");
-    } else if (recovered && !this->external_room_temperature_sensor_active_) {
-      ESP_LOGD(DIAG_TAG, "Home Assistant connected; waiting for fresh external room temperature state");
-    }
-    return;
-  }
-
-  this->homeassistant_api_connected_ = false;
-  if (!this->external_room_temperature_sensor_active_) {
-    this->homeassistant_disconnect_grace_active_ = false;
-    this->homeassistant_disconnect_start_ms_ = 0U;
-    return;
-  }
-
-  if (!this->homeassistant_disconnect_grace_active_) {
-    this->homeassistant_disconnect_grace_active_ = true;
-    this->homeassistant_disconnect_start_ms_ = now_ms;
-    ESP_LOGW(DIAG_TAG, "Home Assistant disconnected; retaining external room temperature for %lums grace period",
-             static_cast<unsigned long>(this->external_temperature_disconnect_grace_period_ms_));
-    return;
-  }
-
-  if ((now_ms - this->homeassistant_disconnect_start_ms_) < this->external_temperature_disconnect_grace_period_ms_) {
-    return;
-  }
-
-  this->homeassistant_disconnect_grace_active_ = false;
-  this->homeassistant_disconnect_start_ms_ = 0U;
-  this->external_room_temperature_sensor_active_ = false;
-  this->clear_external_room_temperature_();
-  ESP_LOGW(DIAG_TAG, "Home Assistant remained disconnected for %lums; using indoor-unit room temperature sensor",
-           static_cast<unsigned long>(this->external_temperature_disconnect_grace_period_ms_));
-#endif
 }
 
 bool MhiAcCtrl::set_active_mode(bool enabled) {
@@ -346,6 +248,14 @@ uint32_t MhiAcCtrl::request_command_patch(const MhiCommandState& patch) {
     xSemaphoreGive(this->command_mutex_);
   }
 
+  // User/HA intent is distinct from a staged or wire-completed TX frame.
+  if (patch.vertical_vane_set) {
+    ESP_LOGI(VANE_TAG, "vane: request value=%u accepted=%s accepted_mask=0x%08lx superseded=0x%08lx",
+             static_cast<unsigned int>(patch.vertical_vane),
+             (accepted_mask & MHI_COMMAND_VERTICAL_VANE) != 0U ? "YES" : "NO",
+             static_cast<unsigned long>(accepted_mask), static_cast<unsigned long>(superseded_mask));
+  }
+
   if (superseded_mask != 0U) {
     ESP_LOGI(DIAG_TAG, "command: superseded pending confirmation mask=0x%08lx",
              static_cast<unsigned long>(superseded_mask));
@@ -431,6 +341,10 @@ void MhiAcCtrl::setup() {
   ESP_LOGCONFIG(TAG, "Setting up MHI AC Ctrl");
 
   this->diagnostics_.stats().reset();
+  this->last_vane_tx_seen_ = false;
+  this->last_vane_tx_completion_ms_ = 0U;
+  this->last_vane_tx_value_ = 0U;
+  this->last_vane_tx_generation_ = 0U;
   this->command_coordinator_.reset();
   this->last_diag_log_ms_ = 0U;
   this->pending_extended_feedback_candidate_ = false;
@@ -461,11 +375,6 @@ void MhiAcCtrl::setup() {
   this->command_request_revision_ = 0U;
   this->staged_replacement_revision_ = 0U;
   this->room_temp_api_active_ = false;
-  this->external_room_temperature_sensor_active_ = false;
-  this->homeassistant_api_connected_ = false;
-  this->homeassistant_disconnect_grace_active_ = false;
-  this->homeassistant_disconnect_start_ms_ = 0U;
-  this->last_homeassistant_connection_check_ms_ = 0U;
   this->room_temp_api_timeout_start_ms_ = 0U;
   this->last_external_room_temperature_c_ = NAN;
   this->command_worker_running_.store(false, std::memory_order_release);
@@ -538,30 +447,12 @@ void MhiAcCtrl::setup() {
   }
 
   if (this->external_room_temperature_sensor_ != nullptr) {
-    this->external_room_temperature_sensor_->add_on_state_callback(
-        [this](float state) { this->handle_external_room_temperature_sensor_state_(state); });
-    this->handle_external_room_temperature_sensor_state_(this->external_room_temperature_sensor_->state);
+    this->external_room_temperature_sensor_->add_on_state_callback([this](float state) {
+      this->room_temp_api_active_ = false;
+      this->apply_external_room_temperature_(state);
+    });
+    this->apply_external_room_temperature_(this->external_room_temperature_sensor_->state);
   }
-
-#ifdef USE_API_HOMEASSISTANT_STATES
-  if (this->external_temperature_fallback_on_homeassistant_disconnect_) {
-    const uint32_t now_ms = millis();
-    this->last_homeassistant_connection_check_ms_ = now_ms;
-    this->homeassistant_api_connected_ = this->is_homeassistant_api_connected_();
-    if (!this->homeassistant_api_connected_ && this->external_room_temperature_sensor_active_) {
-      this->homeassistant_disconnect_grace_active_ = true;
-      this->homeassistant_disconnect_start_ms_ = now_ms;
-      ESP_LOGW(DIAG_TAG, "Home Assistant is not connected; retaining external room temperature for %lums grace period",
-               static_cast<unsigned long>(this->external_temperature_disconnect_grace_period_ms_));
-    }
-  }
-#else
-  if (this->external_temperature_fallback_on_homeassistant_disconnect_) {
-    ESP_LOGW(TAG,
-             "external_temperature_fallback_on_homeassistant_disconnect is enabled, but Home Assistant state "
-             "subscriptions are not compiled in");
-  }
-#endif
 
   if (transport_ready) {
     this->status_clear_error();
@@ -692,7 +583,6 @@ void MhiAcCtrl::loop() {
 
   section_start_us = micros();
   this->check_external_room_temperature_timeout_();
-  this->check_external_temperature_homeassistant_connection_();
   if (this->command_mutex_ != nullptr) {
     xSemaphoreTake(this->command_mutex_, portMAX_DELAY);
   }
@@ -770,10 +660,6 @@ void MhiAcCtrl::dump_config() {
   ESP_LOGCONFIG(TAG, "  Room temperature immediate delta: %.2fC", this->room_temperature_immediate_delta_c_);
   ESP_LOGCONFIG(TAG, "  External room temperature sensor: %s",
                 this->external_room_temperature_sensor_ != nullptr ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  External temperature fallback on Home Assistant disconnect: %s",
-                this->external_temperature_fallback_on_homeassistant_disconnect_ ? "YES" : "NO");
-  ESP_LOGCONFIG(TAG, "  External temperature disconnect grace period: %lums",
-                static_cast<unsigned long>(this->external_temperature_disconnect_grace_period_ms_));
   ESP_LOGCONFIG(TAG, "  Fan profile: %s", mhi_fan_profile_name(this->fan_profile_));
   ESP_LOGCONFIG(TAG, "  RX driver active: %s", diag.rx_driver_name);
   ESP_LOGCONFIG(TAG, "  TX driver active: %s", diag.tx_driver_name);
@@ -1441,6 +1327,13 @@ void MhiAcCtrl::service_command_pipeline_() {
              staged_replacement.frame.data[DB9],
              staged_replacement.frame.len > DB16 ? staged_replacement.frame.data[DB16] : 0U,
              staged_replacement.frame.len > DB17 ? staged_replacement.frame.data[DB17] : 0U);
+    if ((staged_replacement.envelope.command_mask & MHI_COMMAND_VERTICAL_VANE) != 0U) {
+      ESP_LOGI(VANE_TAG, "vane: tx_replaced generation=%lu value=%u len=%u db0=0x%02x db1=0x%02x",
+               static_cast<unsigned long>(staged_replacement.envelope.generation),
+               static_cast<unsigned int>(staged_replacement.envelope.intent.vertical_vane),
+               static_cast<unsigned int>(staged_replacement.frame.len), staged_replacement.frame.data[DB0],
+               staged_replacement.frame.data[DB1]);
+    }
     return;
   }
 
@@ -1526,6 +1419,20 @@ void MhiAcCtrl::drain_tx_completions_() {
       continue;
     }
 
+    if ((completion.command_mask & MHI_COMMAND_VERTICAL_VANE) != 0U) {
+      ESP_LOGI(VANE_TAG, "vane: tx_wire success=%s generation=%lu value=%u mask=0x%08lx at_ms=%lu",
+               completion.success ? "YES" : "NO", static_cast<unsigned long>(completion.generation),
+               static_cast<unsigned int>(completion.intent.vertical_vane),
+               static_cast<unsigned long>(completion.command_mask),
+               static_cast<unsigned long>(completion.completed_at_ms));
+      if (completion.success) {
+        this->last_vane_tx_seen_ = true;
+        this->last_vane_tx_completion_ms_ = completion.completed_at_ms;
+        this->last_vane_tx_value_ = completion.intent.vertical_vane;
+        this->last_vane_tx_generation_ = completion.generation;
+      }
+    }
+
     if (completion.success) {
       this->diagnostics_.stats().on_tx_command_frame(completion.command_mask, completion.completed_at_ms);
       command_state_changed = handled;
@@ -1587,6 +1494,13 @@ bool MhiAcCtrl::background_tx_allowed_(uint32_t now_ms) {
 
 void MhiAcCtrl::record_tx_build_result_(const MhiTxBuildResult& result, const MhiFrameBuffer& frame, bool sent) {
   const uint32_t now = millis();
+
+  if ((result.encoded_command_mask & MHI_COMMAND_VERTICAL_VANE) != 0U) {
+    ESP_LOGI(VANE_TAG, "vane: tx_staged=%s value=%u mask=0x%08lx len=%u db0=0x%02x db1=0x%02x",
+             sent ? "YES" : "NO", static_cast<unsigned int>(result.intent.vertical_vane),
+             static_cast<unsigned long>(result.encoded_command_mask), static_cast<unsigned int>(frame.len),
+             frame.data[DB0], frame.data[DB1]);
+  }
 
   if (result.has_encoded_commands()) {
     if (!sent) {
@@ -1767,6 +1681,8 @@ bool MhiAcCtrl::apply_status_update_(const MhiDecodedStatus& decoded_status, con
 
   auto& status = this->state_.status();
   const bool previous_valid = status.valid;
+  const uint8_t previous_vertical_vane = status.vertical_vane;
+  const bool previous_vertical_swing = status.vanes_swing;
   const bool previous_horizontal_swing = status.horizontal_vane_swing;
   const uint8_t previous_horizontal_vane = status.horizontal_vane;
   const bool previous_3d_auto = status.three_d_auto;
@@ -1779,6 +1695,25 @@ bool MhiAcCtrl::apply_status_update_(const MhiDecodedStatus& decoded_status, con
   status.room_temp_c = decoded_status.room_temp_c;
   status.vertical_vane = decoded_status.vertical_vane;
   status.vanes_swing = decoded_status.vertical_swing;
+
+  // Event-only trace: no logging on unchanged frames, opdata polls or steady-state feedback.
+  if (!previous_valid || previous_vertical_vane != status.vertical_vane ||
+      previous_vertical_swing != status.vanes_swing) {
+    const uint32_t now_ms = millis();
+    const MhiFrameClassification classification = classify_mhi_mosi_frame(frame.view());
+    ESP_LOGI(VANE_TAG,
+             "vane: rx_change baseline=%s old=%u/%u new=%u/%u kind=%s len=%u "
+             "db0=0x%02x db1=0x%02x db6=0x%02x db9=0x%02x mode=%u power=%u "
+             "last_tx_seen=%s last_tx_value=%u last_tx_generation=%lu last_tx_age_ms=%lu",
+             previous_valid ? "NO" : "YES", static_cast<unsigned int>(previous_vertical_vane),
+             static_cast<unsigned int>(previous_vertical_swing), static_cast<unsigned int>(status.vertical_vane),
+             static_cast<unsigned int>(status.vanes_swing), mhi_frame_kind_to_string(classification.kind),
+             static_cast<unsigned int>(frame.len), frame.data[DB0], frame.data[DB1], frame.data[DB6], frame.data[DB9],
+             static_cast<unsigned int>(status.mode), static_cast<unsigned int>(status.power),
+             this->last_vane_tx_seen_ ? "YES" : "NO", static_cast<unsigned int>(this->last_vane_tx_value_),
+             static_cast<unsigned long>(this->last_vane_tx_generation_),
+             static_cast<unsigned long>(this->last_vane_tx_seen_ ? now_ms - this->last_vane_tx_completion_ms_ : 0U));
+  }
 
   const bool accept_extended_feedback = (decoded_status.has_horizontal_vane || decoded_status.has_3d_auto) &&
                                         this->accept_extended_feedback_(decoded_status, frame);

@@ -6,6 +6,7 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi.select.vertical_vanes";
+static const char* const VANE_TAG = "mhi.vane";
 
 void MhiVerticalVanesSelect::setup() {
   ESP_LOGCONFIG(TAG, "Setting up MHI vertical vanes select");
@@ -40,6 +41,8 @@ void MhiVerticalVanesSelect::control(const std::string& value) {
     return;
   }
 
+  ESP_LOGI(VANE_TAG, "vane: source=vertical_select option=%s value=%u", value.c_str(),
+           static_cast<unsigned int>(index.value() + 1U));
   this->parent_->request_vertical_vane_command(static_cast<uint8_t>(index.value() + 1U));
 
   ESP_LOGD(TAG, "Vertical vanes command staged: %s; waiting for confirmed MOSI state", value.c_str());

@@ -10,6 +10,7 @@ namespace esphome {
 namespace mhi_ac_ctrl {
 
 static const char* const TAG = "mhi.climate";
+static const char* const VANE_TAG = "mhi.vane";
 
 void MhiClimate::setup() {
   ESP_LOGCONFIG(TAG, "Setting up MHI climate entity");
@@ -90,6 +91,8 @@ void MhiClimate::control(const climate::ClimateCall& call) {
   }
 
   if (call.get_swing_mode().has_value()) {
+    ESP_LOGI(VANE_TAG, "vane: source=climate_swing swing_mode=%u",
+             static_cast<unsigned int>(*call.get_swing_mode()));
     this->apply_swing_command_(*call.get_swing_mode(), patch);
   }
 
