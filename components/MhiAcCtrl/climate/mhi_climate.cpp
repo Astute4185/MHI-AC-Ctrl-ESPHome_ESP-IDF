@@ -91,8 +91,7 @@ void MhiClimate::control(const climate::ClimateCall& call) {
   }
 
   if (call.get_swing_mode().has_value()) {
-    ESP_LOGI(VANE_TAG, "vane: source=climate_swing swing_mode=%u",
-             static_cast<unsigned int>(*call.get_swing_mode()));
+    ESP_LOGI(VANE_TAG, "vane: source=climate_swing swing_mode=%u", static_cast<unsigned int>(*call.get_swing_mode()));
     this->apply_swing_command_(*call.get_swing_mode(), patch);
   }
 

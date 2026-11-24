@@ -1496,8 +1496,8 @@ void MhiAcCtrl::record_tx_build_result_(const MhiTxBuildResult& result, const Mh
   const uint32_t now = millis();
 
   if ((result.encoded_command_mask & MHI_COMMAND_VERTICAL_VANE) != 0U) {
-    ESP_LOGI(VANE_TAG, "vane: tx_staged=%s value=%u mask=0x%08lx len=%u db0=0x%02x db1=0x%02x",
-             sent ? "YES" : "NO", static_cast<unsigned int>(result.intent.vertical_vane),
+    ESP_LOGI(VANE_TAG, "vane: tx_staged=%s value=%u mask=0x%08lx len=%u db0=0x%02x db1=0x%02x", sent ? "YES" : "NO",
+             static_cast<unsigned int>(result.intent.vertical_vane),
              static_cast<unsigned long>(result.encoded_command_mask), static_cast<unsigned int>(frame.len),
              frame.data[DB0], frame.data[DB1]);
   }
